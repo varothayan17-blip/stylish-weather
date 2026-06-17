@@ -19,7 +19,7 @@ export const Route = createFileRoute("/")({
   component: Home,
 });
 
-function greeting() {
+function computeGreeting() {
   const h = new Date().getHours();
   if (h < 6) return "Good night";
   if (h < 12) return "Good morning";
@@ -32,8 +32,12 @@ function Home() {
   const [weather, setWeather] = useState<Weather | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [greeting, setGreeting] = useState("Hello");
 
-  useEffect(() => { setPrefs(loadPrefs()); }, []);
+  useEffect(() => {
+    setPrefs(loadPrefs());
+    setGreeting(computeGreeting());
+  }, []);
 
   useEffect(() => {
     if (!prefs) return;
@@ -57,7 +61,7 @@ function Home() {
     <AppShell>
       <header className="mb-6 flex items-center justify-between animate-fade-up">
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{greeting()}</p>
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{greeting}</p>
           <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">WeatherWear<span className="text-primary"> AI</span></h1>
         </div>
         <Link to="/preferences" className="glass-card flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium">
