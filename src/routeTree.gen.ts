@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SavedRouteImport } from './routes/saved'
+import { Route as RecommendationRouteImport } from './routes/recommendation'
 import { Route as PremiumRouteImport } from './routes/premium'
 import { Route as PreferencesRouteImport } from './routes/preferences'
 import { Route as IndexRouteImport } from './routes/index'
@@ -29,6 +30,11 @@ const SignupRoute = SignupRouteImport.update({
 const SavedRoute = SavedRouteImport.update({
   id: '/saved',
   path: '/saved',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecommendationRoute = RecommendationRouteImport.update({
+  id: '/recommendation',
+  path: '/recommendation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PremiumRoute = PremiumRouteImport.update({
@@ -51,6 +57,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
+  '/recommendation': typeof RecommendationRoute
   '/saved': typeof SavedRoute
   '/signup': typeof SignupRoute
   '/welcome': typeof WelcomeRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
+  '/recommendation': typeof RecommendationRoute
   '/saved': typeof SavedRoute
   '/signup': typeof SignupRoute
   '/welcome': typeof WelcomeRoute
@@ -68,6 +76,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
+  '/recommendation': typeof RecommendationRoute
   '/saved': typeof SavedRoute
   '/signup': typeof SignupRoute
   '/welcome': typeof WelcomeRoute
@@ -78,16 +87,25 @@ export interface FileRouteTypes {
     | '/'
     | '/preferences'
     | '/premium'
+    | '/recommendation'
     | '/saved'
     | '/signup'
     | '/welcome'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/preferences' | '/premium' | '/saved' | '/signup' | '/welcome'
+  to:
+    | '/'
+    | '/preferences'
+    | '/premium'
+    | '/recommendation'
+    | '/saved'
+    | '/signup'
+    | '/welcome'
   id:
     | '__root__'
     | '/'
     | '/preferences'
     | '/premium'
+    | '/recommendation'
     | '/saved'
     | '/signup'
     | '/welcome'
@@ -97,6 +115,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PreferencesRoute: typeof PreferencesRoute
   PremiumRoute: typeof PremiumRoute
+  RecommendationRoute: typeof RecommendationRoute
   SavedRoute: typeof SavedRoute
   SignupRoute: typeof SignupRoute
   WelcomeRoute: typeof WelcomeRoute
@@ -123,6 +142,13 @@ declare module '@tanstack/react-router' {
       path: '/saved'
       fullPath: '/saved'
       preLoaderRoute: typeof SavedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recommendation': {
+      id: '/recommendation'
+      path: '/recommendation'
+      fullPath: '/recommendation'
+      preLoaderRoute: typeof RecommendationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/premium': {
@@ -153,6 +179,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   PreferencesRoute: PreferencesRoute,
   PremiumRoute: PremiumRoute,
+  RecommendationRoute: RecommendationRoute,
   SavedRoute: SavedRoute,
   SignupRoute: SignupRoute,
   WelcomeRoute: WelcomeRoute,
