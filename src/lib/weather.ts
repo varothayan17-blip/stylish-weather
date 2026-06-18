@@ -60,3 +60,41 @@ export const CANADIAN_CITIES = [
   { name: "Halifax", lat: 44.6488, lon: -63.5752 },
   { name: "Winnipeg", lat: 49.8951, lon: -97.1384 },
 ];
+
+export function getBrowserLocation(): Promise<{ lat: number; lon: number }> {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      reject(new Error("Geolocation not supported"));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+      (e) => reject(new Error(e.message || "Location denied")),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 5 * 60 * 1000 }
+    );
+  });
+}
+
+export async function reverseGeocode(lat: number, lon: number): Promise<string> {
+  try {
+    const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${lat}&longitude=${lon}&language=en&format=json`;
+    const r = await fetch(url);
+    if (!r.ok) return "Your location";
+    const j = await r.json();
+    const res = j?.results?.[0];
+    return res?.name ?? "Your location";
+  } catch {
+    return "Your location";
+  }
+}
+
+export async function searchCity(q: string): Promise<{ name: string; lat: number; lon: number; country?: string; admin1?: string }[]> {
+  if (!q.trim()) return [];
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=8&language=en&format=json`;
+  const r = await fetch(url);
+  if (!r.ok) return [];
+  const j = await r.json();
+  return (j.results ?? []).map((x: any) => ({
+    name: x.name, lat: x.latitude, lon: x.longitude, country: x.country_code, admin1: x.admin1,
+  }));
+}
