@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { WeatherIcon } from "@/components/WeatherIcon";
@@ -28,6 +28,7 @@ function computeGreeting() {
 }
 
 function Home() {
+  const navigate = useNavigate();
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,9 +36,14 @@ function Home() {
   const [greeting, setGreeting] = useState("Hello");
 
   useEffect(() => {
-    setPrefs(loadPrefs());
+    const p = loadPrefs();
+    if (!p.onboarded) {
+      navigate({ to: "/welcome" });
+      return;
+    }
+    setPrefs(p);
     setGreeting(computeGreeting());
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
     if (!prefs) return;
