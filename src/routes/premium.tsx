@@ -1,5 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
+import { loadPrefs, savePrefs } from "@/lib/preferences";
+import { useState } from "react";
 import { Sparkles, Check, Shirt, Bell, BarChart3 } from "lucide-react";
 
 export const Route = createFileRoute("/premium")({
@@ -18,6 +20,23 @@ const features = [
 ];
 
 function Premium() {
+  const navigate = useNavigate();
+  const [activating, setActivating] = useState(false);
+
+  function startTrial() {
+    setActivating(true);
+    const prefs = loadPrefs();
+    if (!prefs.onboarded || !prefs.email) {
+      navigate({ to: "/signup" });
+      return;
+    }
+    savePrefs({ ...prefs, premium: true });
+    setTimeout(() => {
+      setActivating(false);
+      navigate({ to: "/recommendation" });
+    }, 500);
+  }
+
   return (
     <AppShell>
       <header className="mb-6 animate-fade-up">
@@ -49,8 +68,12 @@ function Premium() {
           ))}
         </ul>
 
-        <button className="mt-7 w-full rounded-2xl bg-foreground py-4 text-sm font-semibold text-background transition-transform active:scale-[0.98]">
-          Start free trial
+        <button
+          onClick={startTrial}
+          disabled={activating}
+          className="mt-7 w-full rounded-2xl bg-foreground py-4 text-sm font-semibold text-background transition-transform active:scale-[0.98] disabled:opacity-60"
+        >
+          {activating ? "Activating…" : "Start free trial"}
         </button>
       </div>
 

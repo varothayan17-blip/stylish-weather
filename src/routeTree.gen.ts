@@ -9,14 +9,32 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WelcomeRouteImport } from './routes/welcome'
+import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SavedRouteImport } from './routes/saved'
+import { Route as RecommendationRouteImport } from './routes/recommendation'
 import { Route as PremiumRouteImport } from './routes/premium'
 import { Route as PreferencesRouteImport } from './routes/preferences'
 import { Route as IndexRouteImport } from './routes/index'
 
+const WelcomeRoute = WelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SavedRoute = SavedRouteImport.update({
   id: '/saved',
   path: '/saved',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecommendationRoute = RecommendationRouteImport.update({
+  id: '/recommendation',
+  path: '/recommendation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PremiumRoute = PremiumRouteImport.update({
@@ -39,43 +57,98 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
+  '/recommendation': typeof RecommendationRoute
   '/saved': typeof SavedRoute
+  '/signup': typeof SignupRoute
+  '/welcome': typeof WelcomeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
+  '/recommendation': typeof RecommendationRoute
   '/saved': typeof SavedRoute
+  '/signup': typeof SignupRoute
+  '/welcome': typeof WelcomeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
+  '/recommendation': typeof RecommendationRoute
   '/saved': typeof SavedRoute
+  '/signup': typeof SignupRoute
+  '/welcome': typeof WelcomeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/preferences' | '/premium' | '/saved'
+  fullPaths:
+    | '/'
+    | '/preferences'
+    | '/premium'
+    | '/recommendation'
+    | '/saved'
+    | '/signup'
+    | '/welcome'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/preferences' | '/premium' | '/saved'
-  id: '__root__' | '/' | '/preferences' | '/premium' | '/saved'
+  to:
+    | '/'
+    | '/preferences'
+    | '/premium'
+    | '/recommendation'
+    | '/saved'
+    | '/signup'
+    | '/welcome'
+  id:
+    | '__root__'
+    | '/'
+    | '/preferences'
+    | '/premium'
+    | '/recommendation'
+    | '/saved'
+    | '/signup'
+    | '/welcome'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PreferencesRoute: typeof PreferencesRoute
   PremiumRoute: typeof PremiumRoute
+  RecommendationRoute: typeof RecommendationRoute
   SavedRoute: typeof SavedRoute
+  SignupRoute: typeof SignupRoute
+  WelcomeRoute: typeof WelcomeRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/welcome': {
+      id: '/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/saved': {
       id: '/saved'
       path: '/saved'
       fullPath: '/saved'
       preLoaderRoute: typeof SavedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recommendation': {
+      id: '/recommendation'
+      path: '/recommendation'
+      fullPath: '/recommendation'
+      preLoaderRoute: typeof RecommendationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/premium': {
@@ -106,18 +179,11 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   PreferencesRoute: PreferencesRoute,
   PremiumRoute: PremiumRoute,
+  RecommendationRoute: RecommendationRoute,
   SavedRoute: SavedRoute,
+  SignupRoute: SignupRoute,
+  WelcomeRoute: WelcomeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
