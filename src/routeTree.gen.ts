@@ -9,11 +9,17 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as SavedRouteImport } from './routes/saved'
 import { Route as PremiumRouteImport } from './routes/premium'
 import { Route as PreferencesRouteImport } from './routes/preferences'
 import { Route as IndexRouteImport } from './routes/index'
 
+const WelcomeRoute = WelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SavedRoute = SavedRouteImport.update({
   id: '/saved',
   path: '/saved',
@@ -40,12 +46,14 @@ export interface FileRoutesByFullPath {
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
   '/saved': typeof SavedRoute
+  '/welcome': typeof WelcomeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
   '/saved': typeof SavedRoute
+  '/welcome': typeof WelcomeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +61,14 @@ export interface FileRoutesById {
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
   '/saved': typeof SavedRoute
+  '/welcome': typeof WelcomeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/preferences' | '/premium' | '/saved'
+  fullPaths: '/' | '/preferences' | '/premium' | '/saved' | '/welcome'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/preferences' | '/premium' | '/saved'
-  id: '__root__' | '/' | '/preferences' | '/premium' | '/saved'
+  to: '/' | '/preferences' | '/premium' | '/saved' | '/welcome'
+  id: '__root__' | '/' | '/preferences' | '/premium' | '/saved' | '/welcome'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,10 +76,18 @@ export interface RootRouteChildren {
   PreferencesRoute: typeof PreferencesRoute
   PremiumRoute: typeof PremiumRoute
   SavedRoute: typeof SavedRoute
+  WelcomeRoute: typeof WelcomeRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/welcome': {
+      id: '/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/saved': {
       id: '/saved'
       path: '/saved'
@@ -107,6 +124,7 @@ const rootRouteChildren: RootRouteChildren = {
   PreferencesRoute: PreferencesRoute,
   PremiumRoute: PremiumRoute,
   SavedRoute: SavedRoute,
+  WelcomeRoute: WelcomeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
