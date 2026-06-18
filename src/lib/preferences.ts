@@ -4,6 +4,10 @@ export type Prefs = {
   commute: Commute;
   city?: { name: string; lat: number; lon: number };
   theme: "light" | "dark" | "system";
+  name?: string;
+  email?: string;
+  onboarded?: boolean;
+  premium?: boolean;
 };
 
 const KEY = "weatherwear:prefs";
