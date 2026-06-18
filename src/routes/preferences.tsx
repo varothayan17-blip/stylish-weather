@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { CANADIAN_CITIES } from "@/lib/weather";
+import { CANADIAN_CITIES, getBrowserLocation, reverseGeocode, searchCity } from "@/lib/weather";
 import { loadPrefs, savePrefs, defaultPrefs, type Prefs, type Commute } from "@/lib/preferences";
-import { Snowflake, Thermometer, Flame, PersonStanding, Train, Car, Bike, Check } from "lucide-react";
+import { Snowflake, Thermometer, Flame, PersonStanding, Train, Car, Bike, Check, Locate, Search } from "lucide-react";
 
 export const Route = createFileRoute("/preferences")({
   head: () => ({ meta: [
@@ -16,12 +16,30 @@ export const Route = createFileRoute("/preferences")({
 function Preferences() {
   const [p, setP] = useState<Prefs>(defaultPrefs);
   const [saved, setSaved] = useState(false);
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<{ name: string; lat: number; lon: number; country?: string; admin1?: string }[]>([]);
+  const [locating, setLocating] = useState(false);
   useEffect(() => { setP(loadPrefs()); }, []);
+
+  useEffect(() => {
+    if (!q.trim()) { setResults([]); return; }
+    const t = setTimeout(() => { searchCity(q).then(setResults).catch(() => setResults([])); }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
 
   function update<K extends keyof Prefs>(k: K, v: Prefs[K]) {
     const next = { ...p, [k]: v };
     setP(next); savePrefs(next);
     setSaved(true); setTimeout(() => setSaved(false), 1200);
+  }
+
+  async function useGps() {
+    setLocating(true);
+    try {
+      const { lat, lon } = await getBrowserLocation();
+      const name = await reverseGeocode(lat, lon);
+      update("city", { name, lat, lon });
+    } catch {/* ignore */} finally { setLocating(false); }
   }
 
   return (
@@ -53,7 +71,41 @@ function Preferences() {
         </Grid>
       </Section>
 
-      <Section title="Your city" subtitle="We default to your location.">
+      <Section title="Your city" subtitle="Search any city, or use GPS for pinpoint accuracy.">
+        <button
+          onClick={useGps}
+          disabled={locating}
+          className="mb-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-foreground py-3 text-sm font-semibold text-background disabled:opacity-60"
+        >
+          <Locate className={`h-4 w-4 ${locating ? "animate-pulse" : ""}`} />
+          {locating ? "Locating…" : "Use my current location"}
+        </button>
+
+        <div className="glass-card mb-3 flex items-center gap-2 rounded-2xl px-4 py-3">
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search city…"
+            className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
+          />
+        </div>
+
+        {results.length > 0 && (
+          <div className="mb-3 space-y-2">
+            {results.map((r) => (
+              <button
+                key={`${r.name}-${r.lat}-${r.lon}`}
+                onClick={() => { update("city", { name: r.name, lat: r.lat, lon: r.lon }); setQ(""); setResults([]); }}
+                className="glass-card flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left text-sm"
+              >
+                <span><span className="font-medium">{r.name}</span><span className="ml-1 text-xs text-muted-foreground">{[r.admin1, r.country].filter(Boolean).join(", ")}</span></span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Quick pick</p>
         <div className="grid grid-cols-2 gap-2">
           {CANADIAN_CITIES.map((c) => {
             const active = p.city?.name === c.name;

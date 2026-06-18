@@ -2,10 +2,10 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { WeatherIcon } from "@/components/WeatherIcon";
-import { fetchWeather, CANADIAN_CITIES, type Weather } from "@/lib/weather";
-import { loadPrefs, saveFavorite, type Prefs } from "@/lib/preferences";
+import { fetchWeather, CANADIAN_CITIES, getBrowserLocation, reverseGeocode, type Weather } from "@/lib/weather";
+import { loadPrefs, savePrefs, saveFavorite, type Prefs } from "@/lib/preferences";
 import { recommend } from "@/lib/recommend";
-import { Umbrella, Wind, Droplets, Sun, Heart, MapPin, Sparkles, AlertTriangle, Hand } from "lucide-react";
+import { Umbrella, Wind, Droplets, Sun, Heart, MapPin, Sparkles, AlertTriangle, Hand, Locate } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -29,15 +29,18 @@ function computeGreeting() {
 
 function Home() {
   const navigate = useNavigate();
+  const [redirecting, setRedirecting] = useState(false);
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [greeting, setGreeting] = useState("Hello");
+  const [locating, setLocating] = useState(false);
 
   useEffect(() => {
     const p = loadPrefs();
     if (!p.onboarded) {
+      setRedirecting(true);
       navigate({ to: "/welcome" });
       return;
     }
@@ -61,7 +64,35 @@ function Home() {
     return () => { cancelled = true; };
   }, [prefs]);
 
+  async function useMyLocation() {
+    if (!prefs) return;
+    setLocating(true);
+    setError(null);
+    try {
+      const { lat, lon } = await getBrowserLocation();
+      const name = await reverseGeocode(lat, lon);
+      const city = { name, lat, lon };
+      const next = { ...prefs, city };
+      savePrefs(next);
+      setPrefs(next);
+    } catch (e: any) {
+      setError(e.message ?? "Couldn't get location");
+    } finally {
+      setLocating(false);
+    }
+  }
+
+  // Auto-detect location on very first load (only if no city saved yet)
+  useEffect(() => {
+    if (prefs && !prefs.city) {
+      useMyLocation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs?.onboarded]);
+
   const rec = useMemo(() => weather && prefs ? recommend(weather, prefs) : null, [weather, prefs]);
+
+  if (redirecting) return null;
 
   return (
     <AppShell>
@@ -70,10 +101,15 @@ function Home() {
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{greeting}</p>
           <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">WeatherWear<span className="text-primary"> AI</span></h1>
         </div>
-        <Link to="/preferences" className="glass-card flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium">
-          <MapPin className="h-3.5 w-3.5 text-primary" />
-          {weather?.city ?? "Set location"}
-        </Link>
+        <button
+          onClick={useMyLocation}
+          disabled={locating}
+          className="glass-card flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium disabled:opacity-60"
+          title="Use my GPS location"
+        >
+          {locating ? <Locate className="h-3.5 w-3.5 text-primary animate-pulse" /> : <MapPin className="h-3.5 w-3.5 text-primary" />}
+          {locating ? "Locating…" : (weather?.city ?? "Use my location")}
+        </button>
       </header>
 
       {error && (
