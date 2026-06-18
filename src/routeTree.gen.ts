@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
+import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SavedRouteImport } from './routes/saved'
 import { Route as PremiumRouteImport } from './routes/premium'
 import { Route as PreferencesRouteImport } from './routes/preferences'
@@ -18,6 +19,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
   path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SavedRoute = SavedRouteImport.update({
@@ -46,6 +52,7 @@ export interface FileRoutesByFullPath {
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
   '/saved': typeof SavedRoute
+  '/signup': typeof SignupRoute
   '/welcome': typeof WelcomeRoute
 }
 export interface FileRoutesByTo {
@@ -53,6 +60,7 @@ export interface FileRoutesByTo {
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
   '/saved': typeof SavedRoute
+  '/signup': typeof SignupRoute
   '/welcome': typeof WelcomeRoute
 }
 export interface FileRoutesById {
@@ -61,14 +69,28 @@ export interface FileRoutesById {
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
   '/saved': typeof SavedRoute
+  '/signup': typeof SignupRoute
   '/welcome': typeof WelcomeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/preferences' | '/premium' | '/saved' | '/welcome'
+  fullPaths:
+    | '/'
+    | '/preferences'
+    | '/premium'
+    | '/saved'
+    | '/signup'
+    | '/welcome'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/preferences' | '/premium' | '/saved' | '/welcome'
-  id: '__root__' | '/' | '/preferences' | '/premium' | '/saved' | '/welcome'
+  to: '/' | '/preferences' | '/premium' | '/saved' | '/signup' | '/welcome'
+  id:
+    | '__root__'
+    | '/'
+    | '/preferences'
+    | '/premium'
+    | '/saved'
+    | '/signup'
+    | '/welcome'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -76,6 +98,7 @@ export interface RootRouteChildren {
   PreferencesRoute: typeof PreferencesRoute
   PremiumRoute: typeof PremiumRoute
   SavedRoute: typeof SavedRoute
+  SignupRoute: typeof SignupRoute
   WelcomeRoute: typeof WelcomeRoute
 }
 
@@ -86,6 +109,13 @@ declare module '@tanstack/react-router' {
       path: '/welcome'
       fullPath: '/welcome'
       preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/saved': {
@@ -124,6 +154,7 @@ const rootRouteChildren: RootRouteChildren = {
   PreferencesRoute: PreferencesRoute,
   PremiumRoute: PremiumRoute,
   SavedRoute: SavedRoute,
+  SignupRoute: SignupRoute,
   WelcomeRoute: WelcomeRoute,
 }
 export const routeTree = rootRouteImport
