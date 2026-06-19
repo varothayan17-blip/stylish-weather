@@ -151,11 +151,11 @@
   }
 
   body {
-    background: var(--gradient-sky);
-    background-attachment: fixed;
+    background: #fafafa;
     color: var(--color-foreground);
     font-feature-settings: "ss01", "cv11";
     -webkit-font-smoothing: antialiased;
+    font-family: "Inter", system-ui, sans-serif;
   }
 }
 

@@ -1,65 +1,81 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { CloudSun, Sparkles, Shirt, MapPin } from "lucide-react";
+import { CloudSun, Shirt, MapPin } from "lucide-react";
 
 export const Route = createFileRoute("/welcome")({
-  head: () => ({ meta: [
-    { title: "Welcome to WeatherWear AI" },
-    { name: "description", content: "Personalized clothing recommendations for Canadians." },
-  ]}),
+  head: () => ({
+    meta: [
+      { title: "Welcome to WeatherWear AI" },
+      { name: "description", content: "Personalized clothing recommendations for Canadians." },
+    ],
+  }),
   component: Welcome,
 });
 
 const bullets = [
-  { icon: CloudSun, title: "Live Canadian weather", desc: "Real wind chill, not just temperature." },
-  { icon: Shirt, title: "AI outfit picks", desc: "Tuned to your commute and cold tolerance." },
-  { icon: MapPin, title: "Made for your city", desc: "From Vancouver fog to Winnipeg windchill." },
+  { Icon: CloudSun, title: "Live Canadian weather", desc: "Real wind chill, not just temperature.", tone: "bg-blue-50 border-blue-100/60 text-blue-600" },
+  { Icon: Shirt, title: "AI outfit picks", desc: "Tuned to your commute & tolerance.", tone: "bg-indigo-50 border-indigo-100/60 text-indigo-600" },
+  { Icon: MapPin, title: "Made for your city", desc: "Vancouver fog to Winnipeg windchill.", tone: "bg-rose-50 border-rose-100/60 text-rose-600" },
 ];
 
 function Welcome() {
   return (
-    <div className="relative min-h-screen overflow-hidden isolate">
-      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 [transform:translateZ(0)]">
-        <div className="absolute -top-24 -left-16 h-80 w-80 rounded-full bg-primary/30 blur-3xl animate-float [transform:translateZ(0)]" />
-        <div className="absolute bottom-0 -right-16 h-80 w-80 rounded-full bg-accent/40 blur-3xl animate-float [transform:translateZ(0)]" style={{ animationDelay: "2s" }} />
-      </div>
-      <main className="mx-auto flex min-h-screen max-w-md flex-col px-6 pb-10 pt-16">
+    <div className="relative min-h-screen overflow-hidden bg-white font-['Outfit']">
+      {/* Atmospheric background */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#E0F2FE] via-[#F8FAFC] to-white" />
+      <div aria-hidden className="pointer-events-none absolute -top-20 -right-20 h-80 w-80 rounded-full bg-blue-200/40 blur-3xl animate-pulse" />
+      <div aria-hidden className="pointer-events-none absolute top-40 -left-20 h-72 w-72 rounded-full bg-amber-100/30 blur-3xl" />
+      <div aria-hidden className="pointer-events-none absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-white to-transparent" />
+
+      <main className="relative z-10 mx-auto flex min-h-screen max-w-md flex-col px-8 pb-12 pt-16">
+        {/* Brand chip */}
         <div className="animate-fade-up">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-primary">
-            <Sparkles className="h-3 w-3" /> WeatherWear AI
-          </span>
-          <h1 className="mt-5 text-5xl font-semibold leading-[1.05] tracking-tight">
-            Never guess <br /> what to wear <br /> <span className="text-gradient">again.</span>
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/60 px-3 py-1.5 shadow-sm backdrop-blur-md">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />
+            <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-blue-600/80">WeatherWear AI</span>
+          </div>
+        </div>
+
+        {/* Hero */}
+        <div className="mt-8 space-y-3 animate-fade-up delay-100">
+          <h1 className="text-[42px] font-bold leading-[1.05] tracking-tight text-slate-900">
+            Never guess what to wear{" "}
+            <span className="mt-1 block font-['Playfair_Display'] font-bold italic text-blue-600">again.</span>
           </h1>
-          <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-            Real-time weather meets AI styling — built for Canada's wildest days.
+          <p className="max-w-[280px] text-[17px] font-light leading-relaxed text-slate-500">
+            Real-time weather meets AI styling — built for{" "}
+            <span className="font-medium text-slate-800">Canada's wildest days.</span>
           </p>
         </div>
 
-        <ul className="mt-10 space-y-4 animate-fade-up delay-100">
-          {bullets.map(({ icon: Icon, title, desc }) => (
-            <li key={title} className="glass-card flex gap-4 rounded-3xl p-4">
-              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary">
-                <Icon className="h-5 w-5" />
+        {/* Feature cards */}
+        <div className="mt-10 flex-1 space-y-4 animate-fade-up delay-200">
+          {bullets.map(({ Icon, title, desc, tone }) => (
+            <div
+              key={title}
+              className="rounded-3xl border border-white/60 bg-white/40 p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] backdrop-blur-xl transition-all duration-500 hover:bg-white/60"
+            >
+              <div className="flex items-center gap-4">
+                <div className={`grid h-12 w-12 place-items-center rounded-2xl border ${tone}`}>
+                  <Icon className="h-5 w-5" strokeWidth={2} />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-slate-800">{title}</h3>
+                  <p className="text-sm text-slate-500">{desc}</p>
+                </div>
               </div>
-              <div>
-                <p className="font-medium">{title}</p>
-                <p className="mt-0.5 text-sm text-muted-foreground">{desc}</p>
-              </div>
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
 
-        <div className="mt-auto pt-10 space-y-3 animate-fade-up delay-200">
+        {/* Actions */}
+        <div className="mt-8 space-y-4 animate-fade-up delay-300">
           <Link
             to="/signup"
-            className="block w-full rounded-2xl bg-foreground py-4 text-center text-sm font-semibold text-background transition-transform active:scale-[0.98]"
+            className="flex h-16 w-full items-center justify-center gap-2 rounded-[2rem] bg-slate-900 text-lg font-semibold text-white shadow-xl shadow-slate-200 transition-all active:scale-[0.98]"
           >
-            Get started — it's free
+            Get started <span className="font-light opacity-40">— it's free</span>
           </Link>
-          <Link
-            to="/"
-            className="block w-full rounded-2xl py-3 text-center text-sm font-medium text-muted-foreground"
-          >
+          <Link to="/" className="block w-full py-3 text-center text-sm font-medium text-slate-400 transition-colors hover:text-slate-600">
             Skip for now
           </Link>
         </div>

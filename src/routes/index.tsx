@@ -1,11 +1,11 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { WeatherIcon } from "@/components/WeatherIcon";
 import { fetchWeather, CANADIAN_CITIES, getBrowserLocation, reverseGeocode, type Weather } from "@/lib/weather";
 import { loadPrefs, savePrefs, saveFavorite, type Prefs } from "@/lib/preferences";
 import { recommend } from "@/lib/recommend";
-import { Umbrella, Wind, Droplets, Sun, Heart, MapPin, Sparkles, AlertTriangle, Hand, Locate } from "lucide-react";
+import { MapPin, AlertTriangle, Locate } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -95,115 +95,116 @@ function Home() {
   if (redirecting) return null;
 
   return (
-    <AppShell>
-      <header className="mb-6 flex items-center justify-between animate-fade-up">
+    <AppShell bare>
+      {/* Header */}
+      <header className="flex items-end justify-between px-6 pb-6 pt-12 animate-fade-up">
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{greeting}</p>
-          <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">WeatherWear<span className="text-primary"> AI</span></h1>
+          <p className="text-xs font-medium uppercase tracking-widest text-zinc-400">{greeting}</p>
+          <h1 className="mt-1 truncate text-2xl font-bold text-zinc-900">WeatherWear AI</h1>
         </div>
         <button
           onClick={useMyLocation}
           disabled={locating}
-          className="glass-card flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium disabled:opacity-60"
-          title="Use my GPS location"
+          className="flex shrink-0 items-center gap-2 rounded-full border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs font-semibold text-zinc-700 disabled:opacity-60"
         >
-          {locating ? <Locate className="h-3.5 w-3.5 text-primary animate-pulse" /> : <MapPin className="h-3.5 w-3.5 text-primary" />}
-          {locating ? "Locating…" : (weather?.city ?? "Use my location")}
+          {locating ? <Locate className="h-3.5 w-3.5 animate-pulse text-zinc-500" /> : <MapPin className="h-3.5 w-3.5 text-zinc-500" />}
+          <span className="max-w-[140px] truncate">{locating ? "Locating…" : weather?.city ?? "Use my location"}</span>
         </button>
       </header>
 
-      {error && (
-        <div className="glass-card mb-4 rounded-3xl p-4 text-sm text-destructive animate-fade-up">{error}</div>
-      )}
-
-      {/* Hero weather card */}
-      <section className="glass-card relative overflow-hidden rounded-[2rem] p-6 animate-fade-up delay-100">
-        <div aria-hidden className="absolute -right-10 -top-10 h-44 w-44 rounded-full bg-primary/25 blur-3xl" />
-        {!weather ? (
-          <div className="space-y-3">
-            <div className="h-4 w-24 animate-pulse rounded-full bg-foreground/10" />
-            <div className="h-20 w-40 animate-pulse rounded-2xl bg-foreground/10" />
-            <div className="h-4 w-32 animate-pulse rounded-full bg-foreground/10" />
-          </div>
-        ) : (
-          <div className="relative">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">{weather.condition}</p>
-                <div className="mt-1 flex items-baseline">
-                  <span className="text-7xl font-extralight tracking-tighter tabular-nums">{Math.round(weather.tempC)}</span>
-                  <span className="ml-1 text-2xl text-muted-foreground">°C</span>
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Feels like <span className="font-semibold text-foreground">{Math.round(weather.feelsLikeC)}°</span>
-                </p>
-              </div>
-              <div className="text-primary animate-float">
-                <WeatherIcon code={weather.code} className="h-24 w-24" />
-              </div>
-            </div>
-
-            <div className="mt-6 grid grid-cols-3 gap-2">
-              <Stat icon={<Droplets className="h-4 w-4" />} label="Rain" value={`${Math.round(weather.precipProb)}%`} />
-              <Stat icon={<Wind className="h-4 w-4" />} label="Wind" value={`${Math.round(weather.windKph)} km/h`} />
-              <Stat icon={<Sun className="h-4 w-4" />} label="UV" value={`${Math.round(weather.uv)}`} />
-            </div>
-          </div>
+      <main className="px-6">
+        {error && (
+          <div className="mb-4 rounded-2xl border border-rose-100 bg-rose-50 p-3 text-sm text-rose-700">{error}</div>
         )}
-      </section>
 
-      {/* Hourly strip */}
-      {weather && (
-        <section className="glass-card mt-4 rounded-3xl p-4 animate-fade-up delay-200">
-          <div className="-mx-2 flex gap-1 overflow-x-auto px-2 pb-1">
+        {/* Weather Hero */}
+        <section className="mb-8 animate-fade-up delay-100">
+          {!weather ? (
+            <div className="space-y-4">
+              <div className="h-24 w-40 animate-pulse rounded-2xl bg-zinc-100" />
+              <div className="grid grid-cols-3 gap-4">
+                {[0, 1, 2].map((i) => <div key={i} className="h-16 animate-pulse rounded-2xl bg-zinc-100" />)}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-start justify-between">
+                <div className="flex flex-col">
+                  <span className="font-['Instrument_Serif'] text-8xl leading-none text-zinc-900 tabular-nums">
+                    {Math.round(weather.tempC)}°
+                  </span>
+                  <div className="mt-2">
+                    <p className="text-lg font-semibold text-zinc-800">{weather.condition}</p>
+                    <p className="text-sm font-medium text-zinc-500">Feels like {Math.round(weather.feelsLikeC)}°</p>
+                  </div>
+                </div>
+                <div className="grid h-24 w-24 place-items-center rounded-3xl bg-blue-50">
+                  <WeatherIcon code={weather.code} className="h-16 w-16 text-blue-400" />
+                </div>
+              </div>
+
+              <div className="mt-8 grid grid-cols-3 gap-4">
+                <StatTile label="Precip" value={`${Math.round(weather.precipProb)}%`} />
+                <StatTile label="Wind" value={`${Math.round(weather.windKph)} km/h`} />
+                <StatTile label="UV Index" value={`${Math.round(weather.uv)}`} />
+              </div>
+            </>
+          )}
+        </section>
+
+        {/* Hourly */}
+        {weather && (
+          <section className="mb-8 flex gap-6 overflow-x-auto pb-2 animate-fade-up delay-200 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {weather.hourly.map((h, i) => {
               const d = new Date(h.time);
               const label = i === 0 ? "Now" : `${d.getHours()}`;
               return (
-                <div key={h.time} className="flex min-w-[52px] flex-col items-center gap-1 rounded-2xl px-2 py-2 text-xs">
-                  <span className="text-muted-foreground">{label}</span>
-                  <WeatherIcon code={h.code} className="h-5 w-5 text-primary" />
-                  <span className="font-semibold tabular-nums">{Math.round(h.tempC)}°</span>
-                  <span className="text-[10px] text-primary/80">{h.precipProb}%</span>
+                <div key={h.time} className="flex min-w-[40px] flex-col items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase text-zinc-400">{label}</span>
+                  <WeatherIcon code={h.code} className={`h-5 w-5 ${h.precipProb >= 30 ? "text-blue-400" : "text-zinc-400"}`} />
+                  <span className="text-sm font-bold text-zinc-900 tabular-nums">{Math.round(h.tempC)}°</span>
                 </div>
               );
             })}
-          </div>
-        </section>
-      )}
+          </section>
+        )}
 
-      {/* AI recommendation */}
-      {rec && weather && (
-        <section className="mt-6 animate-fade-up delay-300">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-semibold tracking-tight">Today's recommendation</h2>
-            <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
-              <Sparkles className="h-3 w-3" /> AI
-            </span>
-          </div>
+        {/* AI Outfit */}
+        {rec && weather && (
+          <section className="mb-6 rounded-[32px] bg-zinc-900 p-6 text-white shadow-xl shadow-zinc-200 animate-fade-up delay-300">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="text-lg font-bold">Daily Uniform</h2>
+              <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-white/60">
+                AI Optimized
+              </span>
+            </div>
 
-          <div className="glass-card overflow-hidden rounded-[2rem] p-6">
-            <p className="text-xl font-medium leading-snug tracking-tight">{rec.headline}</p>
+            <p className="mb-5 text-sm leading-relaxed text-zinc-300">{rec.headline}</p>
 
-            <ul className="mt-5 space-y-2">
+            <ul className="mb-6 space-y-4">
               {rec.outfit.map((item) => (
-                <li key={item} className="flex items-center gap-3 text-sm">
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                  <span className="text-foreground/90">{item}</span>
+                <li key={item} className="flex items-start gap-3">
+                  <span className="mt-2 h-1.5 w-1.5 rounded-full bg-blue-400" />
+                  <p className="text-sm leading-relaxed text-zinc-200">{item}</p>
                 </li>
               ))}
             </ul>
 
-            <div className="mt-5 flex flex-wrap gap-2">
-              {rec.umbrella && <Chip icon={<Umbrella className="h-3.5 w-3.5" />} label="Bring umbrella" />}
-              {rec.gloves && <Chip icon={<Hand className="h-3.5 w-3.5" />} label="Wear gloves" />}
-              {rec.sunglasses && <Chip icon={<Sun className="h-3.5 w-3.5" />} label="Sunglasses" />}
-            </div>
+            {(rec.umbrella || rec.gloves || rec.sunglasses) && (
+              <div className="mb-6 flex flex-wrap gap-2">
+                {rec.umbrella && <Tag label="Umbrella" />}
+                {rec.gloves && <Tag label="Gloves" />}
+                {rec.sunglasses && <Tag label="Sunglasses" />}
+              </div>
+            )}
 
             {rec.commuteWarning && (
-              <div className="mt-5 flex gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                <p className="text-sm leading-relaxed text-foreground/90">{rec.commuteWarning}</p>
+              <div className="mb-6 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-3">
+                <div className="mb-1 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-orange-500" />
+                  <span className="text-xs font-bold uppercase tracking-wide text-orange-500">Commute Alert</span>
+                </div>
+                <p className="text-xs leading-relaxed text-orange-200/80">{rec.commuteWarning}</p>
               </div>
             )}
 
@@ -220,31 +221,30 @@ function Home() {
                 setSaved(true);
                 setTimeout(() => setSaved(false), 1800);
               }}
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-foreground py-3.5 text-sm font-semibold text-background transition-transform active:scale-[0.98]"
+              className="w-full rounded-2xl bg-white py-4 text-sm font-bold text-zinc-900 transition-transform active:scale-95"
             >
-              <Heart className={`h-4 w-4 transition-all ${saved ? "fill-current scale-125" : ""}`} />
-              {saved ? "Saved to favorites" : "Save this outfit"}
+              {saved ? "Saved to wardrobe" : "Save outfit"}
             </button>
-          </div>
-        </section>
-      )}
+          </section>
+        )}
+      </main>
     </AppShell>
   );
 }
 
-function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function StatTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl bg-foreground/5 p-3">
-      <div className="flex items-center gap-1.5 text-muted-foreground">{icon}<span className="text-[10px] font-medium uppercase tracking-wider">{label}</span></div>
-      <p className="mt-1 text-base font-semibold tabular-nums">{value}</p>
+    <div className="rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
+      <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400">{label}</p>
+      <p className="text-sm font-semibold text-zinc-900 tabular-nums">{value}</p>
     </div>
   );
 }
 
-function Chip({ icon, label }: { icon: React.ReactNode; label: string }) {
+function Tag({ label }: { label: string }) {
   return (
-    <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
-      {icon}{label}
+    <span className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300">
+      {label}
     </span>
   );
 }
