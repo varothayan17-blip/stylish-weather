@@ -1,9 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { CANADIAN_CITIES, getBrowserLocation, reverseGeocode, searchCity } from "@/lib/weather";
 import { loadPrefs, savePrefs, defaultPrefs, type Prefs, type Commute } from "@/lib/preferences";
-import { Snowflake, Thermometer, Flame, PersonStanding, Train, Car, Bike, Check, Locate, Search } from "lucide-react";
+import { Snowflake, Thermometer, Flame, PersonStanding, Train, Car, Bike, Check, Locate, Search, Crown, Mail, User } from "lucide-react";
 
 export const Route = createFileRoute("/preferences")({
   head: () => ({ meta: [
