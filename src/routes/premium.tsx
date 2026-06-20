@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { loadPrefs, savePrefs } from "@/lib/preferences";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sparkles, Check, Shirt, Bell, BarChart3 } from "lucide-react";
 
 export const Route = createFileRoute("/premium")({
@@ -22,6 +22,18 @@ const features = [
 function Premium() {
   const navigate = useNavigate();
   const [activating, setActivating] = useState(false);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    const p = loadPrefs();
+    if (p.premium) {
+      navigate({ to: "/" });
+      return;
+    }
+    setChecking(false);
+  }, [navigate]);
+
+  if (checking) return null;
 
   function startTrial() {
     setActivating(true);

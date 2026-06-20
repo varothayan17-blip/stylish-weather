@@ -75,8 +75,8 @@ function Welcome() {
           >
             Get started <span className="font-light opacity-40">— it's free</span>
           </Link>
-          <Link to="/" className="block w-full py-3 text-center text-sm font-medium text-slate-400 transition-colors hover:text-slate-600">
-            Skip for now
+          <Link to="/login" className="block w-full py-3 text-center text-sm font-medium text-slate-500 transition-colors hover:text-slate-700">
+            I already have an account
           </Link>
         </div>
       </main>
