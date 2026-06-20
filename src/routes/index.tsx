@@ -1,11 +1,11 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { WeatherIcon } from "@/components/WeatherIcon";
 import { fetchWeather, CANADIAN_CITIES, getBrowserLocation, reverseGeocode, type Weather } from "@/lib/weather";
 import { loadPrefs, savePrefs, saveFavorite, type Prefs } from "@/lib/preferences";
 import { recommend } from "@/lib/recommend";
-import { MapPin, AlertTriangle, Locate } from "lucide-react";
+import { MapPin, AlertTriangle, Locate, Crown } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
