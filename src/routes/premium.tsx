@@ -26,11 +26,12 @@ function Premium() {
   function startTrial() {
     setActivating(true);
     const prefs = loadPrefs();
+    // Persist premium immediately so it survives the signup detour
+    savePrefs({ ...prefs, premium: true });
     if (!prefs.onboarded || !prefs.email) {
       navigate({ to: "/signup" });
       return;
     }
-    savePrefs({ ...prefs, premium: true });
     setTimeout(() => {
       setActivating(false);
       navigate({ to: "/recommendation" });
