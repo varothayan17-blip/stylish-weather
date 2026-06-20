@@ -70,10 +70,16 @@ function Welcome() {
         {/* Actions */}
         <div className="mt-8 space-y-4 animate-fade-up delay-300">
           <Link
-            to="/signup"
+            to="/premium"
             className="flex h-16 w-full items-center justify-center gap-2 rounded-[2rem] bg-slate-900 text-lg font-semibold text-white shadow-xl shadow-slate-200 transition-all active:scale-[0.98]"
           >
-            Get started <span className="font-light opacity-40">— it's free</span>
+            Start free trial <span className="font-light opacity-40">— 7 days free</span>
+          </Link>
+          <Link
+            to="/signup"
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-[2rem] border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition-all active:scale-[0.98]"
+          >
+            Get started without trial
           </Link>
           <Link to="/login" className="block w-full py-3 text-center text-sm font-medium text-slate-500 transition-colors hover:text-slate-700">
             I already have an account
