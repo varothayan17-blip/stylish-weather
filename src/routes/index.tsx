@@ -1,11 +1,11 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { WeatherIcon } from "@/components/WeatherIcon";
 import { fetchWeather, CANADIAN_CITIES, getBrowserLocation, reverseGeocode, type Weather } from "@/lib/weather";
 import { loadPrefs, savePrefs, saveFavorite, type Prefs } from "@/lib/preferences";
 import { recommend } from "@/lib/recommend";
-import { MapPin, AlertTriangle, Locate } from "lucide-react";
+import { MapPin, AlertTriangle, Locate, Crown } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -102,14 +102,21 @@ function Home() {
           <p className="text-xs font-medium uppercase tracking-widest text-zinc-400">{greeting}</p>
           <h1 className="mt-1 truncate text-2xl font-bold text-zinc-900">WeatherWear AI</h1>
         </div>
-        <button
-          onClick={useMyLocation}
-          disabled={locating}
-          className="flex shrink-0 items-center gap-2 rounded-full border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs font-semibold text-zinc-700 disabled:opacity-60"
-        >
-          {locating ? <Locate className="h-3.5 w-3.5 animate-pulse text-zinc-500" /> : <MapPin className="h-3.5 w-3.5 text-zinc-500" />}
-          <span className="max-w-[140px] truncate">{locating ? "Locating…" : weather?.city ?? "Use my location"}</span>
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {prefs?.premium && (
+            <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-amber-700 border border-amber-100">
+              <Crown className="h-3 w-3" /> Premium
+            </span>
+          )}
+          <button
+            onClick={useMyLocation}
+            disabled={locating}
+            className="flex shrink-0 items-center gap-2 rounded-full border border-zinc-200 bg-zinc-100 px-3 py-1.5 text-xs font-semibold text-zinc-700 disabled:opacity-60"
+          >
+            {locating ? <Locate className="h-3.5 w-3.5 animate-pulse text-zinc-500" /> : <MapPin className="h-3.5 w-3.5 text-zinc-500" />}
+            <span className="max-w-[140px] truncate">{locating ? "Locating…" : weather?.city ?? "Use my location"}</span>
+          </button>
+        </div>
       </header>
 
       <main className="px-6">
