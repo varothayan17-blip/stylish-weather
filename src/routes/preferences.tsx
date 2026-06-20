@@ -1,9 +1,9 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { CANADIAN_CITIES, getBrowserLocation, reverseGeocode, searchCity } from "@/lib/weather";
 import { loadPrefs, savePrefs, defaultPrefs, type Prefs, type Commute } from "@/lib/preferences";
-import { Snowflake, Thermometer, Flame, PersonStanding, Train, Car, Bike, Check, Locate, Search, Crown, Mail, User } from "lucide-react";
+import { Snowflake, Thermometer, Flame, PersonStanding, Train, Car, Bike, Check, Locate, Search } from "lucide-react";
 
 export const Route = createFileRoute("/preferences")({
   head: () => ({ meta: [
@@ -49,57 +49,6 @@ function Preferences() {
         <h1 className="mt-1 text-3xl font-semibold tracking-tight">Make it yours</h1>
         <p className="mt-2 text-sm text-muted-foreground">We use this to fine-tune every recommendation.</p>
       </header>
-
-      {/* Account / Premium */}
-      <Section title="Account" subtitle="Your plan and login details.">
-        <div className="space-y-3">
-          <div className="glass-card flex items-center gap-3 rounded-2xl px-4 py-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-zinc-100 text-zinc-500">
-              <User className="h-5 w-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Name</p>
-              <p className="truncate text-sm font-medium">{p.name || "Not set"}</p>
-            </div>
-          </div>
-          <div className="glass-card flex items-center gap-3 rounded-2xl px-4 py-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-zinc-100 text-zinc-500">
-              <Mail className="h-5 w-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Email</p>
-              <p className="truncate text-sm font-medium">{p.email || "Not set"}</p>
-            </div>
-          </div>
-          {p.premium ? (
-            <div className="glass-card flex items-center gap-3 rounded-2xl px-4 py-3 border-amber-200 bg-amber-50/60">
-              <div className="grid h-10 w-10 place-items-center rounded-xl bg-amber-100 text-amber-600">
-                <Crown className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">Plan</p>
-                <p className="truncate text-sm font-medium text-amber-800">Premium — free trial active</p>
-              </div>
-            </div>
-          ) : (
-            <Link
-              to="/premium"
-              className="glass-card flex items-center justify-between rounded-2xl px-4 py-3 transition-colors hover:bg-zinc-50"
-            >
-              <div className="flex items-center gap-3">
-                <div className="grid h-10 w-10 place-items-center rounded-xl bg-zinc-100 text-zinc-500">
-                  <Crown className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Upgrade to Premium</p>
-                  <p className="text-xs text-muted-foreground">$1/month — 7-day free trial</p>
-                </div>
-              </div>
-              <span className="text-xs font-bold text-primary">Start trial</span>
-            </Link>
-          )}
-        </div>
-      </Section>
 
       <Section title="Temperature sensitivity" subtitle="How do you usually feel?">
         <Grid>

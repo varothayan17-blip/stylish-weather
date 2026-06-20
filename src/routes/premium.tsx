@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { loadPrefs, savePrefs } from "@/lib/preferences";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Sparkles, Check, Shirt, Bell, BarChart3 } from "lucide-react";
 
 export const Route = createFileRoute("/premium")({
@@ -22,28 +22,15 @@ const features = [
 function Premium() {
   const navigate = useNavigate();
   const [activating, setActivating] = useState(false);
-  const [checking, setChecking] = useState(true);
-
-  useEffect(() => {
-    const p = loadPrefs();
-    if (p.premium) {
-      navigate({ to: "/" });
-      return;
-    }
-    setChecking(false);
-  }, [navigate]);
-
-  if (checking) return null;
 
   function startTrial() {
     setActivating(true);
     const prefs = loadPrefs();
-    // Persist premium immediately so it survives the signup detour
-    savePrefs({ ...prefs, premium: true });
     if (!prefs.onboarded || !prefs.email) {
       navigate({ to: "/signup" });
       return;
     }
+    savePrefs({ ...prefs, premium: true });
     setTimeout(() => {
       setActivating(false);
       navigate({ to: "/recommendation" });

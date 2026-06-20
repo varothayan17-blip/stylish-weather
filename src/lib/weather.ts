@@ -22,10 +22,32 @@ const codeMap: Record<number, string> = {
   95: "Thunderstorm", 96: "Thunderstorm w/ hail", 99: "Thunderstorm w/ hail",
 };
 
-import { getWeatherFn } from "./weather.functions";
-
 export async function fetchWeather(lat: number, lon: number, city = "Your location"): Promise<Weather> {
-  return (await getWeatherFn({ data: { lat, lon, city } })) as Weather;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation_probability,uv_index&hourly=temperature_2m,precipitation_probability,weather_code,snowfall&timezone=auto&forecast_days=1`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Weather request failed");
+  const j = await res.json();
+  const c = j.current;
+  const h = j.hourly;
+  const snowMax = Math.max(0, ...(h.snowfall ?? []).slice(0, 12));
+  const precipMax = Math.max(0, ...(h.precipitation_probability ?? []).slice(0, 12));
+  return {
+    tempC: c.temperature_2m,
+    feelsLikeC: c.apparent_temperature,
+    windKph: c.wind_speed_10m,
+    precipProb: c.precipitation_probability ?? precipMax,
+    snowProb: snowMax > 0 ? Math.min(100, snowMax * 100) : 0,
+    uv: c.uv_index ?? 0,
+    code: c.weather_code,
+    condition: codeMap[c.weather_code] ?? "—",
+    city,
+    hourly: (h.time as string[]).slice(0, 12).map((t, i) => ({
+      time: t,
+      tempC: h.temperature_2m[i],
+      precipProb: h.precipitation_probability?.[i] ?? 0,
+      code: h.weather_code[i],
+    })),
+  };
 }
 
 export const CANADIAN_CITIES = [
