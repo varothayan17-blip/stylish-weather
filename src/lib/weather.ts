@@ -9,6 +9,16 @@ export type Weather = {
   condition: string;
   hourly: { time: string; tempC: number; precipProb: number; code: number }[];
   city: string;
+  humidity: number;
+  pressureHpa: number;
+  visibilityKm: number;
+  dewPointC: number;
+  sunrise: string;
+  sunset: string;
+  precipTodayMm: number;
+  highC: number;
+  lowC: number;
+  daily: { date: string; code: number; min: number; max: number; precipProb: number }[];
 };
 
 const codeMap: Record<number, string> = {
@@ -23,12 +33,13 @@ const codeMap: Record<number, string> = {
 };
 
 export async function fetchWeather(lat: number, lon: number, city = "Your location"): Promise<Weather> {
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation_probability,uv_index&hourly=temperature_2m,precipitation_probability,weather_code,snowfall&timezone=auto&forecast_days=1`;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation_probability,uv_index,relative_humidity_2m,surface_pressure,visibility,dew_point_2m&hourly=temperature_2m,precipitation_probability,weather_code,snowfall&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,sunrise,sunset&timezone=auto&forecast_days=10`;
   const res = await fetch(url);
   if (!res.ok) throw new Error("Weather request failed");
   const j = await res.json();
   const c = j.current;
   const h = j.hourly;
+  const d = j.daily;
   const snowMax = Math.max(0, ...(h.snowfall ?? []).slice(0, 12));
   const precipMax = Math.max(0, ...(h.precipitation_probability ?? []).slice(0, 12));
   return {
@@ -41,6 +52,22 @@ export async function fetchWeather(lat: number, lon: number, city = "Your locati
     code: c.weather_code,
     condition: codeMap[c.weather_code] ?? "—",
     city,
+    humidity: Math.round(c.relative_humidity_2m ?? 0),
+    pressureHpa: Math.round(c.surface_pressure ?? 0),
+    visibilityKm: Math.round(((c.visibility ?? 0) / 1000) * 10) / 10,
+    dewPointC: Math.round(c.dew_point_2m ?? 0),
+    sunrise: d?.sunrise?.[0] ?? "",
+    sunset: d?.sunset?.[0] ?? "",
+    precipTodayMm: Math.round((d?.precipitation_sum?.[0] ?? 0) * 10) / 10,
+    highC: Math.round(d?.temperature_2m_max?.[0] ?? c.temperature_2m),
+    lowC: Math.round(d?.temperature_2m_min?.[0] ?? c.temperature_2m),
+    daily: (d?.time ?? []).map((t: string, i: number) => ({
+      date: t,
+      code: d.weather_code[i],
+      min: Math.round(d.temperature_2m_min[i]),
+      max: Math.round(d.temperature_2m_max[i]),
+      precipProb: d.precipitation_probability_max?.[i] ?? 0,
+    })),
     hourly: (h.time as string[]).slice(0, 12).map((t, i) => ({
       time: t,
       tempC: h.temperature_2m[i],
