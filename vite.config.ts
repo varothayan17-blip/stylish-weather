@@ -12,14 +12,25 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
-  // Pinned explicitly — including output dirs and Cloudflare-specific
-  // options — rather than relying on Lovable-sandbox auto-detection, which
-  // otherwise only applies these when building inside Lovable's own
-  // environment. This makes `npm run build` produce identical Cloudflare
-  // Workers output everywhere it's run. See DEPLOYMENT.md.
+  // Pinned explicitly rather than relying on Lovable-sandbox auto-detection,
+  // which otherwise only applies a preset when building inside Lovable's own
+  // environment (and defaults to Cloudflare there). This makes `npm run build`
+  // produce identical Vercel-deployable output everywhere it's run.
+  //
+  // DEPLOYMENT TARGET: Vercel.
+  // The "vercel" preset makes Nitro emit output in Vercel's Build Output API
+  // v3 format under .vercel/output/ — a serverless function for SSR plus a
+  // static directory for client assets. Vercel auto-detects this format with
+  // zero vercel.json required; it is the same mechanism the Vercel CLI and
+  // Vercel's own framework presets use under the hood.
+  //
+  // NOTE: this previously was "cloudflare-module" with Cloudflare-specific
+  // output dirs and options (nodeCompat, deployConfig). Those options are
+  // Cloudflare Workers-only and have no effect under the vercel preset, so
+  // they have been removed rather than left as dead config. If you need to
+  // deploy to Cloudflare Workers again later, see DEPLOYMENT.md for the
+  // preset value and options to restore.
   nitro: {
-    preset: "cloudflare-module",
-    output: { dir: "dist", serverDir: "dist/server", publicDir: "dist/client" },
-    cloudflare: { nodeCompat: true, deployConfig: true },
+    preset: "vercel",
   },
 });
