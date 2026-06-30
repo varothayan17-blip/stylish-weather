@@ -12,4 +12,14 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  // Pinned explicitly — including output dirs and Cloudflare-specific
+  // options — rather than relying on Lovable-sandbox auto-detection, which
+  // otherwise only applies these when building inside Lovable's own
+  // environment. This makes `npm run build` produce identical Cloudflare
+  // Workers output everywhere it's run. See DEPLOYMENT.md.
+  nitro: {
+    preset: "cloudflare-module",
+    output: { dir: "dist", serverDir: "dist/server", publicDir: "dist/client" },
+    cloudflare: { nodeCompat: true, deployConfig: true },
+  },
 });

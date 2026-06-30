@@ -1,0 +1,94 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Wethra Firestore Security Rules — Production
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// AUTH MODEL: Firebase Authentication (Email + Password)
+// Every user has a verified Firebase Auth uid.
+// Firestore documents are keyed by uid, not email.
+//
+// DATA STRUCTURE:
+//   users/{uid}                         — profile + prefs document
+//   users/{uid}/favorites/{favoriteId}  — saved outfit documents
+//
+// PRINCIPLE: Each authenticated user can only read and write their own data.
+// No user can access another user's documents.
+// Unauthenticated requests are denied everywhere.
+// ═══════════════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Validation helpers ─────────────────────────────────────────────────
+
+    function isValidPrefs(data) {
+      let allowed = [
+        'coldSensitivity', 'commute', 'city', 'theme',
+        'name', 'email', 'onboarded', 'premium', 'trialEndsAt'
+      ];
+      return data.keys().hasOnly(allowed)
+        && data.coldSensitivity is string
+        && data.commute is string
+        && data.theme is string
+        && data.onboarded is bool
+        && data.premium is bool;
+    }
+
+    function isValidFavorite(data) {
+      return data.keys().hasAll(['id', 'title', 'items', 'tempC', 'condition', 'savedAt'])
+        && data.id is string
+        && data.title is string
+        && data.items is list
+        && data.tempC is number
+        && data.condition is string
+        && data.savedAt is number;
+    }
+
+    // ── users/{uid} — profile document ────────────────────────────────────
+
+    match /users/{uid} {
+
+      // Only the authenticated owner may read their own profile.
+      allow get: if request.auth != null && request.auth.uid == uid;
+
+      // Only the authenticated owner may write their own profile.
+      // The document must contain only a `prefs` field with valid structure.
+      allow create, update: if
+        request.auth != null &&
+        request.auth.uid == uid &&
+        request.resource.data.keys().hasOnly(['prefs']) &&
+        isValidPrefs(request.resource.data.prefs);
+
+      // Deletes are intentionally disabled via the API.
+      // Account deletion is handled by admin tooling on request.
+      allow delete: if false;
+
+      // ── users/{uid}/favorites — saved outfits ──────────────────────────
+
+      match /favorites/{favoriteId} {
+
+        // Only the authenticated owner may read their own favorites.
+        allow read: if request.auth != null && request.auth.uid == uid;
+
+        // Only the authenticated owner may write their own favorites.
+        // The favorite must have all required fields and the document ID
+        // must match the id field inside the document.
+        allow create, update: if
+          request.auth != null &&
+          request.auth.uid == uid &&
+          isValidFavorite(request.resource.data) &&
+          request.resource.data.id == favoriteId;
+
+        // Favorites cannot be deleted via the API.
+        allow delete: if false;
+      }
+    }
+
+    // ── Deny everything else ───────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+  }
+}

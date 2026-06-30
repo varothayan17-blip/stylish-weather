@@ -87,7 +87,12 @@
   --glass-bg: oklch(1 0 0 / 0.55);
   --glass-border: oklch(1 0 0 / 0.6);
   --glass-shadow: 0 20px 60px -20px oklch(0.4 0.15 248 / 0.35);
-  --gradient-sky: linear-gradient(180deg, oklch(0.92 0.05 230) 0%, oklch(0.96 0.025 220) 50%, oklch(0.98 0.015 210) 100%);
+  --gradient-sky: linear-gradient(
+    180deg,
+    oklch(0.92 0.05 230) 0%,
+    oklch(0.96 0.025 220) 50%,
+    oklch(0.98 0.015 210) 100%
+  );
   --gradient-hero: linear-gradient(135deg, oklch(0.62 0.16 248) 0%, oklch(0.78 0.13 235) 100%);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
@@ -128,7 +133,12 @@
   --glass-bg: oklch(1 0 0 / 0.06);
   --glass-border: oklch(1 0 0 / 0.12);
   --glass-shadow: 0 20px 60px -20px oklch(0 0 0 / 0.6);
-  --gradient-sky: linear-gradient(180deg, oklch(0.18 0.04 258) 0%, oklch(0.14 0.03 258) 60%, oklch(0.1 0.02 258) 100%);
+  --gradient-sky: linear-gradient(
+    180deg,
+    oklch(0.18 0.04 258) 0%,
+    oklch(0.14 0.03 258) 60%,
+    oklch(0.1 0.02 258) 100%
+  );
   --gradient-hero: linear-gradient(135deg, oklch(0.32 0.1 258) 0%, oklch(0.5 0.13 240) 100%);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
@@ -179,21 +189,48 @@
 }
 
 @keyframes float-slow {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-12px); }
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
 }
 @keyframes fade-up {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
 
-.animate-float { animation: float-slow 6s ease-in-out infinite; }
-.animate-fade-up { animation: fade-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) both; }
-.delay-100 { animation-delay: 0.1s; }
-.delay-200 { animation-delay: 0.2s; }
-.delay-300 { animation-delay: 0.3s; }
-.delay-400 { animation-delay: 0.4s; }
+.animate-float {
+  animation: float-slow 6s ease-in-out infinite;
+}
+.animate-fade-up {
+  animation: fade-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.delay-100 {
+  animation-delay: 0.1s;
+}
+.delay-200 {
+  animation-delay: 0.2s;
+}
+.delay-300 {
+  animation-delay: 0.3s;
+}
+.delay-400 {
+  animation-delay: 0.4s;
+}

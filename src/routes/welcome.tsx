@@ -2,15 +2,21 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { CloudSun, Sparkles, Shirt, MapPin } from "lucide-react";
 
 export const Route = createFileRoute("/welcome")({
-  head: () => ({ meta: [
-    { title: "Welcome to WeatherWear AI" },
-    { name: "description", content: "Personalized clothing recommendations for Canadians." },
-  ]}),
+  head: () => ({
+    meta: [
+      { title: "Welcome to Wethra" },
+      { name: "description", content: "Personalized clothing recommendations for Canadians." },
+    ],
+  }),
   component: Welcome,
 });
 
 const bullets = [
-  { icon: CloudSun, title: "Live Canadian weather", desc: "Real wind chill, not just temperature." },
+  {
+    icon: CloudSun,
+    title: "Live Canadian weather",
+    desc: "Real wind chill, not just temperature.",
+  },
   { icon: Shirt, title: "AI outfit picks", desc: "Tuned to your commute and cold tolerance." },
   { icon: MapPin, title: "Made for your city", desc: "From Vancouver fog to Winnipeg windchill." },
 ];
@@ -18,14 +24,20 @@ const bullets = [
 function Welcome() {
   return (
     <div className="relative min-h-screen overflow-hidden isolate">
-      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 [transform:translateZ(0)]">
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 -z-10 [transform:translateZ(0)]"
+      >
         <div className="absolute -top-24 -left-16 h-80 w-80 rounded-full bg-primary/30 blur-3xl animate-float [transform:translateZ(0)]" />
-        <div className="absolute bottom-0 -right-16 h-80 w-80 rounded-full bg-accent/40 blur-3xl animate-float [transform:translateZ(0)]" style={{ animationDelay: "2s" }} />
+        <div
+          className="absolute bottom-0 -right-16 h-80 w-80 rounded-full bg-accent/40 blur-3xl animate-float [transform:translateZ(0)]"
+          style={{ animationDelay: "2s" }}
+        />
       </div>
-      <main className="mx-auto flex min-h-screen max-w-md flex-col px-6 pb-10 pt-16">
+      <main className="mx-auto flex min-h-screen max-w-md flex-col px-6 pb-10 pt-[calc(env(safe-area-inset-top)+4rem)]">
         <div className="animate-fade-up">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-primary">
-            <Sparkles className="h-3 w-3" /> WeatherWear AI
+            <Sparkles className="h-3 w-3" /> Wethra
           </span>
           <h1 className="mt-5 text-5xl font-semibold leading-[1.05] tracking-tight">
             Never guess <br /> what to wear <br /> <span className="text-gradient">again.</span>

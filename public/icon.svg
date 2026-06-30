@@ -1,0 +1,17 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6f9bf2"/>
+      <stop offset="100%" stop-color="#3f63c9"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="url(#bg)"/>
+  <!-- cloud -->
+  <path d="M150 232c-30 0-54 24-54 54 0 30 24 54 54 54h170c33 0 60-27 60-60 0-30-22-55-51-59-7-38-40-67-80-67-37 0-68 24-78 58-1 0-2 0-3 0-9 0-18 5-18 20z"
+        fill="white" opacity="0.95"/>
+  <!-- jacket silhouette -->
+  <path d="M256 300l-46 24v90a14 14 0 0014 14h64a14 14 0 0014-14v-90l-46-24z" fill="#3f63c9"/>
+  <path d="M210 324l-34 18a10 10 0 00-5 9v52a10 10 0 0010 10h22v-66z" fill="#3f63c9"/>
+  <path d="M302 324l34 18a10 10 0 015 9v52a10 10 0 01-10 10h-22v-66z" fill="#3f63c9"/>
+  <circle cx="256" cy="296" r="10" fill="#3f63c9"/>
+</svg>
