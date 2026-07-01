@@ -413,6 +413,9 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     isDay: c.is_day === 1,
     condition: resolvedCondition,
     city,
+    // The live current block never has a stormWarning — that only exists on
+    // DailyForecast entries and is forwarded by dailyToWeather().
+    hasSecondaryWeather: false,
     hourly: hourlyTimes.slice(startIdx, startIdx + 12).map((t, i) => ({
       time: t,
       tempC: h.temperature_2m[startIdx + i],

@@ -90,6 +90,7 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     isDay: (current.is_day ?? 1) === 1,
     condition: current.condition.text,
     city,
+    hasSecondaryWeather: false, // WeatherAPI.com provider doesn't produce stormWarnings
     hourly: upcomingHours.map((h) => ({
       time: h.time,
       tempC: h.temp_c,

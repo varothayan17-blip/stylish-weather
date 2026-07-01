@@ -30,6 +30,17 @@ export type Weather = {
   hourly: { time: string; tempC: number; precipProb: number; code: number; isDay: boolean }[];
   daily: DailyForecast[];
   city: string;
+  /**
+   * True when a stormWarning is active for this day — meaning secondary
+   * precipitation or storm risk exists even though the primary condition is
+   * clear or cloudy. recommend() uses this to force umbrella=true and swap
+   * sandals for sneakers even when precipProb and the primary WMO code alone
+   * would not trigger those guards.
+   *
+   * Always false for the live current reading; set by dailyToWeather() when
+   * day.stormWarning is non-empty.
+   */
+  hasSecondaryWeather: boolean;
 };
 
 /**

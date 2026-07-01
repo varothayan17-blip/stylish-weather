@@ -10,6 +10,7 @@ import {
   type Prefs,
   type Commute,
 } from "@/lib/preferences";
+import { PROFILES, type ClothingProfileId } from "@/lib/clothingProfiles";
 import { getErrorMessage } from "@/lib/utils";
 import {
   Snowflake,
@@ -99,7 +100,27 @@ function Preferences() {
         </p>
       </header>
 
-      <Section delay={100} title="Temperature sensitivity" subtitle="How do you usually feel?">
+      <Section
+        delay={100}
+        title="Clothing style"
+        subtitle="We'll tailor recommendations to your wardrobe."
+      >
+        <Grid cols={3}>
+          {(Object.values(PROFILES) as (typeof PROFILES)[ClothingProfileId][]).map((profile) => (
+            <Choice
+              key={profile.id}
+              active={
+                p.clothingProfile === profile.id || (!p.clothingProfile && profile.id === "neutral")
+              }
+              onClick={() => update("clothingProfile", profile.id)}
+              icon={<span className="text-lg leading-none">{profile.emoji}</span>}
+              label={profile.label}
+            />
+          ))}
+        </Grid>
+      </Section>
+
+      <Section delay={150} title="Temperature sensitivity" subtitle="How do you usually feel?">
         <Grid>
           <Choice
             active={p.coldSensitivity === "cold"}
@@ -122,7 +143,7 @@ function Preferences() {
         </Grid>
       </Section>
 
-      <Section delay={150} title="Your commute" subtitle="So we can warn you about your route.">
+      <Section delay={200} title="Your commute" subtitle="So we can warn you about your route.">
         <Grid cols={2}>
           {(
             [
@@ -144,7 +165,7 @@ function Preferences() {
       </Section>
 
       <Section
-        delay={200}
+        delay={250}
         title="Your city"
         subtitle="Search any city, or use GPS for pinpoint accuracy."
       >

@@ -10,6 +10,14 @@ export type Prefs = {
   premium?: boolean;
   /** Unix timestamp (ms) when the free trial ends. Null = no trial started. */
   trialEndsAt?: number;
+  /**
+   * Which clothing profile to use when building outfit recommendations.
+   * Existing users who have no value saved default to "neutral" (gender-neutral),
+   * preserving their existing experience exactly.
+   * Imported from clothingProfiles.ts — kept here so Prefs is self-contained
+   * and the cloudSync schema validator can include it.
+   */
+  clothingProfile?: import("./clothingProfiles").ClothingProfileId;
 };
 
 export const PREFS_KEY = "weatherwear:prefs";

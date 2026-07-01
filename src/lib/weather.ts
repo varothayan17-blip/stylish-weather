@@ -30,23 +30,26 @@ export function dailyToWeather(day: DailyForecast, city: string): Weather {
     snowProb: day.snowCm >= 0.05 ? 100 : 0,
     uv: day.uvMax,
     code: day.code,
-    // Forecast day cards represent the full day — always use daytime icon for
-    // the summary. The two synthetic hourly points get time-appropriate values.
     isDay: true,
     condition: day.condition,
     city,
+    // Forward the stormWarning signal so recommend() can act on it.
+    // When this is true, recommend() forces umbrella=true and swaps sandals
+    // for sneakers even if the primary WMO code is clear and precipProb alone
+    // is below the umbrella threshold.
+    hasSecondaryWeather: Boolean(day.stormWarning),
     hourly: [
       {
         time: `${day.date}T06:00`,
         tempC: day.tempMinC,
-        precipProb: 0,
+        precipProb: day.precipProb,
         code: day.code,
         isDay: true,
       },
       {
         time: `${day.date}T15:00`,
         tempC: day.tempMaxC,
-        precipProb: 0,
+        precipProb: day.precipProb,
         code: day.code,
         isDay: true,
       },

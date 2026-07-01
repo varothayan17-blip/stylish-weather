@@ -23,6 +23,7 @@ function sanitizePrefs(p: Prefs): Record<string, unknown> {
     onboarded: p.onboarded ?? false,
     premium: p.premium ?? false,
     trialEndsAt: p.trialEndsAt ?? null,
+    clothingProfile: p.clothingProfile ?? "neutral",
     ...(p.city != null ? { city: { name: p.city.name, lat: p.city.lat, lon: p.city.lon } } : {}),
   };
 }
