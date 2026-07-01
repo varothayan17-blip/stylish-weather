@@ -7,7 +7,7 @@ import { Heart, Trash2 } from "lucide-react";
 export const Route = createFileRoute("/saved")({
   head: () => ({
     meta: [
-      { title: "Saved outfits — Wethra" },
+      { title: "Saved outfits — Aeruvo" },
       { name: "description", content: "Your favorite outfit recommendations, saved for later." },
     ],
   }),

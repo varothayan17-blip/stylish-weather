@@ -33,7 +33,7 @@ import {
 export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
-      { title: "Settings — Wethra" },
+      { title: "Settings — Aeruvo" },
       { name: "description", content: "Appearance, account, and app settings." },
     ],
   }),
@@ -84,7 +84,7 @@ function Settings() {
   function resetApp() {
     if (typeof window === "undefined") return;
     const ok = window.confirm(
-      "Reset all Wethra data on this device? This clears your preferences and saved outfits.",
+      "Reset all Aeruvo data on this device? This clears your preferences and saved outfits.",
     );
     if (!ok) return;
     localStorage.removeItem(PREFS_KEY);
@@ -101,7 +101,7 @@ function Settings() {
         <h1 className="mt-1 text-3xl font-semibold tracking-tight">App settings</h1>
       </header>
 
-      <Section delay={100} title="Appearance" subtitle="Choose how Wethra looks on this device.">
+      <Section delay={100} title="Appearance" subtitle="Choose how Aeruvo looks on this device.">
         <Grid>
           <Choice
             active={p.theme === "light"}
@@ -159,7 +159,7 @@ function Settings() {
               <User className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{p.name ?? "Wethra user"}</p>
+              <p className="truncate text-sm font-medium">{p.name ?? "Aeruvo user"}</p>
               <p className="truncate text-xs text-muted-foreground">
                 {p.email ?? "No email on file"}
               </p>
@@ -205,7 +205,7 @@ function Settings() {
       <Section delay={300} title="About">
         <div className="glass-card overflow-hidden rounded-[2rem]">
           {[
-            { to: "/about", icon: Info, label: "About Wethra" },
+            { to: "/about", icon: Info, label: "About Aeruvo" },
             { to: "/support", icon: HelpCircle, label: "Support & FAQ" },
             { to: "/privacy", icon: Shield, label: "Privacy Policy" },
             { to: "/terms", icon: FileText, label: "Terms of Service" },

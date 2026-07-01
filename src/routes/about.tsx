@@ -25,7 +25,7 @@ function About() {
         {/* Header */}
         <div className="mb-8 animate-fade-up text-center">
           <div className="mx-auto mb-4 h-20 w-20 overflow-hidden rounded-[22px] shadow-lg">
-            <img src="/icon-192.png" alt="Wethra logo" className="h-full w-full object-cover" />
+            <img src="/icon-192.png" alt="Aeruvo logo" className="h-full w-full object-cover" />
           </div>
           <h1 className="text-3xl font-semibold tracking-tight">{APP_CONFIG.name}</h1>
           <p className="mt-2 text-sm text-muted-foreground">Version {APP_CONFIG.version}</p>
@@ -38,7 +38,7 @@ function About() {
           </h2>
           <p className="leading-relaxed text-foreground/90">{APP_CONFIG.tagline}</p>
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-            Wethra combines real-time weather data with a clothing recommendation engine built for
+            Aeruvo combines real-time weather data with a clothing recommendation engine built for
             Canadian commuters — students, transit riders, cyclists, and anyone who has ever stepped
             outside underdressed.
           </p>
@@ -71,7 +71,7 @@ function About() {
         {activeSocials.length > 0 && (
           <section className="glass-card mb-4 rounded-[2rem] p-6 animate-fade-up delay-200">
             <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              Follow Wethra
+              Follow Aeruvo
             </h2>
             <div className="space-y-2">
               {activeSocials.map((s) => (

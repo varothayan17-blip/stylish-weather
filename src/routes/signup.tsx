@@ -7,7 +7,7 @@ import { ArrowRight, Mail, User, Lock, Eye, EyeOff } from "lucide-react";
 export const Route = createFileRoute("/signup")({
   head: () => ({
     meta: [
-      { title: "Sign in — Wethra" },
+      { title: "Sign in — Aeruvo" },
       {
         name: "description",
         content: "Create an account or sign in to sync your preferences and saved outfits.",
@@ -176,7 +176,7 @@ function Signup() {
         </form>
 
         <div className="mt-4 animate-fade-up delay-200 space-y-3 text-center text-xs text-muted-foreground">
-          <p>Wethra uses your email and password to secure your account. Minimum 6 characters.</p>
+          <p>Aeruvo uses your email and password to secure your account. Minimum 6 characters.</p>
           <p>
             <Link to="/" className="font-medium text-primary">
               Skip for now — continue as guest

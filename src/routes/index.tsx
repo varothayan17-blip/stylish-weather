@@ -45,14 +45,14 @@ import {
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Wethra — What to wear today" },
+      { title: "Aeruvo — What to wear today" },
       {
         name: "description",
         content:
           "Personalized clothing recommendations for Canadians based on real-time weather, wind chill, and your commute.",
       },
-      { property: "og:title", content: "Wethra" },
-      { property: "og:description", content: "Know exactly what to wear before you step outside." },
+      { property: "og:title", content: "Aeruvo" },
+      { property: "og:description", content: "Know what to wear before you leave." },
     ],
   }),
   component: Home,
@@ -177,13 +177,13 @@ function Home() {
               Here's what tomorrow looks like.
             </p>
           )}
-          <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">Wethra</h1>
+          <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">Aeruvo</h1>
         </div>
         <div className="flex items-center gap-2">
           <Link
             to="/premium"
             className="glass-card grid h-9 w-9 shrink-0 place-items-center rounded-full text-primary"
-            title="Wethra Premium"
+            title="Aeruvo Premium"
           >
             <Crown className="h-4 w-4" />
           </Link>

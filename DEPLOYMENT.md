@@ -1,4 +1,4 @@
-# Deploying Wethra
+# Deploying Aeruvo
 
 This app deploys to **Vercel** (via Nitro's `vercel` preset, pinned
 explicitly in `vite.config.ts`). `npm run build` always produces the same
@@ -38,7 +38,7 @@ There is no static `index.html` at the output root — `/` is intentionally
 handled by the SSR function, which renders the full page server-side on
 every request. This was verified by directly invoking the built function
 locally and confirming it returns `200` with the real rendered HTML
-(`<title>Wethra — What to wear today</title>`), not just by checking that
+(`<title>Aeruvo — What to wear today</title>`), not just by checking that
 files exist on disk.
 
 ## Option A — Deploy via the Vercel dashboard (recommended)
@@ -54,7 +54,7 @@ files exist on disk.
    - **Install Command:** `npm install`
 4. Add your environment variables (see below) in Project Settings →
    Environment Variables before the first build.
-5. Deploy. Connect `wethra.app` under Project Settings → Domains.
+5. Deploy. Connect `aeruvo.app` under Project Settings → Domains.
 
 ## Option B — Deploy via the Vercel CLI
 

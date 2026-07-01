@@ -6,7 +6,7 @@ export const Route = createFileRoute("/privacy")({
   head: () => ({
     meta: [
       { title: `Privacy Policy — ${APP_CONFIG.name}` },
-      { name: "description", content: "How Wethra handles your data." },
+      { name: "description", content: "How Aeruvo handles your data." },
     ],
   }),
   component: Privacy,
@@ -29,7 +29,7 @@ function Privacy() {
 
         <div className="space-y-6 text-sm leading-relaxed text-foreground/85">
           <Section title="Overview">
-            Wethra is a weather and clothing recommendation app. This policy explains what data we
+            Aeruvo is a weather and clothing recommendation app. This policy explains what data we
             collect, how we use it, and your rights. We collect only what is necessary to provide
             recommendations and sync your preferences across devices.
           </Section>
@@ -63,7 +63,7 @@ function Privacy() {
 
           <Section title="Data we do not collect">
             <ul className="mt-2 space-y-2">
-              <Li>Passwords — Wethra does not use password-based authentication.</Li>
+              <Li>Passwords — Aeruvo does not use password-based authentication.</Li>
               <Li>
                 Payment information — payments are processed by Stripe. We do not see or store card
                 numbers.
@@ -145,12 +145,12 @@ function Privacy() {
           </Section>
 
           <Section title="Children">
-            Wethra is not directed at children under 13. We do not knowingly collect data from
+            Aeruvo is not directed at children under 13. We do not knowingly collect data from
             children.
           </Section>
 
           <Section title="Changes to this policy">
-            We will post updates here with a new "Last updated" date. Continued use of Wethra after
+            We will post updates here with a new "Last updated" date. Continued use of Aeruvo after
             changes constitutes acceptance of the updated policy.
           </Section>
 

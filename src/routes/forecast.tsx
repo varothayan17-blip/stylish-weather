@@ -15,7 +15,7 @@ import { ChevronDown, Droplets } from "lucide-react";
 export const Route = createFileRoute("/forecast")({
   head: () => ({
     meta: [
-      { title: "Weekly Forecast — Wethra" },
+      { title: "Weekly Forecast — Aeruvo" },
       { name: "description", content: "Your 7-day outlook with a clothing call for every day." },
     ],
   }),
@@ -126,6 +126,11 @@ function Forecast() {
                 <div className="w-24 shrink-0">
                   <p className="text-sm font-semibold">{dayLabel(day.date, i)}</p>
                   <p className="truncate text-xs text-muted-foreground">{day.condition}</p>
+                  {day.stormWarning && (
+                    <p className="truncate text-[10px] text-amber-500 dark:text-amber-400">
+                      ⚠ {day.stormWarning}
+                    </p>
+                  )}
                 </div>
                 <WeatherIcon code={day.code} className="h-8 w-8 shrink-0 text-primary" />
                 <div className="flex flex-1 items-center justify-end gap-3">
@@ -169,6 +174,11 @@ function Forecast() {
                   {rec.commuteWarning && (
                     <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
                       {rec.commuteWarning}
+                    </p>
+                  )}
+                  {day.stormWarning && (
+                    <p className="mt-2 text-xs leading-relaxed text-amber-600 dark:text-amber-400">
+                      ⚠ {day.stormWarning}
                     </p>
                   )}
                   <WeatherAlertCards alerts={alerts} />

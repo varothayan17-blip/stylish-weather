@@ -6,7 +6,7 @@ export const Route = createFileRoute("/terms")({
   head: () => ({
     meta: [
       { title: `Terms of Service — ${APP_CONFIG.name}` },
-      { name: "description", content: "Terms of Service for Wethra." },
+      { name: "description", content: "Terms of Service for Aeruvo." },
     ],
   }),
   component: Terms,
@@ -29,12 +29,12 @@ function Terms() {
 
         <div className="space-y-6 text-sm leading-relaxed">
           <Section title="Acceptance">
-            By using Wethra, you agree to these terms. If you do not agree, please do not use the
+            By using Aeruvo, you agree to these terms. If you do not agree, please do not use the
             app. These terms apply to the web app and any installed PWA version.
           </Section>
 
-          <Section title="What Wethra provides">
-            Wethra provides weather-based clothing recommendations. Recommendations are generated
+          <Section title="What Aeruvo provides">
+            Aeruvo provides weather-based clothing recommendations. Recommendations are generated
             automatically from public weather data and predefined clothing logic. They are
             suggestions only — not professional advice. We make no guarantee that the
             recommendations will be suitable for your specific situation, health condition, or
@@ -42,7 +42,7 @@ function Terms() {
           </Section>
 
           <Section title="Accuracy of weather data">
-            Weather data is sourced from Open-Meteo, a third-party provider. Wethra does not control
+            Weather data is sourced from Open-Meteo, a third-party provider. Aeruvo does not control
             the accuracy or availability of this data. Forecasts may be incorrect, delayed, or
             unavailable. Always use your own judgement before going outside, especially in severe
             weather.
@@ -66,18 +66,18 @@ function Terms() {
           </Section>
 
           <Section title="Acceptable use">
-            You agree not to: reverse-engineer or scrape the app; use Wethra in a way that harms
+            You agree not to: reverse-engineer or scrape the app; use Aeruvo in a way that harms
             others; submit false information; or attempt to access other users' data.
           </Section>
 
           <Section title="Intellectual property">
-            Wethra's name, logo, and content are property of the developer. Weather data is provided
+            Aeruvo's name, logo, and content are property of the developer. Weather data is provided
             by Open-Meteo under their open license. Open-source libraries used are credited in the
             app's acknowledgements.
           </Section>
 
           <Section title="Limitation of liability">
-            To the maximum extent permitted by applicable law, Wethra and its developers are not
+            To the maximum extent permitted by applicable law, Aeruvo and its developers are not
             liable for any damages arising from use of the app, including but not limited to
             clothing choices made based on recommendations, inaccurate weather data, or service
             unavailability.

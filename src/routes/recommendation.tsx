@@ -27,7 +27,7 @@ import {
 export const Route = createFileRoute("/recommendation")({
   head: () => ({
     meta: [
-      { title: "Today's outfit — Wethra" },
+      { title: "Today's outfit — Aeruvo" },
       { name: "description", content: "Your AI-picked outfit for today's weather." },
     ],
   }),

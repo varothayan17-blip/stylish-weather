@@ -29,7 +29,7 @@ import { Section, Grid, Choice } from "@/components/FormControls";
 export const Route = createFileRoute("/preferences")({
   head: () => ({
     meta: [
-      { title: "Your preferences — Wethra" },
+      { title: "Your preferences — Aeruvo" },
       {
         name: "description",
         content: "Tell us how you experience the weather so we can dress you for it.",

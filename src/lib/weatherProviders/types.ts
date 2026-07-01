@@ -10,6 +10,11 @@ export type DailyForecast = {
   uvMax: number;
   code: number;
   condition: string;
+  /** Optional secondary alert shown below the primary condition.
+   *  Set when severe weather (thunderstorm, heavy snow, etc.) occurs during
+   *  only part of the day so the primary icon stays representative of the
+   *  dominant daytime condition. Example: "Thunderstorms possible later today." */
+  stormWarning?: string;
 };
 
 export type Weather = {

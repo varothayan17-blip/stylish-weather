@@ -1,4 +1,4 @@
-# WeatherWear AI — Architecture
+# Aeruvo — Architecture
 
 This document explains how the codebase is put together: the folder
 structure, and how data actually flows through the five subsystems that

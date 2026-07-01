@@ -1,10 +1,10 @@
-// Wethra service worker — deliberately simple. It only caches the
+// Aeruvo service worker — deliberately simple. It only caches the
 // app shell (same-origin JS/CSS/fonts/images) so the app opens instantly on
 // repeat visits and the UI still loads offline. It NEVER caches weather or
 // geocoding API responses — those must always hit the network, otherwise
 // you'd risk showing yesterday's temperature.
 
-const CACHE_NAME = "wethra-shell-v1";
+const CACHE_NAME = "aeruvo-shell-v1";
 const STATIC_EXTENSIONS = [
   ".js",
   ".css",

@@ -7,7 +7,7 @@ export const Route = createFileRoute("/support")({
   head: () => ({
     meta: [
       { title: `Support — ${APP_CONFIG.name}` },
-      { name: "description", content: "Get help with Wethra." },
+      { name: "description", content: "Get help with Aeruvo." },
     ],
   }),
   component: Support,
@@ -15,12 +15,12 @@ export const Route = createFileRoute("/support")({
 
 const FAQ: { q: string; a: string }[] = [
   {
-    q: "How does Wethra decide what to recommend?",
-    a: "Wethra fetches real-time weather for your location — temperature, feels-like temperature, wind speed, precipitation probability, and current conditions. It then applies a clothing recommendation engine that considers your cold/heat sensitivity and commute type. The engine prioritizes the feels-like temperature, not the raw thermometer reading, because wind chill and humidity affect what you actually feel outside.",
+    q: "How does Aeruvo decide what to recommend?",
+    a: "Aeruvo fetches real-time weather for your location — temperature, feels-like temperature, wind speed, precipitation probability, and current conditions. It then applies a clothing recommendation engine that considers your cold/heat sensitivity and commute type. The engine prioritizes the feels-like temperature, not the raw thermometer reading, because wind chill and humidity affect what you actually feel outside.",
   },
   {
     q: "Why does the umbrella recommendation sometimes appear when it looks clear?",
-    a: "The umbrella recommendation is based on the next 4 hours of precipitation probability, not just the current moment. If there is a 50%+ chance of rain arriving within the next few hours, Wethra flags it so you can bring an umbrella when you leave — not only when it is already raining.",
+    a: "The umbrella recommendation is based on the next 4 hours of precipitation probability, not just the current moment. If there is a 50%+ chance of rain arriving within the next few hours, Aeruvo flags it so you can bring an umbrella when you leave — not only when it is already raining.",
   },
   {
     q: "What is the Regret Risk score?",
@@ -28,7 +28,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Why are my preferences not restoring on a new device?",
-    a: "To sync your data across devices, you need to sign in with the same email address you used on your original device. Go to Settings → Account and enter your name and email. Wethra will restore your preferences, premium status, and saved outfits from the cloud.",
+    a: "To sync your data across devices, you need to sign in with the same email address you used on your original device. Go to Settings → Account and enter your name and email. Aeruvo will restore your preferences, premium status, and saved outfits from the cloud.",
   },
   {
     q: "What is Premium?",
@@ -39,12 +39,12 @@ const FAQ: { q: string; a: string }[] = [
     a: "Tap 'Save this outfit' on any recommendation. The outfit is saved locally on your device and, if you are signed in, synced to your cloud profile. You can view saved outfits in the Saved tab. The same outfit can only be saved once per calendar day — re-tapping the button on the same day will not create a duplicate.",
   },
   {
-    q: "Does Wethra work offline?",
+    q: "Does Aeruvo work offline?",
     a: "The app shell (all screens, navigation, and saved data) is cached by the service worker and loads instantly without an internet connection. Weather data and recommendations require a live internet connection — they cannot be generated from cached data because forecasts update continuously.",
   },
   {
-    q: "How does Wethra use my location?",
-    a: "Location is used only to fetch weather for your area. Your GPS coordinates are sent to Open-Meteo (the weather provider) to retrieve the current forecast. Wethra does not store your location on its servers. You can also set a city manually in Preferences without granting location permission.",
+    q: "How does Aeruvo use my location?",
+    a: "Location is used only to fetch weather for your area. Your GPS coordinates are sent to Open-Meteo (the weather provider) to retrieve the current forecast. Aeruvo does not store your location on its servers. You can also set a city manually in Preferences without granting location permission.",
   },
   {
     q: "How do I delete my account?",
@@ -52,7 +52,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Why does the weather feel inaccurate for my city?",
-    a: "Wethra uses Open-Meteo, a high-resolution open-source weather model. For best results, use 'Use my location' on the Home screen or search for your specific neighbourhood in Preferences. Large cities can have different microclimates — a city-wide forecast may not reflect your exact street.",
+    a: "Aeruvo uses Open-Meteo, a high-resolution open-source weather model. For best results, use 'Use my location' on the Home screen or search for your specific neighbourhood in Preferences. Large cities can have different microclimates — a city-wide forecast may not reflect your exact street.",
   },
 ];
 

@@ -71,7 +71,20 @@ export function recommend(w: Weather, p: Prefs): Recommendation {
   const RAIN_CODES = new Set([51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99]);
   const umbrella = w.precipProb >= 40 || RAIN_CODES.has(w.code);
   const gloves = feels <= -2;
-  const sunglasses = w.uv >= 5;
+
+  // Sunglasses only make sense when precipitation isn't actively occurring.
+  // UV is typically 0–2 during rain, but a stale UV reading could be elevated
+  // from earlier in the day — suppress to avoid the "sunglasses in a downpour" contradiction.
+  const sunglasses = w.uv >= 5 && !RAIN_CODES.has(w.code) && w.precipProb < 40;
+
+  // Sandals + rain is a trust-breaking contradiction. If precipitation is
+  // expected (umbrella flag already accounts for code + probability), replace
+  // Sandals with Sneakers. The rest of the outfit (linen shirt, shorts, cap)
+  // is still appropriate for a hot rainy day — only the footwear changes.
+  if (umbrella) {
+    const sandalsIdx = outfit.indexOf("Sandals");
+    if (sandalsIdx !== -1) outfit[sandalsIdx] = "Sneakers";
+  }
 
   // ── Condition-aware headline override ────────────────────────────────────
   // The temperature band above sets the headline based on how warm or cold it

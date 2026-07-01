@@ -9,7 +9,7 @@ import { Sparkles, Check, Shirt, Bell, BarChart3 } from "lucide-react";
 export const Route = createFileRoute("/premium")({
   head: () => ({
     meta: [
-      { title: "Wethra Premium — $1/month" },
+      { title: "Aeruvo Premium — $1/month" },
       {
         name: "description",
         content:
