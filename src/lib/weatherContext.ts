@@ -19,7 +19,12 @@
 
 import type { Weather } from "./weather";
 import type { Prefs } from "./preferences";
-import { OUTFIT_BAND_EDGES } from "./recommend"; // thresholds stay canonical here
+import { OUTFIT_BAND_EDGES } from "./recommend";
+import {
+  umbrellaLevel as computeUmbrellaLevel,
+  rainTimingPhrase,
+  type UmbrellaLevel,
+} from "./precipAdvice";
 
 /**
  * Named temperature bands.
@@ -43,9 +48,17 @@ export type WeatherContext = {
   band: TemperatureBand; // which temperature category applies
 
   // Accessories — universal across all profiles
-  umbrella: boolean;
+  umbrella: boolean; // true when umbrellaLevel >= 1 (backward-compatible)
   gloves: boolean;
   sunglasses: boolean;
+
+  // Umbrella intensity level (0–3) for tiered display.
+  // 0 = none, 1 = consider, 2 = recommended, 3 = strongly recommended.
+  umbrellaLevel: import("./precipAdvice").UmbrellaLevel;
+
+  // Natural-language rain timing derived from hourly data, e.g.
+  // "Rain expected between 3 PM and 6 PM." — null if no rain expected.
+  rainTiming: string | null;
 
   // Additive clothing requirements — the profile decides the garment name
   needsWaterproof: boolean; // heavy rain (precipProb >= 60) or rain code
@@ -59,7 +72,6 @@ export type WeatherContext = {
   mood: "sunny" | "cloudy" | "rainy" | "snowy" | "cold" | "hot";
 
   // Headline — the single sentence shown at the top of the recommendation card.
-  // Temperature-derived first, then overridden by dominant condition.
   headline: string;
 
   // Commute-specific advice, context-aware and consistent with the outfit band.
@@ -89,20 +101,29 @@ export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
   const band = bandFor(feels);
 
   // ── Accessory decisions ──────────────────────────────────────────────────
-  // Three independent umbrella triggers (30% = industry standard):
-  //   1. Meaningful daily rain probability
-  //   2. Current WMO code is a precipitation type
-  //   3. Secondary storm warning is active (stormWarning forwarded via hasSecondaryWeather)
-  const umbrella = w.precipProb >= 30 || RAIN_CODES.has(w.code) || (w.hasSecondaryWeather ?? false);
+  // Four-tier umbrella level computed from daily precipProb + hourly spike check.
+  // `umbrella: boolean` is kept for backward compatibility.
+  const hourlyForAdvice = w.hourly.map((h) => ({
+    hour: parseInt(h.time.slice(11, 13), 10),
+    prob: h.precipProb,
+    code: h.code,
+  }));
+  const rawLevel = computeUmbrellaLevel(w.precipProb, hourlyForAdvice);
+  const rainCodeActive = RAIN_CODES.has(w.code);
+  // Active rain code or secondary weather signal promotes to at least level 1
+  const effectiveLevel: UmbrellaLevel =
+    rawLevel === 0 && (rainCodeActive || (w.hasSecondaryWeather ?? false)) ? 1 : rawLevel;
+  const umbrella = effectiveLevel >= 1;
+  // Rain timing derived from hourly data — null when no rain expected
+  const rainTiming = umbrella ? rainTimingPhrase(hourlyForAdvice) : null;
 
   const gloves = feels <= -2;
 
-  // Sunglasses: only when UV is elevated, it's not actively raining, and
-  // rain risk isn't high enough to carry an umbrella.
-  const sunglasses = w.uv >= 5 && !RAIN_CODES.has(w.code) && w.precipProb < 30;
+  // Sunglasses: suppressed when precipitation is active or rain risk is high
+  const sunglasses = w.uv >= 5 && !rainCodeActive && w.precipProb < 30;
 
   // ── Additive clothing requirements ───────────────────────────────────────
-  const needsWaterproof = w.precipProb >= 60 || RAIN_CODES.has(w.code);
+  const needsWaterproof = w.precipProb >= 60 || rainCodeActive;
   const needsSnowBoots = w.snowProb > 0;
   const needsWindbreaker = w.windKph >= 25;
   const rainRisk = umbrella; // same condition, named semantically for profiles
@@ -223,6 +244,8 @@ export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
     feels,
     band,
     umbrella,
+    umbrellaLevel: effectiveLevel,
+    rainTiming,
     gloves,
     sunglasses,
     needsWaterproof,

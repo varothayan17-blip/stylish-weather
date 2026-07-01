@@ -68,7 +68,7 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     date: d.date,
     tempMaxC: d.day.maxtemp_c,
     tempMinC: d.day.mintemp_c,
-    feelsMaxC: d.day.maxtemp_c, // WeatherAPI doesn't expose a daily feels-like max directly
+    feelsMaxC: d.day.maxtemp_c,
     feelsMinC: d.day.mintemp_c,
     precipProb: d.day.daily_chance_of_rain,
     snowCm: d.day.totalsnow_cm,
@@ -76,6 +76,8 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     uvMax: d.day.uv,
     code: d.day.condition.code,
     condition: d.day.condition.text,
+    stormWarning: undefined,
+    hourlyPrecip: [], // WeatherAPI.com provider does not expose per-hour precip
   }));
 
   return {

@@ -10,11 +10,15 @@ export type DailyForecast = {
   uvMax: number;
   code: number;
   condition: string;
-  /** Optional secondary alert shown below the primary condition.
-   *  Set when severe weather (thunderstorm, heavy snow, etc.) occurs during
-   *  only part of the day so the primary icon stays representative of the
-   *  dominant daytime condition. Example: "Thunderstorms possible later today." */
+  /** Optional secondary alert shown below the primary condition. */
   stormWarning?: string;
+  /**
+   * Per-hour precipitation snapshot for the day (08:00–23:00 local).
+   * Populated by openMeteo.ts from the hourly.precipitation_probability and
+   * hourly.weather_code arrays so forecast cards can derive rain timing
+   * without hard-coding any times. Empty array if hourly data is unavailable.
+   */
+  hourlyPrecip: { hour: number; prob: number; code: number }[];
 };
 
 export type Weather = {

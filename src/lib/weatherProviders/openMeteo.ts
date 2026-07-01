@@ -368,13 +368,11 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
 
   // ── Daily forecast — representative daytime condition per day ────────────
   const hourlyWeatherCodes = h.weather_code as number[];
+  const hourlyPrecipProbs = h.precipitation_probability as number[];
 
   const daily: DailyForecast[] = (d.time as string[]).map((date, i) => {
     const rawDailyCode: number = d.weather_code[i];
     const dayPrecipMax: number = d.precipitation_probability_max?.[i] ?? 0;
-    // precipitation_sum is the total measured/forecast mm for the day.
-    // This is the key evidence field: if code=95 but precipSum=0.00mm,
-    // the thunderstorm label is a model artefact and must be demoted.
     const dayPrecipMm: number = d.precipitation_sum?.[i] ?? 0;
 
     const dayResolved = getRepresentativeDayCondition(
@@ -382,9 +380,24 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       hourlyTimes,
       hourlyWeatherCodes,
       dayPrecipMax,
-      dayPrecipMm, // ← actual mm per day, not just probability
+      dayPrecipMm,
       rawDailyCode,
     );
+
+    // Per-hour precipitation for this calendar day (6 AM–11 PM).
+    // Stored on DailyForecast so precipAdvice.ts can derive rain timing
+    // from real API data without inventing any values.
+    const hourlyPrecip: { hour: number; prob: number; code: number }[] = [];
+    for (let h_i = 0; h_i < hourlyTimes.length; h_i++) {
+      if (!hourlyTimes[h_i].startsWith(date)) continue;
+      const hr = parseInt(hourlyTimes[h_i].slice(11, 13), 10);
+      if (hr < 6) continue;
+      hourlyPrecip.push({
+        hour: hr,
+        prob: hourlyPrecipProbs[h_i] ?? 0,
+        code: hourlyWeatherCodes[h_i] ?? 0,
+      });
+    }
 
     return {
       date,
@@ -399,6 +412,7 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       code: dayResolved.code,
       condition: dayResolved.condition,
       stormWarning: dayResolved.stormWarning,
+      hourlyPrecip,
     };
   });
 

@@ -22,6 +22,39 @@ export function fetchWeather(lat: number, lon: number, city = "Your location") {
 import type { DailyForecast, Weather } from "./weatherProviders";
 
 export function dailyToWeather(day: DailyForecast, city: string): Weather {
+  // Use the real per-hour precipitation data stored on DailyForecast when
+  // available. precipAdvice.ts uses w.hourly to derive rain timing — if we
+  // use the old 2-slot synthetic approximation, we'd get misleading timing
+  // like "Rain between 6 AM and 3 PM" for every forecast day regardless of
+  // when the rain actually occurs.
+  const hourly =
+    day.hourlyPrecip.length > 0
+      ? day.hourlyPrecip.map((h) => ({
+          time: `${day.date}T${String(h.hour).padStart(2, "0")}:00`,
+          tempC: h.hour < 12 ? day.tempMinC : day.tempMaxC,
+          precipProb: h.prob,
+          code: h.code,
+          isDay: h.hour >= 6 && h.hour <= 21,
+        }))
+      : [
+          // Fallback for the dormant weatherApiCom provider which doesn't
+          // populate hourlyPrecip — two synthetic slots as before.
+          {
+            time: `${day.date}T06:00`,
+            tempC: day.tempMinC,
+            precipProb: day.precipProb,
+            code: day.code,
+            isDay: true,
+          },
+          {
+            time: `${day.date}T15:00`,
+            tempC: day.tempMaxC,
+            precipProb: day.precipProb,
+            code: day.code,
+            isDay: true,
+          },
+        ];
+
   return {
     tempC: day.tempMaxC,
     feelsLikeC: day.feelsMaxC,
@@ -33,27 +66,8 @@ export function dailyToWeather(day: DailyForecast, city: string): Weather {
     isDay: true,
     condition: day.condition,
     city,
-    // Forward the stormWarning signal so recommend() can act on it.
-    // When this is true, recommend() forces umbrella=true and swaps sandals
-    // for sneakers even if the primary WMO code is clear and precipProb alone
-    // is below the umbrella threshold.
     hasSecondaryWeather: Boolean(day.stormWarning),
-    hourly: [
-      {
-        time: `${day.date}T06:00`,
-        tempC: day.tempMinC,
-        precipProb: day.precipProb,
-        code: day.code,
-        isDay: true,
-      },
-      {
-        time: `${day.date}T15:00`,
-        tempC: day.tempMaxC,
-        precipProb: day.precipProb,
-        code: day.code,
-        isDay: true,
-      },
-    ],
+    hourly,
     daily: [],
   };
 }

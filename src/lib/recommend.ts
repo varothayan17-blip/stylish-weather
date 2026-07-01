@@ -16,6 +16,7 @@
 
 import type { Weather } from "./weather";
 import type { Prefs } from "./preferences";
+import type { UmbrellaLevel } from "./precipAdvice";
 import { analyzeWeather } from "./weatherContext";
 import { getProfile, selectOutfit } from "./clothingProfiles";
 
@@ -23,11 +24,14 @@ export type Recommendation = {
   headline: string;
   outfit: string[];
   umbrella: boolean;
+  /** Four-tier umbrella intensity: 0=none 1=consider 2=recommended 3=strongly */
+  umbrellaLevel: UmbrellaLevel;
+  /** Natural-language rain timing, e.g. "Rain expected between 3 PM and 6 PM." */
+  rainTiming: string | null;
   gloves: boolean;
   sunglasses: boolean;
   commuteWarning?: string;
   mood: "sunny" | "cloudy" | "rainy" | "snowy" | "cold" | "hot";
-  /** Adjusted felt temperature — the value the recommendation was based on. */
   effectiveFeelsC: number;
 };
 
@@ -50,6 +54,8 @@ export function recommend(w: Weather, p: Prefs): Recommendation {
     headline: ctx.headline,
     outfit,
     umbrella: ctx.umbrella,
+    umbrellaLevel: ctx.umbrellaLevel,
+    rainTiming: ctx.rainTiming,
     gloves: ctx.gloves,
     sunglasses: ctx.sunglasses,
     commuteWarning: ctx.commuteWarning,

@@ -10,6 +10,7 @@ import { getErrorMessage } from "@/lib/utils";
 import { recommend } from "@/lib/recommend";
 import { computeRegretRisk, type RegretLevel } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
+import { UMBRELLA_LABEL, UMBRELLA_ICON } from "@/lib/precipAdvice";
 import { ChevronDown, Droplets } from "lucide-react";
 
 export const Route = createFileRoute("/forecast")({
@@ -175,6 +176,17 @@ function Forecast() {
                     <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
                       {rec.commuteWarning}
                     </p>
+                  )}
+                  {/* Tiered umbrella advice — shown only when level ≥ 1 */}
+                  {rec.umbrellaLevel > 0 && UMBRELLA_LABEL[rec.umbrellaLevel] && (
+                    <div className="mt-3 space-y-0.5">
+                      <p className="text-xs font-medium text-primary">
+                        {UMBRELLA_ICON[rec.umbrellaLevel]} {UMBRELLA_LABEL[rec.umbrellaLevel]}
+                      </p>
+                      {rec.rainTiming && (
+                        <p className="text-xs text-muted-foreground">{rec.rainTiming}</p>
+                      )}
+                    </div>
                   )}
                   {day.stormWarning && (
                     <p className="mt-2 text-xs leading-relaxed text-amber-600 dark:text-amber-400">
