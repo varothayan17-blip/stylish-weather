@@ -27,8 +27,8 @@ import { getErrorMessage } from "@/lib/utils";
 import { recommend } from "@/lib/recommend";
 import { computeRegretRisk } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
+import { UMBRELLA_LABEL, UMBRELLA_ICON } from "@/lib/precipAdvice";
 import {
-  Umbrella,
   Wind,
   Droplets,
   Sun,
@@ -322,13 +322,25 @@ function Home() {
               ))}
             </ul>
 
-            <div className="mt-5 flex flex-wrap gap-2">
-              {rec.umbrella && (
-                <Chip
-                  icon={<Umbrella className="h-3.5 w-3.5" />}
-                  label={`Rain today (${Math.round(weather.precipProb)}%)`}
-                />
-              )}
+            {/* Tiered umbrella advice — replaces the old boolean chip.
+                Visible directly on the Home screen so users never miss it. */}
+            {rec.umbrellaLevel > 0 && UMBRELLA_LABEL[rec.umbrellaLevel] && (
+              <div className="mt-4 flex gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                <span className="mt-0.5 shrink-0 text-base leading-none">
+                  {UMBRELLA_ICON[rec.umbrellaLevel]}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium leading-snug text-foreground/90">
+                    {UMBRELLA_LABEL[rec.umbrellaLevel]}
+                  </p>
+                  {rec.rainTiming && (
+                    <p className="mt-0.5 text-xs text-muted-foreground">{rec.rainTiming}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4 flex flex-wrap gap-2">
               {rec.gloves && <Chip icon={<Hand className="h-3.5 w-3.5" />} label="Wear gloves" />}
               {rec.sunglasses && <Chip icon={<Sun className="h-3.5 w-3.5" />} label="Sunglasses" />}
             </div>

@@ -75,15 +75,64 @@ function Forecast() {
   }, [prefs, refreshTick]);
 
   // Build a per-day recommendation + risk score by running the same engine
-  // used on Home against a reshaped day of forecast data.
+  // NIGHT-AWARE HEADLINE MAP: rec.headline comes from analyzeWeather() which has
+  // no concept of day/night. For the Tonight card we swap the positive daytime
+  // phrases with calm evening equivalents at the display layer.
+  // Storm, rain, snow, and cold overrides are equally valid at night — unchanged.
+  const NIGHT_HEADLINES: Record<string, string> = {
+    "Hot — dress light and hydrate.": "Warm night — dress light and stay cool.",
+    "Warm & lovely — keep it breezy.": "Warm evening — light clothing is enough.",
+    "Beautiful day — easy layers.": "Pleasant evening — easy layers.",
+    "Crisp & cool — a light hoodie is perfect.": "Cool evening — a light hoodie is ideal.",
+  };
+
   const days = useMemo(() => {
     if (!weather || !prefs) return [];
-    return weather.daily.map((d) => {
-      const dayWeather = dailyToWeather(d, weather.city);
+
+    const currentHour = new Date().getHours();
+    const isLateEvening = currentHour >= 20;
+
+    return weather.daily.map((d, index) => {
+      let effectiveDay = d;
+      let isTonightCard = false;
+
+      if (index === 0 && isLateEvening) {
+        isTonightCard = true;
+
+        const remainingHourly = d.hourlyPrecip.filter((h) => h.hour >= currentHour);
+        const remainingPrecipProb =
+          remainingHourly.length > 0 ? Math.max(...remainingHourly.map((h) => h.prob)) : 0;
+
+        effectiveDay = {
+          ...d,
+          tempMaxC: weather.tempC,
+          feelsMaxC: weather.feelsLikeC,
+          tempMinC: d.tempMinC,
+          feelsMinC: d.feelsMinC,
+          code: weather.code,
+          condition: weather.condition,
+          precipProb: remainingPrecipProb,
+          hourlyPrecip: remainingHourly,
+          stormWarning:
+            remainingHourly.some((h) => [95, 96, 99].includes(h.code)) && remainingPrecipProb >= 20
+              ? d.stormWarning
+              : undefined,
+        };
+      }
+
+      const dayWeather = dailyToWeather(effectiveDay, weather.city);
       const rec = recommend(dayWeather, prefs);
       const risk = computeRegretRisk(dayWeather, prefs, rec);
       const alerts = getWeatherAlerts(dayWeather);
-      return { day: d, rec, risk, alerts };
+
+      // Night-aware headline: swap daytime positive phrases for evening equivalents.
+      // Only applies to the Tonight card — all future day cards use daytime wording.
+      const displayHeadline =
+        isTonightCard && rec.headline in NIGHT_HEADLINES
+          ? NIGHT_HEADLINES[rec.headline]
+          : rec.headline;
+
+      return { day: effectiveDay, rec, displayHeadline, risk, alerts, isTonightCard };
     });
   }, [weather, prefs]);
 
@@ -112,8 +161,9 @@ function Forecast() {
       )}
 
       <div className="space-y-3">
-        {days.map(({ day, rec, risk, alerts }, i) => {
+        {days.map(({ day, rec, displayHeadline, risk, alerts, isTonightCard }, i) => {
           const open = openIndex === i;
+          const cardLabel = isTonightCard ? "Tonight" : dayLabel(day.date, i);
           return (
             <section
               key={day.date}
@@ -125,7 +175,7 @@ function Forecast() {
                 aria-expanded={open}
               >
                 <div className="w-24 shrink-0">
-                  <p className="text-sm font-semibold">{dayLabel(day.date, i)}</p>
+                  <p className="text-sm font-semibold">{cardLabel}</p>
                   <p className="truncate text-xs text-muted-foreground">{day.condition}</p>
                   {day.stormWarning && (
                     <p className="truncate text-[10px] text-amber-500 dark:text-amber-400">
@@ -133,13 +183,20 @@ function Forecast() {
                     </p>
                   )}
                 </div>
-                <WeatherIcon code={day.code} className="h-8 w-8 shrink-0 text-primary" />
+                {/* isDay=false for Tonight so Moon/CloudMoon replaces Sun/CloudSun */}
+                <WeatherIcon
+                  code={day.code}
+                  isDay={!isTonightCard}
+                  className="h-8 w-8 shrink-0 text-primary"
+                />
                 <div className="flex flex-1 items-center justify-end gap-3">
                   {day.precipProb >= 30 && (
                     <span className="flex items-center gap-1 text-xs text-primary">
                       <Droplets className="h-3.5 w-3.5" />
                       {Math.round(day.precipProb)}%
-                      <span className="text-[10px] text-muted-foreground">day</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {isTonightCard ? "now" : "day"}
+                      </span>
                     </span>
                   )}
                   <span
@@ -160,7 +217,7 @@ function Forecast() {
 
               {open && (
                 <div className="border-t border-border/60 px-4 pb-4 pt-3">
-                  <p className="text-sm font-medium leading-snug">{rec.headline}</p>
+                  <p className="text-sm font-medium leading-snug">{displayHeadline}</p>
                   <ul className="mt-3 space-y-1.5">
                     {rec.outfit.map((item) => (
                       <li

@@ -125,7 +125,13 @@ export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
   // ── Additive clothing requirements ───────────────────────────────────────
   const needsWaterproof = w.precipProb >= 60 || rainCodeActive;
   const needsSnowBoots = w.snowProb > 0;
-  const needsWindbreaker = w.windKph >= 25;
+  // Windbreaker threshold is band-dependent:
+  //   Cold/chilly/cool bands: >= 25 km/h — wind significantly amplifies cold
+  //   Mild/warm/hot bands:    >= 30 km/h — at comfortable temperatures,
+  //     25 km/h is a gentle breeze that doesn't warrant an extra layer.
+  //     Only genuinely strong wind (30+) justifies the recommendation.
+  const windThreshold = band === "warm" || band === "hot" || band === "mild" ? 30 : 25;
+  const needsWindbreaker = w.windKph >= windThreshold;
   const rainRisk = umbrella; // same condition, named semantically for profiles
 
   // ── Mood ────────────────────────────────────────────────────────────────
