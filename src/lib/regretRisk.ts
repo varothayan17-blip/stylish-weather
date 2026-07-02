@@ -81,10 +81,13 @@ export function computeRegretRisk(w: Weather, p: Prefs, rec: Recommendation): Re
     if (swing >= 8) {
       factors.push({
         points: 20,
-        reason: `${Math.round(swing)}° swing between today's high and low — one outfit may not cover it.`,
+        reason: `Temperatures drop by about ${Math.round(swing)}°C later — a light layer may be useful this evening.`,
       });
     } else if (swing >= 5) {
-      factors.push({ points: 10, reason: `${Math.round(swing)}° swing expected over the day.` });
+      factors.push({
+        points: 10,
+        reason: `${Math.round(swing)}°C temperature change expected — consider a layer for later.`,
+      });
     }
   }
 
