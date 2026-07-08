@@ -67,6 +67,10 @@ export function dailyToWeather(day: DailyForecast, city: string): Weather {
     condition: day.condition,
     city,
     hasSecondaryWeather: Boolean(day.stormWarning),
+    // Forward sunrise/sunset if the daily entry has them (populated by
+    // openMeteo.ts). Not used by the recommendation engine, only for display.
+    sunrise: day.sunrise,
+    sunset: day.sunset,
     hourly,
     daily: [],
   };

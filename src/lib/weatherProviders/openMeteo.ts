@@ -272,7 +272,7 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,uv_index,is_day` +
     `&hourly=temperature_2m,precipitation_probability,weather_code,snowfall,is_day` +
-    `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max,precipitation_sum,weather_code,snowfall_sum,wind_speed_10m_max,uv_index_max` +
+    `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max,precipitation_sum,weather_code,snowfall_sum,wind_speed_10m_max,uv_index_max,sunrise,sunset` +
     `&timezone=auto&forecast_days=7`;
 
   const res = await fetch(url);
@@ -399,6 +399,11 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       });
     }
 
+    // Open-Meteo returns sunrise/sunset as ISO 8601 local-time strings,
+    // e.g. "2026-07-07T05:42". Stored as-is for display and isDay logic.
+    const sunrise: string | undefined = (d.sunrise as string[] | undefined)?.[i];
+    const sunset: string | undefined = (d.sunset as string[] | undefined)?.[i];
+
     return {
       date,
       tempMaxC: d.temperature_2m_max[i],
@@ -413,6 +418,8 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       condition: dayResolved.condition,
       stormWarning: dayResolved.stormWarning,
       hourlyPrecip,
+      sunrise,
+      sunset,
     };
   });
 
@@ -430,6 +437,10 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     // The live current block never has a stormWarning — that only exists on
     // DailyForecast entries and is forwarded by dailyToWeather().
     hasSecondaryWeather: false,
+    // Today's sunrise/sunset from daily[0] — used by the Home screen for
+    // the sun times card and accurate isDay computation.
+    sunrise: daily[0]?.sunrise,
+    sunset: daily[0]?.sunset,
     hourly: hourlyTimes.slice(startIdx, startIdx + 12).map((t, i) => ({
       time: t,
       tempC: h.temperature_2m[startIdx + i],

@@ -19,6 +19,14 @@ export type DailyForecast = {
    * without hard-coding any times. Empty array if hourly data is unavailable.
    */
   hourlyPrecip: { hour: number; prob: number; code: number }[];
+  /**
+   * ISO 8601 local-time strings for sunrise and sunset on this day,
+   * e.g. "2026-07-07T05:42". Populated from the Open-Meteo daily endpoint.
+   * Optional so existing code that constructs DailyForecast manually
+   * (e.g. tests or the dormant weatherApiCom provider) does not break.
+   */
+  sunrise?: string;
+  sunset?: string;
 };
 
 export type Weather = {
@@ -45,6 +53,14 @@ export type Weather = {
    * day.stormWarning is non-empty.
    */
   hasSecondaryWeather: boolean;
+  /**
+   * ISO 8601 local-time string for sunrise and sunset today,
+   * e.g. "2026-07-07T05:42". Sourced from the Open-Meteo daily endpoint.
+   * Optional so callers that do not need sun times (e.g. dailyToWeather)
+   * do not need to supply them.
+   */
+  sunrise?: string;
+  sunset?: string;
 };
 
 /**

@@ -67,6 +67,38 @@ function computeGreeting(): { label: string; isNight: boolean } {
   return { label: "Good night", isNight: true }; // 9 PM+
 }
 
+/**
+ * Format an ISO local-time string from Open-Meteo ("2026-07-07T05:42")
+ * into a readable 12-hour clock string ("5:42 AM").
+ * The string has no timezone suffix so we parse it literally — no Date
+ * constructor which would apply the browser's own UTC offset.
+ */
+function formatSunTime(isoLocal: string): string {
+  const timePart = isoLocal.slice(11, 16); // "05:42"
+  const [hStr, mStr] = timePart.split(":");
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+  const suffix = h < 12 ? "AM" : "PM";
+  const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${display}:${String(m).padStart(2, "0")} ${suffix}`;
+}
+
+/**
+ * Derive isDay from the API sunrise/sunset strings for the current moment.
+ * Falls back to the API's own is_day flag if sun times are unavailable.
+ * Compares fractional hours to avoid Date timezone pitfalls.
+ */
+function computeIsDay(apiIsDay: boolean, sunrise?: string, sunset?: string): boolean {
+  if (!sunrise || !sunset) return apiIsDay;
+  const toFrac = (s: string) => {
+    const t = s.slice(11, 16);
+    const [h, m] = t.split(":").map(Number);
+    return h + m / 60;
+  };
+  const now = new Date().getHours() + new Date().getMinutes() / 60;
+  return now >= toFrac(sunrise) && now < toFrac(sunset);
+}
+
 function Home() {
   const navigate = useNavigate();
   const [redirecting, setRedirecting] = useState(false);
@@ -246,7 +278,11 @@ function Home() {
                 </p>
               </div>
               <div className="text-primary animate-float">
-                <WeatherIcon code={weather.code} isDay={weather.isDay} className="h-24 w-24" />
+                <WeatherIcon
+                  code={weather.code}
+                  isDay={computeIsDay(weather.isDay, weather.sunrise, weather.sunset)}
+                  className="h-24 w-24"
+                />
               </div>
             </div>
 
@@ -296,6 +332,35 @@ function Home() {
                 </div>
               );
             })}
+          </div>
+        </section>
+      )}
+
+      {/* Sunrise & Sunset card */}
+      {weather?.sunrise && weather?.sunset && (
+        <section className="glass-card mt-4 rounded-3xl p-4 animate-fade-up delay-200">
+          <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Sun
+          </p>
+          <div className="grid grid-cols-2 divide-x divide-border/50">
+            <div className="flex flex-col items-center gap-1 pr-4">
+              <span className="text-2xl leading-none" aria-hidden>🌅</span>
+              <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                Sunrise
+              </p>
+              <p className="text-base font-semibold tabular-nums">
+                {formatSunTime(weather.sunrise)}
+              </p>
+            </div>
+            <div className="flex flex-col items-center gap-1 pl-4">
+              <span className="text-2xl leading-none" aria-hidden>🌇</span>
+              <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                Sunset
+              </p>
+              <p className="text-base font-semibold tabular-nums">
+                {formatSunTime(weather.sunset)}
+              </p>
+            </div>
           </div>
         </section>
       )}
