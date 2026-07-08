@@ -33,6 +33,14 @@ export type Recommendation = {
   commuteWarning?: string;
   mood: "sunny" | "cloudy" | "rainy" | "snowy" | "cold" | "hot";
   effectiveFeelsC: number;
+  /**
+   * Sunscreen advice derived from the UV index. Null when UV < 3.
+   * UV 3-5: optional if spending extended time outdoors
+   * UV 6-7: SPF 30+ recommended
+   * UV 8-10: strongly recommended
+   * UV 11+: very high UV, strong warning
+   */
+  sunscreenAdvice: string | null;
 };
 
 /**
@@ -50,6 +58,21 @@ export function recommend(w: Weather, p: Prefs): Recommendation {
   const profile = getProfile(p.clothingProfile);
   const outfit = selectOutfit(ctx, profile);
 
+  // Sunscreen advice — derived from UV index, independent of clothing profile.
+  // UV comes from w.uv (current reading) which is already on the Weather type.
+  // Thresholds follow the WHO UV index scale.
+  const uv = w.uv;
+  let sunscreenAdvice: string | null = null;
+  if (uv >= 11) {
+    sunscreenAdvice = "Very high UV — apply SPF 50+ and reapply every 2 hours.";
+  } else if (uv >= 8) {
+    sunscreenAdvice = "High UV — sunscreen strongly recommended before going out.";
+  } else if (uv >= 6) {
+    sunscreenAdvice = "Moderate-high UV — SPF 30+ recommended.";
+  } else if (uv >= 3) {
+    sunscreenAdvice = "Sunscreen optional if spending extended time outdoors.";
+  }
+
   return {
     headline: ctx.headline,
     outfit,
@@ -61,5 +84,6 @@ export function recommend(w: Weather, p: Prefs): Recommendation {
     commuteWarning: ctx.commuteWarning,
     mood: ctx.mood,
     effectiveFeelsC: ctx.effectiveFeelsC,
+    sunscreenAdvice,
   };
 }

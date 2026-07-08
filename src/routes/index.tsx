@@ -84,6 +84,27 @@ function formatSunTime(isoLocal: string): string {
 }
 
 /**
+ * Derive a human-readable day label from the date portion of an Open-Meteo
+ * ISO local-time string, e.g. "2026-07-07T05:42" -> "Today" or "Tomorrow".
+ * The date portion is sliced directly from the string (characters 0-9), so
+ * no Date constructor or timezone conversion is needed.
+ * Uses en-CA local date comparison to match how the rest of the app handles
+ * Open-Meteo date strings.
+ */
+function sunDateLabel(isoLocal: string): string {
+  const dateStr = isoLocal.slice(0, 10); // "2026-07-07"
+  const todayStr = new Date().toLocaleDateString("en-CA"); // "2026-07-07"
+  if (dateStr === todayStr) return "Today";
+  // Tomorrow: compare to date + 1 day
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toLocaleDateString("en-CA");
+  if (dateStr === tomorrowStr) return "Tomorrow";
+  // Future days: show weekday name
+  return new Date(dateStr + "T12:00").toLocaleDateString("en-CA", { weekday: "long" });
+}
+
+/**
  * Derive isDay from the API sunrise/sunset strings for the current moment.
  * Falls back to the API's own is_day flag if sun times are unavailable.
  * Compares fractional hours to avoid Date timezone pitfalls.
@@ -348,6 +369,9 @@ function Home() {
               <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 Sunrise
               </p>
+              <p className="text-[10px] text-muted-foreground/70">
+                {sunDateLabel(weather.sunrise)}
+              </p>
               <p className="text-base font-semibold tabular-nums">
                 {formatSunTime(weather.sunrise)}
               </p>
@@ -356,6 +380,9 @@ function Home() {
               <span className="text-2xl leading-none" aria-hidden>🌇</span>
               <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 Sunset
+              </p>
+              <p className="text-[10px] text-muted-foreground/70">
+                {sunDateLabel(weather.sunset)}
               </p>
               <p className="text-base font-semibold tabular-nums">
                 {formatSunTime(weather.sunset)}
@@ -401,6 +428,23 @@ function Home() {
                   {rec.rainTiming && (
                     <p className="mt-0.5 text-xs text-muted-foreground">{rec.rainTiming}</p>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* Sunscreen advice — shown for UV >= 3 */}
+            {rec.sunscreenAdvice && (
+              <div className="mt-4 flex gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                <span className="mt-0.5 shrink-0 text-base leading-none">
+                  🧴
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium leading-snug text-foreground/90">
+                    {rec.sunscreenAdvice}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    UV index: {Math.round(weather.uv)}
+                  </p>
                 </div>
               </div>
             )}
