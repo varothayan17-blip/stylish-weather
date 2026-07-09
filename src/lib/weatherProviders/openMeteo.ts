@@ -315,54 +315,81 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     hourlyProb[startIdx + 3] ?? 0,
   );
   const currentPrecipMm: number = c.precipitation ?? 0;
-  const precipProb = currentPrecipMm > 0.01 ? 100 : next4hMax;
+  // Treat the live WMO code as authoritative rain evidence.
+  // c.precipitation (15-min accumulation) can be 0.00 mm during light rain
+  // because the measurement window does not always capture ongoing rainfall.
+  // A rain or thunder WMO code is a direct observation and must also force
+  // precipProb to 100 so umbrella logic fires correctly.
+  const currentCodeIsRain =
+    RAIN_CODES.has(c.weather_code) || THUNDER_CODES.has(c.weather_code);
+  const precipProb = currentPrecipMm > 0.01 || currentCodeIsRain ? 100 : next4hMax;
   const snowExpected = snowMax >= 0.05;
 
-  // ── Current condition — validated against next 6 hourly codes ───────────
-  // Use getRepresentativeDayCondition with only the next 6 hours as the
-  // "daytime window" for the current reading — this handles the case where
-  // c.weather_code is an instantaneous noisy reading (e.g. code 95 from
-  // a brief radar blip while conditions are actually clear).
-  const next6hCodes = (h.weather_code as number[]).slice(startIdx, startIdx + 6);
-  const next6hPrecipMax = Math.max(
-    0,
-    hourlyProb[startIdx] ?? 0,
-    hourlyProb[startIdx + 1] ?? 0,
-    hourlyProb[startIdx + 2] ?? 0,
-    hourlyProb[startIdx + 3] ?? 0,
-    hourlyProb[startIdx + 4] ?? 0,
-    hourlyProb[startIdx + 5] ?? 0,
-  );
+  // ── Current condition — use live WMO code directly ──────────────────
+  //
+  // getRepresentativeDayCondition() is designed for *forecast* days where a
+  // frequency vote over 12 daytime hours produces a representative daily
+  // summary. It must NOT be used for the live current reading because:
+  //
+  //   c.weather_code is the most accurate, most recent observation available.
+  //   Passing next6hCodes through a majority vote lets 6 future clear-sky
+  //   codes outvote the current code — so "it is raining right now" becomes
+  //   "Clear sky" because the rain is just ending.
+  //
+  // Two targeted guards are applied instead of the full frequency-vote:
+  //
+  //   Guard A — Thunder-spike demotion (existing rationale):
+  //     Open-Meteo sometimes returns code 95 (Thunderstorm) as an
+  //     instantaneous radar blip on a 0 mm / 5% probability day. Trust
+  //     thunder only when precipProb >= 30% or measured precip > 0.2 mm.
+  //     If not evidenced, demote to the best non-thunder next-hour code.
+  //
+  //   Guard B — Clear-but-raining override (new):
+  //     Open-Meteo’s synoptic weather_code and precipitation accumulation
+  //     fields are updated on different cycles and can describe different
+  //     moments. When the model reports a fair/clear code (0 or 1) but
+  //     c.precipitation > 0.1 mm, the measurement is more trustworthy than
+  //     the synoptic code. Override to code 51 (Light drizzle) — the most
+  //     conservative honest rain code. This only applies to the current
+  //     condition; daily forecast smoothing is unaffected.
 
-  // Build a synthetic "day" slice from current hour for the current condition.
-  // Pass currentPrecipMm as the precipitation evidence so a 0.00mm reading with
-  // code 95 is caught by the evidence gate even for the live current reading.
-  const currentDayCode = nowKey.slice(0, 10);
-  const currentResolved = getRepresentativeDayCondition(
-    currentDayCode,
-    hourlyTimes.slice(startIdx, startIdx + 6).map((_, i) => `${currentDayCode}T${pad(8 + i)}:00`),
-    next6hCodes,
-    next6hPrecipMax,
-    currentPrecipMm, // ← actual measured mm, not just probability
-    c.weather_code,
-  );
+  const thunderEvidencePresent = next4hMax >= 30 || currentPrecipMm > 0.2;
+  const rawCurrentCode: number = c.weather_code;
 
-  const resolvedCode = currentResolved.code;
-  const resolvedCondition = currentResolved.condition;
+  const resolvedCurrentCode: number = (() => {
+    // Guard A: thunder without evidence — demote to best non-thunder next-hour code.
+    if (THUNDER_CODES.has(rawCurrentCode) && !thunderEvidencePresent) {
+      const next6hCodes = (h.weather_code as number[]).slice(startIdx, startIdx + 6);
+      const nonThunder = next6hCodes.filter((code) => !THUNDER_CODES.has(code));
+      if (nonThunder.length === 0) return 2; // Partly cloudy as safe fallback
+      return nonThunder.reduce((best, code) =>
+        codeBucket(code) > codeBucket(best) ? code : best,
+      );
+    }
+    // Guard B: clear/fair code but measurable precipitation recorded.
+    // Use 0.1 mm threshold (not 0.01) to avoid triggering on measurement noise.
+    if (CLEAR_CODES.has(rawCurrentCode) && currentPrecipMm > 0.1) {
+      return 51; // Light drizzle — most conservative honest rain code
+    }
+    // All other codes: use c.weather_code directly as the authoritative observation.
+    return rawCurrentCode;
+  })();
+
+  const resolvedCode = resolvedCurrentCode;
+  const resolvedCondition = codeMap[resolvedCode] ?? codeMap[rawCurrentCode] ?? "—";
 
   if (import.meta.env.DEV) {
     console.debug("[aeruvo:weather] current", {
       city,
-      rawCode: c.weather_code,
-      rawCondition: codeMap[c.weather_code] ?? "—",
+      rawCode: rawCurrentCode,
+      rawCondition: codeMap[rawCurrentCode] ?? "—",
       currentTime,
       nowAtLocation: nowKey,
       currentTimeStaleMinutes,
-      precipProbPct: next6hPrecipMax,
       precipAmountMm: currentPrecipMm,
+      thunderEvidencePresent,
       resolvedCode,
       resolvedCondition,
-      stormWarning: currentResolved.stormWarning,
     });
   }
 
