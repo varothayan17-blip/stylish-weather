@@ -35,10 +35,10 @@ export type Recommendation = {
   effectiveFeelsC: number;
   /**
    * Sunscreen advice derived from the UV index. Null when UV < 3.
-   * UV 3-5: optional if spending extended time outdoors
-   * UV 6-7: SPF 30+ recommended
-   * UV 8-10: strongly recommended
-   * UV 11+: very high UV, strong warning
+   * UV 3-5:  recommended if spending extended time outdoors
+   * UV 6-7:  SPF 30+ before going outdoors
+   * UV 8-10: strongly recommended, reapply every 2 hours
+   * UV 11+:  extreme UV, SPF 50+, protective clothing
    */
   sunscreenAdvice: string | null;
 };
@@ -64,13 +64,15 @@ export function recommend(w: Weather, p: Prefs): Recommendation {
   const uv = w.uv;
   let sunscreenAdvice: string | null = null;
   if (uv >= 11) {
-    sunscreenAdvice = "Very high UV — apply SPF 50+ and reapply every 2 hours.";
+    sunscreenAdvice =
+      "Extreme UV — use SPF 50+, wear protective clothing, and limit direct sun exposure.";
   } else if (uv >= 8) {
-    sunscreenAdvice = "High UV — sunscreen strongly recommended before going out.";
+    sunscreenAdvice =
+      "High UV — sunscreen strongly recommended. Reapply every 2 hours if staying outside.";
   } else if (uv >= 6) {
-    sunscreenAdvice = "Moderate-high UV — SPF 30+ recommended.";
+    sunscreenAdvice = "Apply SPF 30+ sunscreen before going outdoors.";
   } else if (uv >= 3) {
-    sunscreenAdvice = "Sunscreen optional if spending extended time outdoors.";
+    sunscreenAdvice = "Sunscreen recommended if you’ll be outdoors for an extended period.";
   }
 
   return {

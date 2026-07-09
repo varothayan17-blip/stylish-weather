@@ -32,6 +32,9 @@ import {
   Wind,
   Droplets,
   Sun,
+  Sunrise,
+  Sunset,
+  SprayCan,
   Heart,
   MapPin,
   Sparkles,
@@ -376,11 +379,11 @@ function Home() {
       {weather?.sunrise && weather?.sunset && (
         <section className="glass-card mt-4 rounded-3xl p-4 animate-fade-up delay-200">
           <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Sun
+            Sun Today
           </p>
           <div className="grid grid-cols-2 divide-x divide-border/50">
             <div className="flex flex-col items-center gap-1 pr-4">
-              <span className="text-2xl leading-none" aria-hidden>🌅</span>
+              <Sunrise className="h-6 w-6 text-primary" aria-hidden />
               <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 Sunrise
               </p>
@@ -392,7 +395,7 @@ function Home() {
               </p>
             </div>
             <div className="flex flex-col items-center gap-1 pl-4">
-              <span className="text-2xl leading-none" aria-hidden>🌇</span>
+              <Sunset className="h-6 w-6 text-primary" aria-hidden />
               <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 Sunset
               </p>
@@ -450,9 +453,7 @@ function Home() {
             {/* Sunscreen advice — shown for UV >= 3 */}
             {rec.sunscreenAdvice && (
               <div className="mt-4 flex gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
-                <span className="mt-0.5 shrink-0 text-base leading-none">
-                  🧴
-                </span>
+                <SprayCan className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
                 <div className="min-w-0">
                   <p className="text-sm font-medium leading-snug text-foreground/90">
                     {rec.sunscreenAdvice}
