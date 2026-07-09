@@ -347,7 +347,22 @@ function Home() {
                   className="flex min-w-[52px] flex-col items-center gap-1 rounded-2xl px-2 py-2 text-xs"
                 >
                   <span className="text-muted-foreground">{label}</span>
-                  <WeatherIcon code={h.code} isDay={h.isDay} className="h-5 w-5 text-primary" />
+                  <WeatherIcon
+                    code={h.code}
+                    isDay={
+                      // The "Now" slot (i === 0) uses the same sunrise/sunset comparison
+                      // as the hero card, because Open-Meteo's hourly is_day flag marks
+                      // an entire hour as daytime if any part of it overlaps with daylight.
+                      // At 9:33 PM with sunset at 9:00 PM, the 21:00 slot is still
+                      // is_day=1 in the API, but the current moment is clearly night.
+                      // Future slots (i > 0) correctly represent their own hour and are
+                      // left unchanged.
+                      i === 0
+                        ? computeIsDay(h.isDay, weather.sunrise, weather.sunset)
+                        : h.isDay
+                    }
+                    className="h-5 w-5 text-primary"
+                  />
                   <span className="font-semibold tabular-nums">{Math.round(h.tempC)}°</span>
                   <span className="text-[10px] text-primary/80">{h.precipProb}%</span>
                 </div>
