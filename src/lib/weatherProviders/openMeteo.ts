@@ -270,7 +270,7 @@ function getRepresentativeDayCondition(
 async function fetchWeather(lat: number, lon: number, city = "Your location"): Promise<Weather> {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,uv_index,is_day` +
+    `&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,uv_index,is_day,cloud_cover` +
     `&hourly=temperature_2m,precipitation_probability,weather_code,snowfall,is_day` +
     `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max,precipitation_sum,weather_code,snowfall_sum,wind_speed_10m_max,uv_index_max,sunrise,sunset` +
     `&timezone=auto&forecast_days=7`;
@@ -371,6 +371,28 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     if (CLEAR_CODES.has(rawCurrentCode) && currentPrecipMm > 0.1) {
       return 51; // Light drizzle — most conservative honest rain code
     }
+    // Guard C: fair-weather code (0 or 1) but cloud_cover measurement
+    // contradicts it. Open-Meteo’s synoptic weather_code is derived from
+    // a coarser NWP model grid updated hourly; current.cloud_cover is
+    // measured at higher resolution and can diverge by 30–50 percentage
+    // points during rapid sky changes. When the two disagree, trust the
+    // direct measurement.
+    //
+    // Thresholds match WMO’s own definitions (and Open-Meteo’s internal
+    // mapping) used to produce the synoptic codes from cloud fraction:
+    //   < 15%   → Clear sky  (code 0) — keep as-is
+    //   15–40%  → Mainly clear (code 1)
+    //   40–70%  → Partly cloudy (code 2)
+    //   ≥ 70%   → Overcast (code 3)
+    //
+    // Only applied to fair-weather codes (0 and 1). If the code is already
+    // rain, snow, fog, thunder, or overcast (3), this guard never fires.
+    const currentCloudCover: number = c.cloud_cover ?? -1;
+    if (CLEAR_CODES.has(rawCurrentCode) && currentCloudCover >= 15) {
+      if (currentCloudCover >= 70) return 3; // Overcast
+      if (currentCloudCover >= 40) return 2; // Partly cloudy
+      return 1; // Mainly clear
+    }
     // All other codes: use c.weather_code directly as the authoritative observation.
     return rawCurrentCode;
   })();
@@ -387,6 +409,7 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       nowAtLocation: nowKey,
       currentTimeStaleMinutes,
       precipAmountMm: currentPrecipMm,
+      cloudCoverPct: c.cloud_cover ?? "n/a",
       thunderEvidencePresent,
       resolvedCode,
       resolvedCondition,
