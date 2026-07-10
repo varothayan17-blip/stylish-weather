@@ -2,7 +2,19 @@ export type Commute = "walk" | "ttc" | "drive" | "cycle";
 export type Prefs = {
   coldSensitivity: "cold" | "normal" | "hot";
   commute: Commute;
-  city?: { name: string; lat: number; lon: number };
+  city?: {
+    name: string;
+    lat: number;
+    lon: number;
+    /**
+     * ISO 3166-1 alpha-2 country code, e.g. "CA".
+     * Populated when the city was chosen from a search result.
+     * Optional so existing saved preferences without this field
+     * continue to load correctly (countryCode simply missing = no
+     * country boost in search ranking).
+     */
+    countryCode?: string;
+  };
   theme: "light" | "dark" | "system";
   name?: string;
   email?: string;

@@ -59,12 +59,16 @@ function Preferences() {
       return;
     }
     const t = setTimeout(() => {
-      searchCity(q)
+      // Pass the saved city's country code and coordinates so the ranking
+      // algorithm can apply a same-country boost and proximity boost.
+      // countryCode comes only from a previously saved search result —
+      // never inferred from coordinates.
+      searchCity(q, p.city?.countryCode, p.city?.lat, p.city?.lon)
         .then(setResults)
         .catch(() => setResults([]));
     }, 250);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, p.city?.countryCode, p.city?.lat, p.city?.lon]);
 
   function update<K extends keyof Prefs>(k: K, v: Prefs[K]) {
     const next = { ...p, [k]: v };
@@ -195,7 +199,14 @@ function Preferences() {
               <button
                 key={`${r.name}-${r.lat}-${r.lon}`}
                 onClick={() => {
-                  update("city", { name: r.name, lat: r.lat, lon: r.lon });
+                  update("city", {
+                    name: r.name,
+                    lat: r.lat,
+                    lon: r.lon,
+                    // Persist the country code so future searches can apply
+                    // the same-country boost without any coordinate inference.
+                    ...(r.country ? { countryCode: r.country } : {}),
+                  });
                   setQ("");
                   setResults([]);
                 }}
