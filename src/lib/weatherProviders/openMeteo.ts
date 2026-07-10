@@ -491,12 +491,23 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     // the sun times card and accurate isDay computation.
     sunrise: daily[0]?.sunrise,
     sunset: daily[0]?.sunset,
+    // The "Now" slot (i === 0) must always match the hero card exactly.
+    // weather.hourly[0].code comes from h.weather_code[startIdx] — the raw
+    // hourly WMO code — which bypasses every normalization guard (cloud_cover
+    // correction, precipitation override, thunder demotion). This caused the
+    // hero and "Now" to disagree: e.g. hero=Overcast (after Guard C lifted
+    // code 1 to 3) while Now=Rain (raw hourly code 61). Fix: for i === 0
+    // only, use the already-normalized current values. Future slots (i > 0)
+    // continue to use the raw hourly API values unchanged.
     hourly: hourlyTimes.slice(startIdx, startIdx + 12).map((t, i) => ({
       time: t,
-      tempC: h.temperature_2m[startIdx + i],
-      precipProb: h.precipitation_probability?.[startIdx + i] ?? 0,
-      code: h.weather_code[startIdx + i],
-      isDay: (h.is_day?.[startIdx + i] ?? 1) === 1,
+      tempC: i === 0 ? c.temperature_2m : h.temperature_2m[startIdx + i],
+      precipProb:
+        i === 0
+          ? precipProb
+          : (h.precipitation_probability?.[startIdx + i] ?? 0),
+      code: i === 0 ? resolvedCode : h.weather_code[startIdx + i],
+      isDay: i === 0 ? c.is_day === 1 : (h.is_day?.[startIdx + i] ?? 1) === 1,
     })),
     daily,
   };
