@@ -1,4 +1,5 @@
 import { weatherProvider } from "./weatherProviders";
+import { CANADIAN_LOCALITIES } from "./canadianLocalities";
 
 export type { Weather, DailyForecast } from "./weatherProviders";
 
@@ -144,6 +145,7 @@ type GeoResult = {
   admin1?: string;       // province / state name
   _featureCode?: string; // GeoNames feature code, e.g. "PPL", "PPLA", "PPLC"
   _population?: number;  // city population from GeoNames
+  _isLocality?: boolean; // true = injected from CANADIAN_LOCALITIES fallback
 };
 
 /**
@@ -201,6 +203,16 @@ function rankSearchResults(
     // user's saved city. No coordinate-based inference is performed.
     if (preferredCountryCode && r.country === preferredCountryCode) {
       score += 500;
+    }
+
+    // ── Curated locality fallback boost ───────────────────────────────
+    // Results injected from CANADIAN_LOCALITIES matched the query by alias,
+    // meaning they are a direct answer to what the user typed. Give them
+    // a boost so they rank above unrelated foreign results that happened
+    // to contain the search term. This is intentionally lower than the
+    // country-match signal so a closer same-country API result still wins.
+    if (r._isLocality) {
+      score += 350;
     }
 
     // ── Feature code (administrative importance) ───────────────────────
@@ -280,7 +292,41 @@ export async function searchCity(
       _population: x.population,
     }),
   );
-  const ranked = rankSearchResults(raw, q, preferredCountryCode, userLat, userLon);
+  // ── Local locality fallback ─────────────────────────────────────────
+  // Some well-known Canadian localities (former Toronto boroughs etc.) are
+  // absent from GeoNames and therefore never returned by Open-Meteo. We
+  // maintain a curated list and merge matching entries into the result pool
+  // before ranking, then deduplicate by proximity to avoid double entries.
+  const qNorm = q.trim().toLowerCase();
+  const localityMatches: GeoResult[] = CANADIAN_LOCALITIES
+    .filter((loc) =>
+      loc.aliases.some(
+        (alias) => alias === qNorm || alias.startsWith(qNorm) || qNorm.startsWith(alias),
+      ),
+    )
+    .map((loc) => ({
+      name: loc.name,
+      lat: loc.lat,
+      lon: loc.lon,
+      country: loc.country,
+      admin1: loc.admin1,
+      _featureCode: loc.featureCode,
+      _population: loc.population,
+      _isLocality: true,
+    }));
+
+  // Deduplicate: skip a locality entry if the API already returned a
+  // result within 5 km of the same spot (same place, different name form).
+  const DEDUP_KM = 5;
+  const newLocalities = localityMatches.filter(
+    (loc) =>
+      !raw.some(
+        (api) => haversineKm(loc.lat, loc.lon, api.lat, api.lon) < DEDUP_KM,
+      ),
+  );
+
+  const merged = [...raw, ...newLocalities];
+  const ranked = rankSearchResults(merged, q, preferredCountryCode, userLat, userLon);
   // Strip internal ranking fields before returning to callers.
   return ranked.slice(0, 8).map(({ name, lat, lon, country, admin1 }) => ({
     name,
