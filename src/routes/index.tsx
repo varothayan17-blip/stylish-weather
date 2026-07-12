@@ -228,6 +228,14 @@ function Home() {
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
             {greeting.label}
           </p>
+          {/* Personalized greeting — only rendered when the user has saved a name.
+               greeting.label is already "Good morning" / "Good night" etc.
+               Appending the name produces "Good morning, Varo." */}
+          {prefs?.name?.trim() && (
+            <p className="mt-0.5 text-sm font-medium text-foreground/80">
+              {greeting.label}, {prefs.name.trim()}.
+            </p>
+          )}
           {greeting.isNight && (
             <p className="mt-0.5 text-[11px] text-muted-foreground/70">
               {/* Hero always shows current conditions — subtitle should match.
