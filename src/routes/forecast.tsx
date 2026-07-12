@@ -89,16 +89,31 @@ function Forecast() {
   const days = useMemo(() => {
     if (!weather || !prefs) return [];
 
-    const currentHour = new Date().getHours();
-    const isLateEvening = currentHour >= 20;
+    // Determine whether it is currently night using the same sunrise/sunset
+    // comparison as the Home hero card. This ensures the Today card on the
+    // Forecast page always agrees with the hero about day/night state.
+    // weather.sunrise/sunset are ISO local strings e.g. "2026-07-11T05:46".
+    // Comparing fractional hours avoids Date constructor timezone pitfalls.
+    const toFracHour = (iso: string) => {
+      const t = iso.slice(11, 16); // "HH:MM"
+      const [h, m] = t.split(":").map(Number);
+      return h + m / 60;
+    };
+    const nowFrac =
+      new Date().getHours() + new Date().getMinutes() / 60;
+    const isNight =
+      weather.sunrise && weather.sunset
+        ? nowFrac < toFracHour(weather.sunrise) || nowFrac >= toFracHour(weather.sunset)
+        : new Date().getHours() >= 21 || new Date().getHours() < 6; // fallback
 
     return weather.daily.map((d, index) => {
       let effectiveDay = d;
       let isTonightCard = false;
 
-      if (index === 0 && isLateEvening) {
+      if (index === 0 && isNight) {
         isTonightCard = true;
 
+        const currentHour = new Date().getHours();
         const remainingHourly = d.hourlyPrecip.filter((h) => h.hour >= currentHour);
         const remainingPrecipProb =
           remainingHourly.length > 0 ? Math.max(...remainingHourly.map((h) => h.prob)) : 0;
