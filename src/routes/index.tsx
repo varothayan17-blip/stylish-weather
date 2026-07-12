@@ -228,12 +228,12 @@ function Home() {
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
             {greeting.label}
           </p>
-          {/* Personalized greeting — only rendered when the user has saved a name.
-               greeting.label is already "Good morning" / "Good night" etc.
-               Appending the name produces "Good morning, Varo." */}
+          {/* Personalized welcome — only rendered when the user has saved a name.
+               Uses a neutral "Welcome back" rather than repeating the greeting
+               label that already appears in uppercase above it. */}
           {prefs?.name?.trim() && (
             <p className="mt-0.5 text-sm font-medium text-foreground/80">
-              {greeting.label}, {prefs.name.trim()}.
+              Welcome back, {prefs.name.trim()}.
             </p>
           )}
           {greeting.isNight && (
