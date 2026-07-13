@@ -313,7 +313,7 @@ function Home() {
                   </span>
                 </p>
               </div>
-              <div className="text-primary animate-float">
+              <div className="text-primary animate-breathe">
                 <WeatherIcon
                   code={weather.code}
                   isDay={computeIsDay(weather.isDay, weather.sunrise, weather.sunset)}
