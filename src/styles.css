@@ -190,9 +190,7 @@
   box-shadow: var(--glass-shadow);
   border-radius: var(--radius-3xl);
   position: relative;
-}
 
-@utility glass-card {
   &::before {
     content: "";
     position: absolute;
