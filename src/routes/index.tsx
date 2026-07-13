@@ -238,12 +238,11 @@ function Home() {
           )}
           {greeting.isNight && (
             <p className="mt-0.5 text-[11px] text-muted-foreground/70">
-              {/* Hero always shows current conditions — subtitle should match.
-                  Evening (21:00+) vs late night / early morning (0–5) use
-                  different wording but both describe the current moment. */}
-              {new Date().getHours() < 6
-                ? "Here's what the night looks like."
-                : "Here's what the evening looks like."}
+              {/* greeting.isNight is true only when computeGreeting() returns
+                  "Good night" (h < 6 or h >= 21). "Good evening" has
+                  isNight=false and never reaches this block, so no secondary
+                  clock check is needed — the subtitle is always "night". */}
+              Here's what the night looks like.
             </p>
           )}
           <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">Aeruvo</h1>
