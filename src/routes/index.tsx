@@ -250,7 +250,7 @@ function Home() {
         <div className="flex items-center gap-2">
           <Link
             to="/premium"
-            className="glass-card grid h-9 w-9 shrink-0 place-items-center rounded-full text-primary"
+            className="glass-card press grid h-9 w-9 shrink-0 place-items-center rounded-full text-primary"
             title="Aeruvo Premium"
           >
             <Crown className="h-4 w-4" />
@@ -258,7 +258,7 @@ function Home() {
           <button
             onClick={locateMe}
             disabled={locating}
-            className="glass-card flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium disabled:opacity-60"
+            className="glass-card press flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium disabled:opacity-60"
             title="Use my GPS location"
           >
             {locating ? (
@@ -295,7 +295,7 @@ function Home() {
                     onClick={refresh}
                     disabled={refreshing}
                     aria-label="Refresh weather"
-                    className="-m-2.5 p-2.5 text-muted-foreground/70 disabled:opacity-60"
+                    className="press -m-2.5 rounded-full p-2.5 text-muted-foreground/70 disabled:opacity-60"
                   >
                     <RotateCw className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
                   </button>
@@ -345,7 +345,7 @@ function Home() {
 
       {/* Hourly strip */}
       {weather && (
-        <section className="glass-card mt-4 rounded-3xl p-4 animate-fade-up delay-200">
+        <section className="glass-card mt-5 rounded-3xl p-4 animate-fade-up delay-200">
           <div className="-mx-2 flex gap-1 overflow-x-auto px-2 pb-1">
             {weather.hourly.map((h, i) => {
               // Parse the hour directly from the time string ("2026-06-22T14:00")
@@ -389,7 +389,7 @@ function Home() {
 
       {/* Sunrise & Sunset card */}
       {weather?.sunrise && weather?.sunset && (
-        <section className="glass-card mt-4 rounded-3xl p-4 animate-fade-up delay-200">
+        <section className="glass-card mt-5 rounded-3xl p-4 animate-fade-up delay-200">
           <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             Sun Today
           </p>
