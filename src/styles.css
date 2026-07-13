@@ -84,9 +84,14 @@
   --border: oklch(0.88 0.02 240 / 0.6);
   --input: oklch(0.92 0.015 240);
   --ring: oklch(0.62 0.16 248);
-  --glass-bg: oklch(1 0 0 / 0.55);
-  --glass-border: oklch(1 0 0 / 0.6);
-  --glass-shadow: 0 20px 60px -20px oklch(0.4 0.15 248 / 0.35);
+  --glass-bg: oklch(1 0 0 / 0.58);
+  --glass-border: oklch(1 0 0 / 0.7);
+  --glass-highlight: oklch(1 0 0 / 0.9);
+  --glass-shadow:
+    0 1px 0 0 oklch(1 0 0 / 0.5) inset,
+    0 0 0 0.5px oklch(0.62 0.16 248 / 0.08),
+    0 8px 24px -12px oklch(0.4 0.15 248 / 0.18),
+    0 24px 60px -24px oklch(0.4 0.15 248 / 0.28);
   --gradient-sky: linear-gradient(
     180deg,
     oklch(0.92 0.05 230) 0%,
@@ -130,9 +135,14 @@
   --border: oklch(1 0 0 / 0.1);
   --input: oklch(1 0 0 / 0.12);
   --ring: oklch(0.72 0.15 240);
-  --glass-bg: oklch(1 0 0 / 0.06);
-  --glass-border: oklch(1 0 0 / 0.12);
-  --glass-shadow: 0 20px 60px -20px oklch(0 0 0 / 0.6);
+  --glass-bg: oklch(1 0 0 / 0.07);
+  --glass-border: oklch(1 0 0 / 0.14);
+  --glass-highlight: oklch(1 0 0 / 0.22);
+  --glass-shadow:
+    0 1px 0 0 oklch(1 0 0 / 0.08) inset,
+    0 0 0 0.5px oklch(1 0 0 / 0.04),
+    0 10px 30px -14px oklch(0 0 0 / 0.5),
+    0 28px 70px -28px oklch(0 0 0 / 0.7);
   --gradient-sky: linear-gradient(
     180deg,
     oklch(0.18 0.04 258) 0%,
@@ -171,10 +181,22 @@
 
 @utility glass-card {
   background: var(--glass-bg);
-  backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(180%);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
   border-radius: var(--radius-3xl);
+  position: relative;
+}
+
+@utility press {
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease;
+}
+
+@utility press:active {
+  transform: scale(0.97);
 }
 
 @utility gradient-hero {
@@ -200,7 +222,7 @@
 @keyframes fade-up {
   from {
     opacity: 0;
-    transform: translateY(16px);
+    transform: translateY(14px);
   }
   to {
     opacity: 1;
@@ -215,12 +237,26 @@
     background-position: 200% 0;
   }
 }
+@keyframes breathe {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    filter: drop-shadow(0 6px 20px oklch(0.62 0.16 248 / 0.18));
+  }
+  50% {
+    transform: translateY(-6px) scale(1.02);
+    filter: drop-shadow(0 14px 28px oklch(0.62 0.16 248 / 0.28));
+  }
+}
 
 .animate-float {
   animation: float-slow 6s ease-in-out infinite;
 }
+.animate-breathe {
+  animation: breathe 7s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: transform, filter;
+}
 .animate-fade-up {
-  animation: fade-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .delay-100 {
   animation-delay: 0.1s;
@@ -233,4 +269,22 @@
 }
 .delay-400 {
   animation-delay: 0.4s;
+}
+.delay-500 {
+  animation-delay: 0.5s;
+}
+
+/* Respect the user's reduced-motion preference — Apple HIG. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .animate-float,
+  .animate-breathe {
+    animation: none !important;
+  }
 }
