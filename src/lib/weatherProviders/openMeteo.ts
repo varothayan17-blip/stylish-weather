@@ -529,7 +529,33 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
   // precipProb to 100 so umbrella logic fires correctly.
   const currentCodeIsRain =
     RAIN_CODES.has(c.weather_code) || THUNDER_CODES.has(c.weather_code);
-  const precipProb = currentPrecipMm > 0.01 || currentCodeIsRain ? 100 : next4hMax;
+
+  // The per-hour model code h.weather_code[startIdx] is more granular than
+  // the synoptic c.weather_code. Open-Meteo updates the synoptic block once
+  // per hour at the boundary; the hourly layer updates more frequently and
+  // can carry a rain/shower code (e.g. 80 Rain showers) while the synoptic
+  // block still shows 3 (Overcast) from the previous update cycle.
+  // Reading this field gives us a second, independent precipitation signal
+  // that does NOT produce false positives: RAIN_CODES and THUNDER_CODES are
+  // only assigned by the model when it predicts measurable precipitation for
+  // that specific hour. Code 3 (Overcast) or 2 (Partly cloudy) with 9%
+  // probability will stay at those codes in the hourly layer — Guard B2
+  // never fires for them.
+  const currentHourlyCode: number =
+    (h.weather_code as number[])[startIdx] ?? c.weather_code;
+  const currentHourlyCodeIsRain =
+    RAIN_CODES.has(currentHourlyCode) || THUNDER_CODES.has(currentHourlyCode);
+
+  // Force precipProb to 100 when any of the three direct rain signals fire:
+  //   1. Measurable precipitation in the 15-min accumulation window
+  //   2. Synoptic c.weather_code is a rain/thunder code
+  //   3. Per-hour h.weather_code at startIdx is a rain/thunder code
+  // In all other cases (Overcast alone, cloud cover, low probability) fall
+  // through to next4hMax so the existing threshold logic applies unchanged.
+  const precipProb =
+    currentPrecipMm > 0.01 || currentCodeIsRain || currentHourlyCodeIsRain
+      ? 100
+      : next4hMax;
   const snowExpected = snowMax >= 0.05;
 
   // ── Current condition — use live WMO code directly ──────────────────
@@ -577,6 +603,18 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     // Use 0.1 mm threshold (not 0.01) to avoid triggering on measurement noise.
     if (CLEAR_CODES.has(rawCurrentCode) && currentPrecipMm > 0.1) {
       return 51; // Light drizzle — most conservative honest rain code
+    }
+    // Guard B2: synoptic code is a cloud/overcast code (≤ 3) but the
+    // per-hour model code carries an explicit rain/shower/thunder code.
+    // This handles the lag between Open-Meteo's synoptic update cycle
+    // (once per hour at the boundary) and the hourly layer (more granular).
+    // Example: c.weather_code=3 (Overcast), h.weather_code[now]=80 (Showers)
+    //          → hero should show Rain showers, not Overcast.
+    // Safety: RAIN_CODES and THUNDER_CODES are only assigned by the model
+    // when it predicts actual precipitation for that hour. Code 3 with 9%
+    // probability stays at code 3 in the hourly layer — this guard is silent.
+    if (rawCurrentCode <= 3 && currentHourlyCodeIsRain) {
+      return currentHourlyCode;
     }
     // Guard C: fair-weather code (0 or 1) but cloud_cover measurement
     // contradicts it. Open-Meteo’s synoptic weather_code is derived from
@@ -651,6 +689,11 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       nowAtLocation: nowKey,
       currentTimeStaleMinutes,
       precipAmountMm: currentPrecipMm,
+      next4hPrecipProbMax: next4hMax,
+      currentCodeIsRain,
+      currentHourlyCode,
+      currentHourlyCodeIsRain,
+      precipProb,
       cloudCoverPct: c.cloud_cover ?? "n/a",
       thunderEvidencePresent,
       resolvedCode,
