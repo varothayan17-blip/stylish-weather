@@ -29,6 +29,9 @@ const codeMap: Record<number, string> = {
   95: "Thunderstorm",
   96: "Thunderstorm w/ hail",
   99: "Thunderstorm w/ hail",
+  // Custom codes assigned by Aeruvo Guard D (not WMO):
+  709: "Hazy",
+  710: "Smoke haze",
 };
 
 // ── Weather code families ───────────────────────────────────────────────────
@@ -267,6 +270,205 @@ function getRepresentativeDayCondition(
   return { code: primaryCode, condition: primaryCondition, stormWarning };
 }
 
+// ── Open-Meteo Air Quality API — haze / smoke detection ─────────────────────
+//
+// Open-Meteo's standard weather API does not provide any smoke, aerosol, or
+// particulate-matter fields. During wildfire smoke events the NWP model
+// correctly reports code 0 (Clear sky) because the sky is technically
+// cloud-free, but the atmosphere carries enough aerosol to reduce visibility,
+// scatter sunlight orange, and produce unhealthy air quality. This secondary
+// fetch detects that condition.
+//
+// The AQI endpoint is the same provider (open-meteo.com), no extra API key.
+// It runs concurrently with fetchWeather via Promise.allSettled so a failure
+// never blocks the main weather response.
+
+// All fields are optional because:
+//   1. The CAMS European domain (11 km, hourly) only covers Europe.
+//      Outside Europe, data comes from CAMS Global (45 km, 3-hourly).
+//   2. At model-update boundaries or domain edges, individual fields
+//      can be null/undefined even when others are available.
+//   3. Future API changes should degrade gracefully, not crash.
+// All thresholds in classifyAtmosphere use optional-chaining / nullish
+// coalescing so missing fields safely evaluate to 0 (below threshold).
+type AqiSnapshot = {
+  pm2_5?: number;  // μg/m³ — Particulate Matter < 2.5 µm
+  pm10?:  number;  // μg/m³ — Particulate Matter < 10 µm
+  aod?:   number;  // aerosol_optical_depth at 550 nm (dimensionless)
+                   // Direct measure of total column aerosol loading.
+                   // AOD 0.1 = very clean; 0.5 = moderately hazy;
+                   // 1.0+ = heavily hazy / severe smoke.
+  dust?:  number;  // μg/m³ — Saharan dust particles at 10 m
+  co?:    number;  // μg/m³ — Carbon monoxide, wildfire smoke tracer
+                   // Note: API returns μg/m³, not ppm.
+                   // 1 ppm CO ≈ 1162 μg/m³ at STP.
+                   // Wildfire plume: typically > 1000 μg/m³.
+};
+
+/**
+ * Fetch a single-hour snapshot of air-quality / aerosol data from the
+ * Open-Meteo Air Quality API for the given location.
+ * Returns null on network error, non-OK response, or missing data.
+ */
+async function fetchAirQuality(lat: number, lon: number): Promise<AqiSnapshot | null> {
+  try {
+    const url =
+      `https://air-quality-api.open-meteo.com/v1/air-quality` +
+      `?latitude=${lat}&longitude=${lon}` +
+      `&current=pm2_5,pm10,aerosol_optical_depth,dust,carbon_monoxide` +
+      `&timezone=auto`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const j = await res.json();
+    const c = j?.current;
+    if (!c) return null;
+    // Use undefined (not 0) for missing fields so classifyAtmosphere
+    // knows the difference between "measured at 0" and "not available".
+    const snap: AqiSnapshot = {
+      pm2_5: c.pm2_5                 !== null ? (c.pm2_5                 as number) : undefined,
+      pm10:  c.pm10                  !== null ? (c.pm10                  as number) : undefined,
+      aod:   c.aerosol_optical_depth !== null ? (c.aerosol_optical_depth as number) : undefined,
+      dust:  c.dust                  !== null ? (c.dust                  as number) : undefined,
+      co:    c.carbon_monoxide       !== null ? (c.carbon_monoxide       as number) : undefined,
+    };
+    if (import.meta.env.DEV) {
+      console.debug("[aeruvo:aqi] raw current block", c);
+      console.debug("[aeruvo:aqi] snapshot", snap);
+    }
+    return snap;
+  } catch (err) {
+    if (import.meta.env.DEV) console.warn("[aeruvo:aqi] fetch failed", err);
+    return null;
+  }
+}
+
+/**
+ * Guard D — Atmospheric haze / smoke classification.
+ *
+ * Only fires when the resolved current code after Guards A/B/C is 0 or 1
+ * (clear or mainly clear). Rain, snow, fog, thunder, and cloud codes are
+ * never overridden here — they are more perceptually immediate than aerosols.
+ *
+ * Two-tier classification using multi-signal consensus:
+ *
+ * "Smoke haze" (code 710): strong aerosol loading, visibly orange sky,
+ *   potential health risk. Requires TWO or more signals at the strong threshold,
+ *   OR one signal vastly exceeding it.
+ *
+ * "Hazy" (code 709): moderate aerosol loading, reduced but not severely impaired
+ *   visibility. Safer default when evidence is present but not overwhelming.
+ *   Requires ONE or more signals at the moderate threshold.
+ *
+ * Thresholds are intentionally conservative to minimise false positives.
+ * All values are hourly instantaneous from the AQI current block.
+ *
+ * Signal              | Hazy            | Smoke haze
+ * ─────────────────── | ─────────────── | ──────────────
+ * AOD at 550 nm       | ≥ 0.5 (primary) | ≥ 1.0
+ * PM2.5 (μg/m³)       | ≥ 55 (secondary)| ≥ 75 + support
+ * PM10  (μg/m³)       | ≥ 100 (secondary)| ≥ 150
+ * Dust  (μg/m³)       | ≥ 100 (secondary)| ≥ 200
+ * CO    (μg/m³)       | n/a             | ≥ 500 (tracer)
+ *
+ * AOD is the primary signal because it directly measures total-column
+ * aerosol loading regardless of aerosol type. PM2.5 and PM10 can be
+ * elevated from routine traffic and industrial sources without producing
+ * visible haze, so they require AOD or multi-signal corroboration.
+ */
+function classifyAtmosphere(
+  resolvedCode: number,
+  aqi: AqiSnapshot | null,
+): { code: number; condition: string; alert: string | null } | null {
+  // Only override clear-sky codes; all others remain unchanged.
+  if (resolvedCode !== 0 && resolvedCode !== 1) return null;
+  if (!aqi) return null;
+
+  // Use 0 as safe default so missing fields do not trigger thresholds.
+  const pm25 = aqi.pm2_5 ?? 0;
+  const pm10 = aqi.pm10  ?? 0;
+  const aod  = aqi.aod   ?? 0;
+  const dust = aqi.dust  ?? 0;
+  // CO in μg/m³; 1 ppm ≈ 1162 μg/m³. Wildfire plumes typically reach
+  // > 1000–5000 μg/m³ vs background < 200 μg/m³.
+  const co   = aqi.co    ?? 0;
+
+  // ── Smoke haze (code 710) ─────────────────────────────────────────
+  // Requires strongly elevated PM2.5 AND at least one corroborating signal,
+  // OR clearly elevated AOD with any supporting particulate reading.
+  // CO threshold is 1000 μg/m³ (~0.86 ppm) — indicative of wildfire plume.
+  const smokeHaze =
+    (pm25 >= 75 && (aod >= 0.8 || pm10 >= 150 || dust >= 200 || co >= 1000)) ||
+    (aod >= 1.0 && (pm25 >= 55 || pm10 >= 100 || dust >= 100));
+
+  // ── Hazy (code 709) ───────────────────────────────────────────────
+  // AOD ≥ 0.5 is the primary trigger (direct total-column aerosol measure).
+  // PM-only triggers require multi-signal corroboration.
+  const hazy =
+    !smokeHaze && (
+      aod >= 0.5 ||
+      (pm25 >= 55 && (pm10 >= 100 || dust >= 100 || aod >= 0.3)) ||
+      (dust >= 100 && aod >= 0.3)
+    );
+
+  // ── Advisory only ─────────────────────────────────────────────────
+  // Single moderate PM2.5 (≥ 35 μg/m³, WHO "Moderate" tier): preserve
+  // the weather condition but surface an air-quality note.
+  const advisoryOnly = !smokeHaze && !hazy && pm25 >= 35;
+
+  // ── Development logging: classification reasoning ─────────────────
+  if (import.meta.env.DEV) {
+    console.debug("[aeruvo:aqi] classification", {
+      inputs: { pm25, pm10, aod, dust, co },
+      available: {
+        pm2_5: aqi.pm2_5 !== undefined,
+        pm10:  aqi.pm10  !== undefined,
+        aod:   aqi.aod   !== undefined,
+        dust:  aqi.dust  !== undefined,
+        co:    aqi.co    !== undefined,
+      },
+      smokeHaze,
+      hazy,
+      advisoryOnly,
+      reason:
+        smokeHaze
+          ? pm25 >= 75
+            ? `PM2.5=${pm25} + corroborating signal`
+            : `AOD=${aod} + particulate support`
+          : hazy
+            ? aod >= 0.5
+              ? `AOD=${aod} (primary trigger)`
+              : `multi-signal: PM2.5=${pm25}, AOD=${aod}, dust=${dust}`
+            : advisoryOnly
+              ? `PM2.5=${pm25} only (advisory)`
+              : "clean — no override",
+      finalCondition: smokeHaze ? "Smoke haze (710)" : hazy ? "Hazy (709)" : advisoryOnly ? `${codeMap[resolvedCode]} + advisory` : "unchanged",
+    });
+  }
+
+  if (smokeHaze) {
+    return {
+      code: 710,
+      condition: "Smoke haze",
+      alert: "Smoke haze detected — air quality may be unhealthy. Consider limiting time outdoors.",
+    };
+  }
+  if (hazy) {
+    return {
+      code: 709,
+      condition: "Hazy",
+      alert: "Reduced visibility — air may feel hazy or smoky.",
+    };
+  }
+  if (advisoryOnly) {
+    return {
+      code: resolvedCode,
+      condition: codeMap[resolvedCode] ?? "—",
+      alert: "Air quality is slightly elevated. Sensitive groups may wish to limit extended outdoor activity.",
+    };
+  }
+  return null;
+}
+
 async function fetchWeather(lat: number, lon: number, city = "Your location"): Promise<Weather> {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
@@ -275,12 +477,17 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max,precipitation_sum,weather_code,snowfall_sum,wind_speed_10m_max,uv_index_max,sunrise,sunset` +
     `&timezone=auto&forecast_days=7`;
 
-  const res = await fetch(url);
+  // Run AQI and weather fetches concurrently — no added latency.
+  const [res, aqiResult] = await Promise.all([
+    fetch(url),
+    fetchAirQuality(lat, lon),
+  ]);
   if (!res.ok) throw new Error("Weather request failed");
   const j = await res.json();
   const c = j.current;
   const h = j.hourly;
   const d = j.daily;
+  const aqiSnapshot: AqiSnapshot | null = aqiResult;
 
   // ── Locate current hour in the hourly array ──────────────────────────────
   const utcOffsetSec: number = j.utc_offset_seconds ?? 0;
@@ -428,6 +635,13 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
   const resolvedCode = resolvedCurrentCode;
   const resolvedCondition = codeMap[resolvedCode] ?? codeMap[rawCurrentCode] ?? "—";
 
+  // ── Guard D: atmospheric haze / smoke classification ─────────────────────
+  // Only fires when the code after A/B/C is still 0 or 1 (clear/mainly-clear).
+  const atmosphereResult = classifyAtmosphere(resolvedCode, aqiSnapshot);
+  const finalCode      = atmosphereResult?.code      ?? resolvedCode;
+  const finalCondition = atmosphereResult?.condition ?? resolvedCondition;
+  const atmosphericAlert: string | undefined = atmosphereResult?.alert ?? undefined;
+
   if (import.meta.env.DEV) {
     console.debug("[aeruvo:weather] current", {
       city,
@@ -441,6 +655,16 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       thunderEvidencePresent,
       resolvedCode,
       resolvedCondition,
+      // Guard D — atmospheric
+      aqi_pm2_5: aqiSnapshot?.pm2_5 ?? "n/a",
+      aqi_pm10:  aqiSnapshot?.pm10  ?? "n/a",
+      aqi_aod:   aqiSnapshot?.aod   ?? "n/a",
+      aqi_dust:  aqiSnapshot?.dust  ?? "n/a",
+      aqi_co:    aqiSnapshot?.co    ?? "n/a",
+      aqi_null:  aqiSnapshot === null,
+      finalCode,
+      finalCondition,
+      atmosphericAlert: atmosphericAlert ?? "none",
     });
   }
 
@@ -508,13 +732,14 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     precipProb,
     snowProb: snowExpected ? 100 : 0,
     uv: c.uv_index ?? 0,
-    code: resolvedCode,
+    code: finalCode,
     isDay: c.is_day === 1,
-    condition: resolvedCondition,
+    condition: finalCondition,
     city,
     // The live current block never has a stormWarning — that only exists on
     // DailyForecast entries and is forwarded by dailyToWeather().
     hasSecondaryWeather: false,
+    atmosphericAlert,
     // Today's sunrise/sunset from daily[0] — used by the Home screen for
     // the sun times card and accurate isDay computation.
     sunrise: daily[0]?.sunrise,
@@ -534,7 +759,7 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
         i === 0
           ? precipProb
           : (h.precipitation_probability?.[startIdx + i] ?? 0),
-      code: i === 0 ? resolvedCode : h.weather_code[startIdx + i],
+      code: i === 0 ? finalCode : h.weather_code[startIdx + i],
       isDay: i === 0 ? c.is_day === 1 : (h.is_day?.[startIdx + i] ?? 1) === 1,
     })),
     daily,

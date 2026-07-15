@@ -387,6 +387,18 @@ function Home() {
         </section>
       )}
 
+      {/* Atmospheric advisory — shown when Guard D detects haze or smoke haze */}
+      {weather?.atmosphericAlert && (
+        <section className="glass-card mt-4 rounded-3xl px-4 py-3 animate-fade-up delay-150">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 shrink-0 text-base leading-none">⚠️</span>
+            <p className="text-sm text-foreground/80 leading-snug">
+              {weather.atmosphericAlert}
+            </p>
+          </div>
+        </section>
+      )}
+
       {/* Sunrise & Sunset card */}
       {weather?.sunrise && weather?.sunset && (
         <section className="glass-card mt-5 rounded-3xl p-4 animate-fade-up delay-200">

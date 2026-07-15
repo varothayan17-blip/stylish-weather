@@ -61,6 +61,12 @@ export type Weather = {
    */
   sunrise?: string;
   sunset?: string;
+  /**
+   * Atmospheric air-quality advisory for display below the hero card.
+   * Set when haze or smoke is detected via the Air Quality API.
+   * Null/undefined when air quality is normal.
+   */
+  atmosphericAlert?: string;
 };
 
 /**

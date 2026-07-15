@@ -42,10 +42,12 @@ function Terms() {
           </Section>
 
           <Section title="Accuracy of weather data">
-            Weather data is sourced from Open-Meteo, a third-party provider. Aeruvo does not control
-            the accuracy or availability of this data. Forecasts may be incorrect, delayed, or
-            unavailable. Always use your own judgement before going outside, especially in severe
-            weather.
+            Weather data is sourced from Open-Meteo (open-meteo.com), a free and open-source
+            weather API. Air quality and aerosol data is sourced from the Open-Meteo Air Quality
+            API, which uses data from the Copernicus Atmosphere Monitoring Service (CAMS). Aeruvo
+            does not control the accuracy or availability of this data. Forecasts may be incorrect,
+            delayed, or unavailable. Always use your own judgement before going outside, especially
+            in severe weather or poor air quality conditions.
           </Section>
 
           <Section title="Account and data">

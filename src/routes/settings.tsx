@@ -223,7 +223,7 @@ function Settings() {
         </div>
         <div className="mt-2 px-1">
           <p className="text-xs text-muted-foreground/60">
-            Version 1.0.0 · Built for Canadian weather · Open-Meteo weather data
+            Version 1.0.0 · Built for Canadian weather · Weather: Open-Meteo · Air quality: Open-Meteo / CAMS
           </p>
         </div>
         <button

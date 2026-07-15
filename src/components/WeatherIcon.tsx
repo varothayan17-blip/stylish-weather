@@ -9,6 +9,7 @@ import {
   CloudSun,
   CloudMoon,
   CloudMoonRain,
+  Haze,
 } from "lucide-react";
 
 /**
@@ -62,5 +63,10 @@ export function WeatherIcon({
     return <CloudSnow className={className} strokeWidth={1.5} />;
   if ([95, 96, 99].includes(code))
     return <CloudLightning className={className} strokeWidth={1.5} />;
+  // Custom atmospheric codes (not WMO, assigned by Aeruvo Guard D):
+  //   709 = Hazy    (moderate aerosol loading — one signal above threshold)
+  //   710 = Smoke haze (elevated aerosol — two or more strong signals)
+  if (code === 709 || code === 710)
+    return <Haze className={className} strokeWidth={1.5} />;
   return <Cloud className={className} strokeWidth={1.5} />;
 }
