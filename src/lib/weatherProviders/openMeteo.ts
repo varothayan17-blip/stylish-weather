@@ -373,25 +373,53 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     }
     // Guard C: fair-weather code (0 or 1) but cloud_cover measurement
     // contradicts it. Open-Meteo’s synoptic weather_code is derived from
-    // a coarser NWP model grid updated hourly; current.cloud_cover is
-    // measured at higher resolution and can diverge by 30–50 percentage
-    // points during rapid sky changes. When the two disagree, trust the
-    // direct measurement.
+    // the NWP model grid; current.cloud_cover is the total-column cloud
+    // fraction from the same model. The two can diverge because cloud_cover
+    // includes ALL layers (high cirrus, mid-level altocumulus, low stratus)
+    // while the synoptic WMO code is anchored to the dominant layer visible
+    // from the ground. High thin cirrus regularly produces 60–80% total
+    // cloud_cover while the sky looks clear or lightly veiled.
     //
-    // Thresholds match WMO’s own definitions (and Open-Meteo’s internal
-    // mapping) used to produce the synoptic codes from cloud fraction:
-    //   < 15%   → Clear sky  (code 0) — keep as-is
-    //   15–40%  → Mainly clear (code 1)
-    //   40–70%  → Partly cloudy (code 2)
-    //   ≥ 70%   → Overcast (code 3)
+    // Conservative design principles:
+    //   1. The raw WMO code is the primary signal. Guard C only corrects
+    //      obviously lagged conditions, not marginal disagreements.
+    //   2. From code 0/1, NEVER jump directly to Overcast (code 3). The
+    //      maximum uplift for a clear/mainly-clear raw code is Partly cloudy
+    //      (code 2). Overcast is only returned when the raw code is already
+    //      code 2 (Partly cloudy) and cloud_cover is extremely high (≥ 90%).
+    //   3. Thresholds are raised vs WMO definitions to accept that NWP
+    //      total cloud cover routinely reads 10–20% higher than perceived sky
+    //      cover, especially in summer when boundary-layer cumulus is sparse.
     //
-    // Only applied to fair-weather codes (0 and 1). If the code is already
-    // rain, snow, fog, thunder, or overcast (3), this guard never fires.
+    // Correction table (Guard C only):
+    //   raw 0, cloud_cover < 35%    → keep Clear sky  (code 0)
+    //   raw 0, cloud_cover 35–64%   → Mainly clear    (code 1)
+    //   raw 0, cloud_cover ≥ 65%    → Partly cloudy   (code 2) — max for code 0
+    //   raw 1, cloud_cover < 50%    → keep Mainly clear (code 1)
+    //   raw 1, cloud_cover 50–89%   → Partly cloudy   (code 2)
+    //   raw 1, cloud_cover ≥ 90%    → Partly cloudy   (code 2) — max for code 1
+    //   raw 2, cloud_cover ≥ 90%    → Overcast        (code 3)
+    //   raw 3 or non-fair codes     → unchanged (guard never fires)
+    //
+    // Rain, snow, fog, thunder codes are all outside CLEAR_CODES and
+    // rawCurrentCode===2/3 paths, so they are never touched here.
     const currentCloudCover: number = c.cloud_cover ?? -1;
-    if (CLEAR_CODES.has(rawCurrentCode) && currentCloudCover >= 15) {
-      if (currentCloudCover >= 70) return 3; // Overcast
-      if (currentCloudCover >= 40) return 2; // Partly cloudy
-      return 1; // Mainly clear
+    if (currentCloudCover >= 0) {
+      if (rawCurrentCode === 0) {
+        // Clear sky: cap correction at Partly cloudy
+        if (currentCloudCover >= 65) return 2; // Partly cloudy
+        if (currentCloudCover >= 35) return 1; // Mainly clear
+        // < 35% — keep Clear sky
+      } else if (rawCurrentCode === 1) {
+        // Mainly clear: cap correction at Partly cloudy
+        if (currentCloudCover >= 50) return 2; // Partly cloudy
+        // < 50% — keep Mainly clear
+      } else if (rawCurrentCode === 2) {
+        // Partly cloudy: allow promotion to Overcast only at extreme cover
+        if (currentCloudCover >= 90) return 3; // Overcast
+        // < 90% — keep Partly cloudy
+      }
+      // codes 3+ (Overcast, fog, rain, snow, thunder): unchanged
     }
     // All other codes: use c.weather_code directly as the authoritative observation.
     return rawCurrentCode;
