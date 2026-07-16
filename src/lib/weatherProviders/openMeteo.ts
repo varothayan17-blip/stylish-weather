@@ -223,27 +223,50 @@ function getRepresentativeDayCondition(
     } else {
       stormWarning = "A brief thunderstorm is possible later today.";
     }
-  } else if (!originalHadThunder && maxOriginalBucket > dominantBucket) {
-    // Non-thunder severe weather (rain or snow) present but not dominant.
-    const severeCodeMap = new Map<number, number>();
-    for (const code of daytimeCodes) {
-      if (codeBucket(code) === maxOriginalBucket) {
-        severeCodeMap.set(code, (severeCodeMap.get(code) ?? 0) + 1);
+  } else if (!originalHadThunder) {
+    // Non-thunder precipitation in daytime codes.
+    //
+    // Previous logic only warned when maxOriginalBucket > dominantBucket,
+    // which silently failed when:
+    //   • severeCode was initialised to 0 (RAIN_CODES.has(0) = false)
+    //   • the frequency vote tied, making dominantBucket === maxOriginalBucket
+    //     in an unexpected way
+    //   • primaryCode was itself a rain code (so no "not dominant" check
+    //     applied) but a LOWER severity rain code than the max present
+    //
+    // New logic: whenever any daytime code is rain/snow and the primary
+    // condition is NOT itself that same severity, always surface a warning.
+    // This guarantees "Light drizzle does not silently become Clear sky."
+
+    // Collect all daytime rain codes and all daytime snow codes.
+    const daytimeRainCodes = daytimeCodes.filter((c) => RAIN_CODES.has(c));
+    const daytimeSnowCodes = daytimeCodes.filter((c) => SNOW_CODES.has(c));
+    const hasDaytimeRain = daytimeRainCodes.length > 0;
+    const hasDaytimeSnow = daytimeSnowCodes.length > 0;
+
+    // A warning is needed when the primary displayed condition is NOT already
+    // a rain/snow code of equal or greater severity to what was in the hours.
+    const primaryIsRain = RAIN_CODES.has(primaryCode);
+    const primaryIsSnow = SNOW_CODES.has(primaryCode);
+
+    if (hasDaytimeRain && !primaryIsRain) {
+      // Find the most severe daytime rain code for the warning wording.
+      const worstRain = daytimeRainCodes.reduce((best, c) =>
+        codeBucket(c) > codeBucket(best) ? c : best,
+      );
+      const timing = severeTimingFor(codeBucket(worstRain));
+      // Wording scaled to severity
+      if ([65, 66, 67, 82].includes(worstRain)) {
+        stormWarning = `Heavy rain possible ${timing}.`;
+      } else if ([80, 81].includes(worstRain)) {
+        stormWarning = `Brief showers possible ${timing}.`;
+      } else if ([51, 53, 55, 56, 57].includes(worstRain)) {
+        stormWarning = `Light drizzle possible ${timing}.`;
+      } else {
+        stormWarning = `Rain possible ${timing}.`;
       }
-    }
-    let severeCode = 0,
-      severeCount = 0;
-    for (const [code, count] of severeCodeMap) {
-      if (count > severeCount) {
-        severeCode = code;
-        severeCount = count;
-      }
-    }
-    const timing = severeTimingFor(maxOriginalBucket);
-    if (RAIN_CODES.has(severeCode)) {
-      const intensity = [65, 82].includes(severeCode) ? "Heavy rain" : "Rain";
-      stormWarning = `${intensity} possible ${timing}.`;
-    } else if (SNOW_CODES.has(severeCode)) {
+    } else if (hasDaytimeSnow && !primaryIsSnow) {
+      const timing = severeTimingFor(codeBucket(daytimeSnowCodes[0]));
       stormWarning = `Snow possible ${timing}.`;
     }
   }
@@ -502,14 +525,29 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
   const utcOffsetSec: number = j.utc_offset_seconds ?? 0;
   const nowAtLocation = new Date(Date.now() + utcOffsetSec * 1000);
   const pad = (n: number) => String(n).padStart(2, "0");
+
+  // nowKey: truncated to the hour — used to find the current hourly slot
+  // in the forecast array. Must be on the hour boundary to match h.time entries.
   const nowKey =
     `${nowAtLocation.getUTCFullYear()}-${pad(nowAtLocation.getUTCMonth() + 1)}-` +
     `${pad(nowAtLocation.getUTCDate())}T${pad(nowAtLocation.getUTCHours())}:00`;
+
+  // nowFullKey: includes the actual current minute — used ONLY for the
+  // staleness calculation. Using nowKey (:00) caused a misleading -15 result
+  // because c.time is the most-recent 15-min boundary (e.g. "20:15") which
+  // was ahead of the truncated nowKey ("20:00"), giving a negative difference.
+  const nowFullKey =
+    `${nowAtLocation.getUTCFullYear()}-${pad(nowAtLocation.getUTCMonth() + 1)}-` +
+    `${pad(nowAtLocation.getUTCDate())}T` +
+    `${pad(nowAtLocation.getUTCHours())}:${pad(nowAtLocation.getUTCMinutes())}`;
+
   const hourlyTimes = h.time as string[];
   let startIdx = hourlyTimes.findIndex((t) => t >= nowKey);
   if (startIdx === -1) startIdx = 0;
 
-  const currentTime: string = c.time ?? nowKey;
+  const currentTime: string = c.time ?? nowFullKey;
+  // Staleness = how many minutes ago the provider data was valid.
+  // Positive = data is old. Zero = data is current. Never negative.
   const currentTimeStaleMinutes = (() => {
     const parse = (key: string) => {
       const [datePart, timePart] = key.split("T");
@@ -517,7 +555,10 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       const [hh, mi] = timePart.split(":").map(Number);
       return Date.UTC(y, mo - 1, da, hh, mi);
     };
-    return Math.round((parse(nowKey) - parse(currentTime)) / 60000);
+    // nowFullKey has actual minutes; currentTime has the 15-min boundary.
+    // At 20:20 with c.time="20:15": (20:20 - 20:15) = +5 min. Correct.
+    // At 20:05 with c.time="20:00": (20:05 - 20:00) = +5 min. Correct.
+    return Math.max(0, Math.round((parse(nowFullKey) - parse(currentTime)) / 60000));
   })();
 
   // ── Precipitation & snow ─────────────────────────────────────────────────
