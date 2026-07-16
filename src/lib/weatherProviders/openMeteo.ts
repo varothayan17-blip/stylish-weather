@@ -249,8 +249,9 @@ function getRepresentativeDayCondition(
   }
 
   // ── 7. Debug log (development only) ─────────────────────────────────────
-  if (import.meta.env.DEV) {
-    console.debug("[aeruvo:weather] condition resolved", {
+  // TEMP: production logging — revert to DEV guard after verification
+  {
+    console.log("[aeruvo:weather] condition resolved", {
       date,
       rawFallbackCode,
       rawCondition: codeMap[rawFallbackCode] ?? "—",
@@ -331,13 +332,12 @@ async function fetchAirQuality(lat: number, lon: number): Promise<AqiSnapshot | 
       dust:  c.dust                  !== null ? (c.dust                  as number) : undefined,
       co:    c.carbon_monoxide       !== null ? (c.carbon_monoxide       as number) : undefined,
     };
-    if (import.meta.env.DEV) {
-      console.debug("[aeruvo:aqi] raw current block", c);
-      console.debug("[aeruvo:aqi] snapshot", snap);
-    }
+    // TEMP: production logging — revert to DEV guard after verification
+    console.log("[aeruvo:aqi] raw current block", c);
+    console.log("[aeruvo:aqi] snapshot", snap);
     return snap;
   } catch (err) {
-    if (import.meta.env.DEV) console.warn("[aeruvo:aqi] fetch failed", err);
+    console.log("[aeruvo:aqi] fetch failed", err);
     return null;
   }
 }
@@ -416,8 +416,9 @@ function classifyAtmosphere(
   const advisoryOnly = !smokeHaze && !hazy && pm25 >= 35;
 
   // ── Development logging: classification reasoning ─────────────────
-  if (import.meta.env.DEV) {
-    console.debug("[aeruvo:aqi] classification", {
+  // TEMP: production logging — revert to DEV guard after verification
+  {
+    console.log("[aeruvo:aqi] classification", {
       inputs: { pm25, pm10, aod, dust, co },
       available: {
         pm2_5: aqi.pm2_5 !== undefined,
@@ -732,8 +733,9 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
   const finalCondition = atmosphereResult?.condition ?? resolvedCondition;
   const atmosphericAlert: string | undefined = atmosphereResult?.alert ?? undefined;
 
-  if (import.meta.env.DEV) {
-    console.debug("[aeruvo:weather] current", {
+  // TEMP: production logging — revert to DEV guard after verification
+  {
+    console.log("[aeruvo:weather] current", {
       city,
       rawCode: rawCurrentCode,
       rawCondition: codeMap[rawCurrentCode] ?? "—",
