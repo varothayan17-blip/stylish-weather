@@ -472,8 +472,15 @@ function classifyAtmosphere(
 async function fetchWeather(lat: number, lon: number, city = "Your location"): Promise<Weather> {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,uv_index,is_day,cloud_cover` +
-    `&hourly=temperature_2m,precipitation_probability,weather_code,snowfall,is_day` +
+    `&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,rain,showers,uv_index,is_day,cloud_cover` +
+    // rain   = stratiform (frontal/widespread) liquid precipitation in mm
+    // showers = convective precipitation in mm — THIS is what localized summer
+    //           evening showers produce. Previously missing; now requested.
+    `&minutely_15=precipitation,rain,showers,weather_code` +
+    // minutely_15 gives 15-min resolution for the next ~2 days. We use only
+    // the next 4 slots (60 min) to detect imminent convective showers that
+    // the hourly model has not yet upgraded to a rain WMO code.
+    `&hourly=temperature_2m,precipitation_probability,precipitation,rain,showers,weather_code,snowfall,is_day` +
     `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,precipitation_probability_max,precipitation_sum,weather_code,snowfall_sum,wind_speed_10m_max,uv_index_max,sunrise,sunset` +
     `&timezone=auto&forecast_days=7`;
 
@@ -487,6 +494,8 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
   const c = j.current;
   const h = j.hourly;
   const d = j.daily;
+  // minutely_15 block — may be absent if the API omits it for the location.
+  const m15 = j.minutely_15 ?? null;
   const aqiSnapshot: AqiSnapshot | null = aqiResult;
 
   // ── Locate current hour in the hourly array ──────────────────────────────
@@ -522,6 +531,14 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     hourlyProb[startIdx + 3] ?? 0,
   );
   const currentPrecipMm: number = c.precipitation ?? 0;
+  // rain and showers are newly requested current fields (previously missing).
+  // rain   = stratiform liquid mm (frontal/widespread precipitation)
+  // showers = convective mm (localized summer shower events)
+  // Either > 0 is definitive evidence of active precipitation right now.
+  const currentRainMm: number = c.rain ?? 0;
+  const currentShowersMm: number = c.showers ?? 0;
+  const currentAnyPrecipMm = Math.max(currentPrecipMm, currentRainMm, currentShowersMm);
+
   // Treat the live WMO code as authoritative rain evidence.
   // c.precipitation (15-min accumulation) can be 0.00 mm during light rain
   // because the measurement window does not always capture ongoing rainfall.
@@ -531,29 +548,55 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     RAIN_CODES.has(c.weather_code) || THUNDER_CODES.has(c.weather_code);
 
   // The per-hour model code h.weather_code[startIdx] is more granular than
-  // the synoptic c.weather_code. Open-Meteo updates the synoptic block once
-  // per hour at the boundary; the hourly layer updates more frequently and
-  // can carry a rain/shower code (e.g. 80 Rain showers) while the synoptic
-  // block still shows 3 (Overcast) from the previous update cycle.
-  // Reading this field gives us a second, independent precipitation signal
-  // that does NOT produce false positives: RAIN_CODES and THUNDER_CODES are
-  // only assigned by the model when it predicts measurable precipitation for
-  // that specific hour. Code 3 (Overcast) or 2 (Partly cloudy) with 9%
-  // probability will stay at those codes in the hourly layer — Guard B2
-  // never fires for them.
+  // the synoptic c.weather_code (Guard B2 from previous session).
   const currentHourlyCode: number =
     (h.weather_code as number[])[startIdx] ?? c.weather_code;
   const currentHourlyCodeIsRain =
     RAIN_CODES.has(currentHourlyCode) || THUNDER_CODES.has(currentHourlyCode);
 
-  // Force precipProb to 100 when any of the three direct rain signals fire:
-  //   1. Measurable precipitation in the 15-min accumulation window
-  //   2. Synoptic c.weather_code is a rain/thunder code
-  //   3. Per-hour h.weather_code at startIdx is a rain/thunder code
-  // In all other cases (Overcast alone, cloud cover, low probability) fall
-  // through to next4hMax so the existing threshold logic applies unchanged.
+  // ── minutely_15 precipitation check (next 60 minutes) ─────────────
+  // 15-minute resolution data catches imminent convective showers that the
+  // hourly model has not yet upgraded to an explicit rain WMO code. We look
+  // at the first 4 slots (= 60 minutes ahead). The minutely_15 block starts
+  // at the beginning of the current 15-min window, not at startIdx.
+  // Any non-zero rain or showers in the next 60 min = rain is imminent.
+  let m15ShowersMm = 0;
+  let m15RainMm = 0;
+  let m15WmoIsRain = false;
+  if (m15) {
+    const m15Showers = (m15.showers ?? []) as number[];
+    const m15Rain    = (m15.rain    ?? []) as number[];
+    const m15Codes   = (m15.weather_code ?? []) as number[];
+    // Slots 0–3 = current + next 45 minutes (each slot = 15 min)
+    m15ShowersMm = Math.max(0, ...m15Showers.slice(0, 4).map(v => v ?? 0));
+    m15RainMm    = Math.max(0, ...m15Rain.slice(0, 4).map(v => v ?? 0));
+    m15WmoIsRain = m15Codes.slice(0, 4).some(
+      (code: number) => RAIN_CODES.has(code) || THUNDER_CODES.has(code),
+    );
+  }
+  const m15HasPrecip = m15ShowersMm > 0 || m15RainMm > 0 || m15WmoIsRain;
+
+  // Also check hourly rain and showers for the current slot.
+  const hourlyRain    = (h.rain    ?? []) as number[];
+  const hourlyShowers = (h.showers ?? []) as number[];
+  const currentHourlyRainMm    = hourlyRain[startIdx]    ?? 0;
+  const currentHourlyShowersMm = hourlyShowers[startIdx] ?? 0;
+  const currentHourlyHasPrecip = currentHourlyRainMm > 0 || currentHourlyShowersMm > 0;
+
+  // Force precipProb to 100 when any direct rain signal fires.
+  // Priority order (highest to lowest confidence):
+  //   1. Current rain/showers/precipitation > 0 (directly measured now)
+  //   2. Current synoptic WMO code is a rain/thunder code
+  //   3. Current hourly WMO code is a rain/thunder code (Guard B2)
+  //   4. minutely_15 has rain/showers in next 60 min (imminent)
+  //   5. Hourly rain or showers > 0 for current slot
+  // Overcast alone, cloud cover alone, and low probability do NOT trigger.
   const precipProb =
-    currentPrecipMm > 0.01 || currentCodeIsRain || currentHourlyCodeIsRain
+    currentAnyPrecipMm > 0.01 ||
+    currentCodeIsRain ||
+    currentHourlyCodeIsRain ||
+    m15HasPrecip ||
+    currentHourlyHasPrecip
       ? 100
       : next4hMax;
   const snowExpected = snowMax >= 0.05;
@@ -600,21 +643,30 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       );
     }
     // Guard B: clear/fair code but measurable precipitation recorded.
-    // Use 0.1 mm threshold (not 0.01) to avoid triggering on measurement noise.
-    if (CLEAR_CODES.has(rawCurrentCode) && currentPrecipMm > 0.1) {
-      return 51; // Light drizzle — most conservative honest rain code
+    // Now checks rain and showers separately, not just total precipitation.
+    // Showers in particular are the localized convective component that
+    // the previous version missed entirely.
+    if (CLEAR_CODES.has(rawCurrentCode) && currentAnyPrecipMm > 0.1) {
+      // If showers > 0, use Rain showers (80); otherwise Light drizzle (51)
+      return currentShowersMm > 0.1 ? 80 : 51;
     }
     // Guard B2: synoptic code is a cloud/overcast code (≤ 3) but the
     // per-hour model code carries an explicit rain/shower/thunder code.
-    // This handles the lag between Open-Meteo's synoptic update cycle
-    // (once per hour at the boundary) and the hourly layer (more granular).
-    // Example: c.weather_code=3 (Overcast), h.weather_code[now]=80 (Showers)
-    //          → hero should show Rain showers, not Overcast.
-    // Safety: RAIN_CODES and THUNDER_CODES are only assigned by the model
-    // when it predicts actual precipitation for that hour. Code 3 with 9%
-    // probability stays at code 3 in the hourly layer — this guard is silent.
     if (rawCurrentCode <= 3 && currentHourlyCodeIsRain) {
       return currentHourlyCode;
+    }
+    // Guard B3: cloud/overcast code but minutely_15 or hourly rain/showers
+    // fields show measurable precipitation. This catches the case where:
+    //   • The synoptic WMO code = 3 (Overcast)
+    //   • The hourly WMO code   = 3 (model hasn't upgraded)
+    //   • BUT c.showers or h.showers[now] or m15.showers > 0
+    // This is exactly the 8:20 PM Scarborough shower event — localized
+    // convective precipitation that the WMO codes didn't capture but the
+    // rainfall-amount fields did.
+    // Use code 80 (Rain showers) — the most honest label for this case.
+    if (rawCurrentCode <= 3 && (m15HasPrecip || currentHourlyHasPrecip || currentAnyPrecipMm > 0.01)) {
+      const maxShowers = Math.max(currentShowersMm, m15ShowersMm, currentHourlyShowersMm);
+      return maxShowers > 0 ? 80 : 61; // 80 = Rain showers, 61 = Light rain
     }
     // Guard C: fair-weather code (0 or 1) but cloud_cover measurement
     // contradicts it. Open-Meteo’s synoptic weather_code is derived from
@@ -688,7 +740,17 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       currentTime,
       nowAtLocation: nowKey,
       currentTimeStaleMinutes,
-      precipAmountMm: currentPrecipMm,
+      // ── Precipitation signals ──
+      precip_c_precipitation: currentPrecipMm,
+      precip_c_rain: currentRainMm,
+      precip_c_showers: currentShowersMm,
+      precip_currentAnyMm: currentAnyPrecipMm,
+      precip_h_rain: currentHourlyRainMm,
+      precip_h_showers: currentHourlyShowersMm,
+      precip_m15_showersMm: m15ShowersMm,
+      precip_m15_rainMm: m15RainMm,
+      precip_m15_wmoIsRain: m15WmoIsRain,
+      precip_m15_hasPrecip: m15HasPrecip,
       next4hPrecipProbMax: next4hMax,
       currentCodeIsRain,
       currentHourlyCode,
