@@ -693,21 +693,36 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     }
     // Guard B2: synoptic code is a cloud/overcast code (≤ 3) but the
     // per-hour model code carries an explicit rain/shower/thunder code.
-    if (rawCurrentCode <= 3 && currentHourlyCodeIsRain) {
-      return currentHourlyCode;
-    }
-    // Guard B3: cloud/overcast code but minutely_15 or hourly rain/showers
-    // fields show measurable precipitation. This catches the case where:
-    //   • The synoptic WMO code = 3 (Overcast)
-    //   • The hourly WMO code   = 3 (model hasn't upgraded)
-    //   • BUT c.showers or h.showers[now] or m15.showers > 0
-    // This is exactly the 8:20 PM Scarborough shower event — localized
-    // convective precipitation that the WMO codes didn't capture but the
-    // rainfall-amount fields did.
-    // Use code 80 (Rain showers) — the most honest label for this case.
-    if (rawCurrentCode <= 3 && (m15HasPrecip || currentHourlyHasPrecip || currentAnyPrecipMm > 0.01)) {
-      const maxShowers = Math.max(currentShowersMm, m15ShowersMm, currentHourlyShowersMm);
-      return maxShowers > 0 ? 80 : 61; // 80 = Rain showers, 61 = Light rain
+    //
+    // Note: h.weather_code[startIdx] is a FORECAST hourly code, not a
+    // current-block model value. It represents the model's classification
+    // for the whole hour starting at startIdx. At 16:54 it reflects the
+    // model's prediction for 16:00-17:00, which may not have arrived yet
+    // at the user's location. Guard B2 is therefore kept ONLY in the
+    // precipProb path (umbrella advice) and NOT in the icon/condition
+    // resolution path, to prevent showing a rain icon when the user
+    // can see no rain.
+    //
+    // currentHourlyCodeIsRain is still used in precipProb above.
+    // (intentionally not triggering icon change here)
+
+    // Guard B3: cloud/overcast synoptic code but OBSERVED precipitation
+    // (c.precipitation, c.rain, c.showers from the current block) confirms
+    // rain is actually falling now.
+    //
+    // IMPORTANT: Only currentAnyPrecipMm (a live measurement) triggers this
+    // guard. Forecast signals are intentionally excluded:
+    //   - h.rain[now] / h.showers[now]: model-predicted hourly amounts,
+    //     not sensor readings. At 16:54 the model may predict 0.3 mm for
+    //     the 16:00 hour but rain may not have arrived yet at the user's
+    //     location. Using these to set the current condition icon causes
+    //     "Light Rain" to appear when the user sees no rain falling.
+    //   - m15HasPrecip: similarly forecast, not observed.
+    //
+    // These signals still contribute to precipProb so the umbrella advice
+    // remains accurate. They are only excluded from the icon decision.
+    if (rawCurrentCode <= 3 && currentAnyPrecipMm > 0.01) {
+      return currentShowersMm > 0.01 ? 80 : 61;
     }
     // Guard C: fair-weather code (0 or 1) but cloud_cover measurement
     // contradicts it. Open-Meteo’s synoptic weather_code is derived from
