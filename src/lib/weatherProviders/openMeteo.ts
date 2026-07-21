@@ -595,27 +595,112 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
   const currentHourlyCodeIsRain =
     RAIN_CODES.has(currentHourlyCode) || THUNDER_CODES.has(currentHourlyCode);
 
-  // ── minutely_15 precipitation check (next 60 minutes) ─────────────
-  // 15-minute resolution data catches imminent convective showers that the
-  // hourly model has not yet upgraded to an explicit rain WMO code. We look
-  // at the first 4 slots (= 60 minutes ahead). The minutely_15 block starts
-  // at the beginning of the current 15-min window, not at startIdx.
-  // Any non-zero rain or showers in the next 60 min = rain is imminent.
-  let m15ShowersMm = 0;
-  let m15RainMm = 0;
-  let m15WmoIsRain = false;
+  // ── minutely_15 precipitation — current slot vs future window ─────────
+  //
+  // Two independently named groups are extracted:
+  //
+  // 1. CURRENT SLOT (m15Current*): the single 15-min interval whose start
+  //    time is at or before now. Selected via timestamp comparison using the
+    //  UTC offset in the response — the same approach verified in the
+  //    timestamp logic audit. This represents "what the model says is
+  //    happening RIGHT NOW at 15-min resolution".
+  //
+  // 2. FUTURE WINDOW (m15Future*): the next 3 slots (15–45 min ahead).
+  //    Used only in precipProb/umbrella advice. Never used for the hero icon
+  //    because it represents imminent but not yet arrived precipitation.
+  //
+  // Independence note:
+  //   m15Current* is a genuinely different data product from h.*[startIdx]:
+  //   different temporal resolution (15-min vs 60-min), potentially from a
+  //   more recent model sub-cycle. It can disagree with the hourly slot.
+  //   h.rain[startIdx] and h.weather_code[startIdx] are the SAME forecast
+  //   source and cannot independently corroborate each other.
+
+  // Minimum precipitation amount (mm) for icon-level corroboration.
+  // Applied consistently to current-block (c.*) and current minutely slot.
+  const CURRENT_PRECIP_THRESHOLD_MM = 0.05;
+
+  // Find the current 15-min slot index using UTC offset (same logic as the
+  // timestamp audit). nowLocalIso format = "YYYY-MM-DDTHH:MM".
+  const utcOffsetMs2 = utcOffsetSec * 1000;
+  const nowLocalMs2  = Date.now() + utcOffsetMs2;
+  // new Date(localMs).toISOString() gives the local time as a UTC-format
+  // string, which matches the slot time strings in m15.time.
+  const nowLocalIso = new Date(nowLocalMs2).toISOString().slice(0, 16);
+
+  // m15 slot values — default to "no data" when m15 block is absent.
+  let m15CurrentIdx      = -1;
+  let m15CurrentIsRain   = false;  // current-slot WMO code is a rain/thunder code
+  let m15CurrentPrecipMm = 0;      // current-slot precipitation amount
+  let m15CurrentRainMm   = 0;      // current-slot rain amount
+  // Future window (slots 1–3 ahead of current): for precipProb only.
+  let m15FutureIsRain    = false;  // any future slot WMO is rain/thunder
+  let m15FuturePrecipMm  = 0;      // max precip in future window
+  let m15FutureRainMm    = 0;      // max rain in future window
+
   if (m15) {
-    const m15Showers = (m15.showers ?? []) as number[];
-    const m15Rain    = (m15.rain    ?? []) as number[];
-    const m15Codes   = (m15.weather_code ?? []) as number[];
-    // Slots 0–3 = current + next 45 minutes (each slot = 15 min)
-    m15ShowersMm = Math.max(0, ...m15Showers.slice(0, 4).map(v => v ?? 0));
-    m15RainMm    = Math.max(0, ...m15Rain.slice(0, 4).map(v => v ?? 0));
-    m15WmoIsRain = m15Codes.slice(0, 4).some(
-      (code: number) => RAIN_CODES.has(code) || THUNDER_CODES.has(code),
-    );
+    const m15Times  = Array.isArray(m15.time)          ? (m15.time          as string[]) : [];
+    const m15Precip = Array.isArray(m15.precipitation) ? (m15.precipitation as number[]) : [];
+    const m15Rain   = Array.isArray(m15.rain)          ? (m15.rain          as number[]) : [];
+    const m15Codes  = Array.isArray(m15.weather_code)  ? (m15.weather_code  as number[]) : [];
+
+    // Find the current 15-min slot: the last slot whose start time <= now.
+    // We find the first slot strictly after now, then subtract 1.
+    // Edge cases handled explicitly:
+    //   empty array        → no slots, m15CurrentIdx stays -1
+    //   all slots future   → firstFutureIdx === 0, no current slot, stays -1
+    //   all slots past     → firstFutureIdx === -1, current = last slot
+    //   normal case        → firstFutureIdx > 0, current = firstFutureIdx - 1
+    if (m15Times.length === 0) {
+      // No time array — leave m15CurrentIdx at -1.
+    } else {
+      const firstFutureIdx = m15Times.findIndex((t) => !!t && t > nowLocalIso);
+      if (firstFutureIdx === -1) {
+        // All slots are in the past (or equal to now). Use the last valid slot.
+        m15CurrentIdx = m15Times.length - 1;
+      } else if (firstFutureIdx === 0) {
+        // Every slot is in the future — no current slot available.
+        m15CurrentIdx = -1;
+      } else {
+        // Normal case: current slot is the one just before the first future slot.
+        m15CurrentIdx = firstFutureIdx - 1;
+      }
+    }
+    // Clamp to valid array bounds as a final safety net.
+    if (m15CurrentIdx >= m15Times.length) m15CurrentIdx = m15Times.length - 1;
+    const firstFutureIdx = m15CurrentIdx >= 0 ? m15CurrentIdx + 1 : 0;
+
+    if (m15CurrentIdx >= 0) {
+      const curCode = m15Codes[m15CurrentIdx] ?? -1;
+      m15CurrentIsRain   = RAIN_CODES.has(curCode) || THUNDER_CODES.has(curCode);
+      m15CurrentPrecipMm = m15Precip[m15CurrentIdx] ?? 0;
+      m15CurrentRainMm   = m15Rain[m15CurrentIdx]   ?? 0;
+    }
+
+    // Future window: up to 3 slots after current (15–45 min ahead).
+    const futureStart = firstFutureIdx;
+    const futureEnd   = Math.min(futureStart + 3, m15Times.length);
+    for (let fi = futureStart; fi < futureEnd; fi++) {
+      const fc = m15Codes[fi] ?? -1;
+      if (RAIN_CODES.has(fc) || THUNDER_CODES.has(fc)) m15FutureIsRain = true;
+      m15FuturePrecipMm = Math.max(m15FuturePrecipMm, m15Precip[fi] ?? 0);
+      m15FutureRainMm   = Math.max(m15FutureRainMm,   m15Rain[fi]   ?? 0);
+    }
   }
-  const m15HasPrecip = m15ShowersMm > 0 || m15RainMm > 0 || m15WmoIsRain;
+
+  // Legacy alias used in precipProb — covers current + future window.
+  const m15ShowersMm  = 0; // showers not in minutely_15 request (HRRR limitation)
+  const m15RainMm     = Math.max(m15CurrentRainMm, m15FutureRainMm);
+  const m15WmoIsRain  = m15CurrentIsRain || m15FutureIsRain;
+  // m15HasPrecip: current + future, for umbrella/precipProb only
+  const m15HasPrecip  = m15CurrentPrecipMm > 0 || m15CurrentRainMm > 0
+                     || m15CurrentIsRain
+                     || m15FuturePrecipMm > 0 || m15FutureRainMm > 0
+                     || m15FutureIsRain;
+  // m15NowConfirmsRain: ONLY the current 15-min slot, for icon corroboration
+  const m15NowConfirmsRain = m15CurrentIsRain
+                           || m15CurrentPrecipMm > CURRENT_PRECIP_THRESHOLD_MM
+                           || m15CurrentRainMm   > CURRENT_PRECIP_THRESHOLD_MM;
 
   // Also check hourly rain and showers for the current slot.
   const hourlyRain    = (h.rain    ?? []) as number[];
@@ -673,6 +758,7 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
   const thunderEvidencePresent = next4hMax >= 30 || currentPrecipMm > 0.2;
   const rawCurrentCode: number = c.weather_code;
 
+  let iconCorroboration = false; // hoisted for DEV log; set inside IIFE
   const resolvedCurrentCode: number = (() => {
     // Guard A: thunder without evidence — demote to best non-thunder next-hour code.
     if (THUNDER_CODES.has(rawCurrentCode) && !thunderEvidencePresent) {
@@ -691,36 +777,47 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       // If showers > 0, use Rain showers (80); otherwise Light drizzle (51)
       return currentShowersMm > 0.1 ? 80 : 51;
     }
-    // Guard B2: synoptic code is a cloud/overcast code (≤ 3) but the
-    // per-hour model code carries an explicit rain/shower/thunder code.
+    // Guard B2: hourly WMO code is rain + independently corroborated.
     //
-    // Note: h.weather_code[startIdx] is a FORECAST hourly code, not a
-    // current-block model value. It represents the model's classification
-    // for the whole hour starting at startIdx. At 16:54 it reflects the
-    // model's prediction for 16:00-17:00, which may not have arrived yet
-    // at the user's location. Guard B2 is therefore kept ONLY in the
-    // precipProb path (umbrella advice) and NOT in the icon/condition
-    // resolution path, to prevent showing a rain icon when the user
-    // can see no rain.
+    // h.weather_code[startIdx] is one forecast product. To change the hero
+    // icon it must be confirmed by a signal from a DIFFERENT data product:
     //
-    // currentHourlyCodeIsRain is still used in precipProb above.
-    // (intentionally not triggering icon change here)
-
-    // Guard B3: cloud/overcast synoptic code but OBSERVED precipitation
-    // (c.precipitation, c.rain, c.showers from the current block) confirms
-    // rain is actually falling now.
+    //   • currentAnyPrecipMm > CURRENT_PRECIP_THRESHOLD_MM:
+    //     current-block (c.precipitation/rain/showers). Same model but
+    //     different temporal resolution: the 15-min model snapshot vs the
+    //     60-min hourly forecast run. Threshold matches minutely for
+    //     consistency.
     //
-    // IMPORTANT: Only currentAnyPrecipMm (a live measurement) triggers this
-    // guard. Forecast signals are intentionally excluded:
-    //   - h.rain[now] / h.showers[now]: model-predicted hourly amounts,
-    //     not sensor readings. At 16:54 the model may predict 0.3 mm for
-    //     the 16:00 hour but rain may not have arrived yet at the user's
-    //     location. Using these to set the current condition icon causes
-    //     "Light Rain" to appear when the user sees no rain falling.
-    //   - m15HasPrecip: similarly forecast, not observed.
+    //   • m15NowConfirmsRain: the CURRENT 15-minute slot only (not future
+    //     look-ahead). Extracted by timestamp comparison to slot times.
+    //     A separate temporal-resolution signal from the same model data:
+    //     15-min resolution vs 60-min hourly. These are not independent
+    //     physical observations but they use different model time steps
+    //     and can diverge. Only fires if current-slot WMO is a rain code
+    //     or current-slot precip amount exceeds CURRENT_PRECIP_THRESHOLD_MM.
     //
-    // These signals still contribute to precipProb so the umbrella advice
-    // remains accurate. They are only excluded from the icon decision.
+    // What is intentionally EXCLUDED from corroboration:
+    //   • h.rain[startIdx] / h.showers[startIdx]: same hourly slot as
+    //     h.weather_code[startIdx]. One forecast source, two variables.
+    //   • Future minutely slots (m15FutureIsRain etc.): represent rain
+    //     arriving in the next 15–45 min, not rain falling now.
+    //   • m15HasPrecip: covers the full current+future window.
+    //
+    // This design was validated against two real failure cases:
+    //   16:54 (false positive): hourly code=61, but c.*=0 and (pending
+    //     field logs) m15 current slot likely also zero or not yet rain.
+    //     Guard must stay silent without independent confirmation.
+    //   17:05 (false negative): squall active, Apple=Drizzle, Environment
+    //     Canada squall warning, c.*=0 but m15 current slot expected to
+    //     carry rain code or nonzero amount as the squall was underway.
+    iconCorroboration = currentAnyPrecipMm > CURRENT_PRECIP_THRESHOLD_MM || m15NowConfirmsRain;
+    if (rawCurrentCode <= 3 && currentHourlyCodeIsRain && iconCorroboration) {
+      return currentHourlyCode;
+    }
+    // Guard B3: current-block has measurable precipitation but hourly WMO
+    // hasn't upgraded (Guard B2 didn't fire). Any nonzero c.* amount is
+    // sufficient on its own because the current-block product is the
+    // freshest available signal from the same model.
     if (rawCurrentCode <= 3 && currentAnyPrecipMm > 0.01) {
       return currentShowersMm > 0.01 ? 80 : 61;
     }
@@ -791,6 +888,9 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
   if (import.meta.env.DEV) {
     console.debug("[aeruvo:weather] current", {
       city,
+      timestamp: new Date().toISOString(),
+      nowLocalIso,
+      startIdx,
       rawCode: rawCurrentCode,
       rawCondition: codeMap[rawCurrentCode] ?? "—",
       currentTime,
@@ -803,14 +903,22 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
       precip_currentAnyMm: currentAnyPrecipMm,
       precip_h_rain: currentHourlyRainMm,
       precip_h_showers: currentHourlyShowersMm,
-      precip_m15_showersMm: m15ShowersMm,
-      precip_m15_rainMm: m15RainMm,
-      precip_m15_wmoIsRain: m15WmoIsRain,
-      precip_m15_hasPrecip: m15HasPrecip,
+      // current slot (icon corroboration source)
+      m15_currentIdx:          m15CurrentIdx,
+      m15_current_isRain:      m15CurrentIsRain,
+      m15_current_precipMm:    m15CurrentPrecipMm,
+      m15_current_rainMm:      m15CurrentRainMm,
+      m15_nowConfirmsRain:     m15NowConfirmsRain,
+      // future window (precipProb / umbrella only)
+      m15_future_isRain:       m15FutureIsRain,
+      m15_future_precipMm:     m15FuturePrecipMm,
+      m15_future_rainMm:       m15FutureRainMm,
+      m15_hasPrecip_combined:  m15HasPrecip,
       next4hPrecipProbMax: next4hMax,
       currentCodeIsRain,
       currentHourlyCode,
       currentHourlyCodeIsRain,
+      iconCorroboration,
       precipProb,
       cloudCoverPct: c.cloud_cover ?? "n/a",
       thunderEvidencePresent,
