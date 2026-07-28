@@ -66,7 +66,12 @@ export function WeatherIcon({
   // Custom atmospheric codes (not WMO, assigned by Aeruvo Guard D):
   //   709 = Hazy    (moderate aerosol loading — one signal above threshold)
   //   710 = Smoke haze (elevated aerosol — two or more strong signals)
+  // Lucide <Haze> renders as a sun-over-haze-lines glyph, which looks like
+  // a sunrise icon at night. At night, fall back to <CloudFog> which conveys
+  // reduced visibility without the misleading sun shape.
   if (code === 709 || code === 710)
-    return <Haze className={className} strokeWidth={1.5} />;
+    return isDay
+      ? <Haze className={className} strokeWidth={1.5} />
+      : <CloudFog className={className} strokeWidth={1.5} />;
   return <Cloud className={className} strokeWidth={1.5} />;
 }
