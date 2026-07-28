@@ -70,21 +70,31 @@ export const UMBRELLA_ICON: Record<UmbrellaLevel, string> = {
  * Returns a natural-language string or null if no meaningful rain is expected.
  *
  * Algorithm:
- *   1. Find all hours with precipProb ≥ 30 (or a thunder code).
+ *   1. Find all hours with precipProb >= 30 (or a thunder code).
  *   2. Group consecutive hours into windows.
  *   3. Pick the window with the highest average probability.
- *   4. Choose wording based on window span and severity.
+ *   4. Choose wording based on whether rain is active now, starting soon,
+ *      or genuinely in the future.
  *
- * All times come from the API — nothing is invented.
+ * @param nowFrac  Optional fractional hour (0-23.983) = getHours()+getMinutes()/60.
+ *   When supplied, wording is time-aware:
+ *   - current fractional hour is inside the best window -> "happening now"
+ *   - window starts within 60 min                      -> "expected soon"
+ *   - otherwise -> existing daypart / time-range wording
+ *   Omit for future forecast days.
  */
-export function rainTimingPhrase(hourlyPrecip: HourlyPrecipSlot[], threshold = 30): string | null {
+export function rainTimingPhrase(
+  hourlyPrecip: HourlyPrecipSlot[],
+  threshold = 30,
+  nowFrac?: number,
+): string | null {
   if (hourlyPrecip.length === 0) return null;
 
   // Mark which hours meet the rain threshold
   const rainHours = hourlyPrecip.filter((h) => h.prob >= threshold || RAIN_CODES.has(h.code));
   if (rainHours.length === 0) return null;
 
-  // Group consecutive hours (gap ≤ 1 h) into windows
+  // Group consecutive hours (gap <= 1 h) into windows
   const windows: HourlyPrecipSlot[][] = [];
   let current: HourlyPrecipSlot[] = [rainHours[0]];
   for (let i = 1; i < rainHours.length; i++) {
@@ -109,7 +119,29 @@ export function rainTimingPhrase(hourlyPrecip: HourlyPrecipSlot[], threshold = 3
   const hasThunder = best.some((h) => THUNDER_CODES.has(h.code));
   const condition = hasThunder ? "Thunderstorms" : "Rain";
 
-  // Choose phrasing based on span and time of day
+  // ── Time-aware wording when nowFrac is supplied ──────────────────────────
+  // nowFrac is the fractional current hour (e.g. 00:03 = 0.05).
+  // An integer hour H represents the interval [H, H+1), so the best window
+  // covers [startHour, endHour+1). The window is active when nowFrac is
+  // inside that interval.
+  if (nowFrac !== undefined) {
+    const windowIsActive = nowFrac >= startHour && nowFrac < endHour + 1;
+    // minutesToStart is negative when the window has already started.
+    const minutesToStart = (startHour - nowFrac) * 60;
+
+    if (windowIsActive) {
+      // Rain is occurring right now — current fractional hour is inside the
+      // best window. Prioritise this over any daypart label.
+      return `${condition} happening now.`;
+    }
+    if (minutesToStart > 0 && minutesToStart <= 60) {
+      // Rain window starts within the next 60 minutes.
+      return `${condition} expected soon.`;
+    }
+    // Falls through to regular future wording below.
+  }
+
+  // ── Regular wording (future window or no nowFrac supplied) ───────────────
   if (best.length === 1) {
     // Single hour — specific time
     return `${condition} possible around ${formatHour(startHour)}.`;

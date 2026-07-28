@@ -115,7 +115,12 @@ export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
     rawLevel === 0 && (rainCodeActive || (w.hasSecondaryWeather ?? false)) ? 1 : rawLevel;
   const umbrella = effectiveLevel >= 1;
   // Rain timing derived from hourly data — null when no rain expected
-  const rainTiming = umbrella ? rainTimingPhrase(hourlyForAdvice) : null;
+  // Pass the current fractional hour so rainTimingPhrase can detect
+  // whether rain is happening now vs arriving later. At 00:03 with a
+  // rain window spanning 0-7 AM, this produces "happening now" instead
+  // of the misleading "likely this morning".
+  const nowFrac = new Date().getHours() + new Date().getMinutes() / 60;
+  const rainTiming = umbrella ? rainTimingPhrase(hourlyForAdvice, 30, nowFrac) : null;
 
   const gloves = feels <= -2;
 
