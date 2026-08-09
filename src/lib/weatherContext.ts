@@ -23,6 +23,7 @@ import { OUTFIT_BAND_EDGES } from "./recommend";
 import {
   umbrellaLevel as computeUmbrellaLevel,
   rainTimingPhrase,
+  lookAheadUmbrellaAdvice,
   type UmbrellaLevel,
 } from "./precipAdvice";
 
@@ -108,19 +109,93 @@ export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
     prob: h.precipProb,
     code: h.code,
   }));
+  const nowFrac = new Date().getHours() + new Date().getMinutes() / 60;
+  const currentHour = Math.floor(nowFrac);
+  const today0 = w.daily[0];
+
+  // ── Near-term umbrella level (next ~12 hours) ─────────────────────────
+  // Uses w.precipProb (daily aggregate) + hourlyForAdvice spike check,
+  // exactly as origin/main. This is correct for the near-term window because
+  // w.precipProb represents the full-day peak and hourlyForAdvice covers the
+  // next 12 forward slots from now.
   const rawLevel = computeUmbrellaLevel(w.precipProb, hourlyForAdvice);
   const rainCodeActive = RAIN_CODES.has(w.code);
-  // Active rain code or secondary weather signal promotes to at least level 1
-  const effectiveLevel: UmbrellaLevel =
+  // Active rain code or secondary weather signal promotes to at least level 1.
+  let effectiveLevel: UmbrellaLevel =
     rawLevel === 0 && (rainCodeActive || (w.hasSecondaryWeather ?? false)) ? 1 : rawLevel;
+
+  // ── Past-rain deflation guard ──────────────────────────────────────────
+  // w.precipProb is the whole-day maximum and never decreases, so at 18:00
+  // after 15–17 rain it can still be 70% → rawLevel 3. If daily[0].hourlyPrecip
+  // shows no qualifying future slots, the rain has passed and we must not
+  // let the stale w.precipProb inflate the near-term level.
+  //
+  // We cap effectiveLevel to the rain-code-active floor only when ALL of these
+  // are true: daily hourly data is available, no future slot exceeds 30%, and
+  // no rain WMO code is active now. This is a conservative guard — if any
+  // doubt exists, the existing near-term level stands.
+  if (today0?.hourlyPrecip?.length && !rainCodeActive) {
+    const futureQualify = today0.hourlyPrecip.some(
+      (h) => h.hour > currentHour && (h.prob >= 30 || RAIN_CODES.has(h.code) || THUNDER_CODES.has(h.code)),
+    );
+    const shortQualify = hourlyForAdvice.some(
+      (h) => h.hour > currentHour && (h.prob >= 30 || RAIN_CODES.has(h.code) || THUNDER_CODES.has(h.code)),
+    );
+    if (!futureQualify && !shortQualify) {
+      // No meaningful future precipitation: reset to 0 so stale w.precipProb
+      // cannot produce a false umbrella recommendation.
+      effectiveLevel = 0;
+    }
+  }
+
   const umbrella = effectiveLevel >= 1;
-  // Rain timing derived from hourly data — null when no rain expected
-  // Pass the current fractional hour so rainTimingPhrase can detect
-  // whether rain is happening now vs arriving later. At 00:03 with a
-  // rain window spanning 0-7 AM, this produces "happening now" instead
-  // of the misleading "likely this morning".
-  const nowFrac = new Date().getHours() + new Date().getMinutes() / 60;
+  // Rain timing derived from hourly data — null when no rain expected.
+  // Pass nowFrac so "happening now" / "expected soon" are detected.
   const rainTiming = umbrella ? rainTimingPhrase(hourlyForAdvice, 30, nowFrac) : null;
+
+  // ── Full-day look-ahead umbrella promotion ───────────────────────────────
+  // w.hourly covers only ~12 hours from now. w.daily[0].hourlyPrecip covers
+  // 08:00–23:00 of the current calendar day. If the near-term window (12 h)
+  // missed meaningful later rain (e.g. 17:00–20:00 when checked at 07:30),
+  // look-ahead detects it and promotes the umbrella level and timing.
+  //
+  // Priority hierarchy (never demotes existing stronger advice):
+  //   1. Existing near-term advice from hourlyForAdvice (handled above)
+  //      — "happening now" and "expected soon" are already baked into rainTiming
+  //   2. Look-ahead future window from daily[0].hourlyPrecip (here)
+  //   3. No umbrella
+  //
+  // We only promote — never replace near-term "now" or "soon" wording.
+  const lookAhead =
+    today0?.hourlyPrecip?.length
+      ? lookAheadUmbrellaAdvice(today0.hourlyPrecip, nowFrac)
+      : null;
+
+  // Determine whether the existing rainTiming is a near-term "now/soon" phrase
+  // that must not be displaced by later-today wording.
+  const isNearTermTiming =
+    rainTiming !== null &&
+    (rainTiming.includes("happening now") || rainTiming.includes("expected soon"));
+
+  // Promoted umbrella level: whichever is higher, existing or look-ahead.
+  const lookAheadLevel = lookAhead?.level ?? 0;
+  const finalLevel: UmbrellaLevel =
+    lookAheadLevel > effectiveLevel ? lookAhead!.level : effectiveLevel;
+
+  // Promoted timing: use look-ahead wording when:
+  //   • look-ahead found a meaningful future window, AND
+  //   • the current near-term window did NOT produce "now" or "soon" wording
+  //     (those always take precedence), AND
+  //   • either look-ahead promotes the level OR near-term timing is null
+  //     (so the look-ahead phrase fills the gap even when level was already
+  //     high via remainingPrecipProb but hourlyForAdvice had no rain slots).
+  const finalTiming: string | null =
+    lookAhead !== null && !isNearTermTiming &&
+    (lookAheadLevel >= effectiveLevel || rainTiming === null)
+      ? lookAhead.timing
+      : rainTiming;
+
+  const finalUmbrella = finalLevel >= 1;
 
   const gloves = feels <= -2;
 
@@ -137,7 +212,7 @@ export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
   //     Only genuinely strong wind (30+) justifies the recommendation.
   const windThreshold = band === "warm" || band === "hot" || band === "mild" ? 30 : 25;
   const needsWindbreaker = w.windKph >= windThreshold;
-  const rainRisk = umbrella; // same condition, named semantically for profiles
+  const rainRisk = finalUmbrella; // same condition, named semantically for profiles
 
   // ── Mood ────────────────────────────────────────────────────────────────
   let mood: WeatherContext["mood"] = "cloudy";
@@ -254,9 +329,9 @@ export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
   return {
     feels,
     band,
-    umbrella,
-    umbrellaLevel: effectiveLevel,
-    rainTiming,
+    umbrella: finalUmbrella,
+    umbrellaLevel: finalLevel,
+    rainTiming: finalTiming,
     gloves,
     sunglasses,
     needsWaterproof,
