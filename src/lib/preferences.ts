@@ -104,7 +104,63 @@ export type NotificationPrefs = {
 };
 
 export const PREFS_KEY = "weatherwear:prefs";
+
+/**
+ * Compute the next NotificationPrefs from an existing state and desired changes.
+ * Increments schedulingVersion exactly once when ANY scheduling field changes:
+ *   enabled | timezone | reminderHour | reminderMinute
+ * Does NOT increment when none of these change (idempotent saves).
+ * Never writes nextCheckAt or lastProcessedVersion (backend-only fields).
+ *
+ * @param existing  Current stored prefs, or null if first-time opt-in.
+ * @param desired   Partial fields the caller wants to set.
+ * @returns         Complete NotificationPrefs ready to pass to syncNotificationPrefs().
+ */
+export function buildNotificationPrefs(
+  existing: NotificationPrefs | null,
+  desired: Pick<NotificationPrefs, "enabled" | "timezone" | "reminderHour" | "reminderMinute">,
+): NotificationPrefs {
+  const base: NotificationPrefs = existing ?? {
+    enabled: false,
+    timezone: desired.timezone,
+    reminderHour: 7,
+    reminderMinute: 30,
+    schedulingVersion: 0,
+  };
+  // Detect any scheduling-field change
+  const schedulingChanged =
+    desired.enabled !== base.enabled ||
+    desired.timezone !== base.timezone ||
+    desired.reminderHour !== base.reminderHour ||
+    desired.reminderMinute !== base.reminderMinute;
+  return {
+    enabled: desired.enabled,
+    timezone: desired.timezone,
+    reminderHour: desired.reminderHour,
+    reminderMinute: desired.reminderMinute,
+    schedulingVersion: schedulingChanged
+      ? base.schedulingVersion + 1
+      : base.schedulingVersion,
+  };
+}
+
 export const FAV_KEY = "weatherwear:favs";
+/** Key for the one-time notification discovery card dismissal. */
+export const NOTIF_DISMISSED_KEY = "weatherwear:notif-prompt-dismissed";
+
+/**
+ * Feature flag: notification UI is visible only when
+ * VITE_NOTIFICATIONS_ENABLED=true is set in the environment.
+ *
+ * Stage C UI is hidden in production until Stage D/E (FCM token registration
+ * and Cloud Function scheduling) are implemented and tested end-to-end.
+ * This prevents users from "enabling" a feature that cannot yet deliver
+ * reminders, while allowing the UI to be tested on a dev/preview build.
+ *
+ * To enable during development: add VITE_NOTIFICATIONS_ENABLED=true to .env.local
+ */
+export const NOTIFICATIONS_ENABLED =
+  import.meta.env.VITE_NOTIFICATIONS_ENABLED === "true";
 
 export const defaultPrefs: Prefs = {
   coldSensitivity: "normal",

@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { Section, Grid, Choice } from "@/components/FormControls";
 import {
@@ -9,8 +9,14 @@ import {
   defaultPrefs,
   PREFS_KEY,
   FAV_KEY,
+  NOTIF_DISMISSED_KEY,
+  NOTIFICATIONS_ENABLED,
+  buildNotificationPrefs,
   type Prefs,
+  type NotificationPrefs,
 } from "@/lib/preferences";
+import { cloudSync } from "@/lib/cloudSync";
+import { getUid } from "@/lib/auth";
 import { applyTheme, type Theme } from "@/lib/theme";
 import {
   Sun,
@@ -28,6 +34,9 @@ import {
   Shield,
   FileText,
   HelpCircle,
+  Bell,
+  Clock,
+  Globe,
 } from "lucide-react";
 
 export const Route = createFileRoute("/settings")({
@@ -56,12 +65,36 @@ function Settings() {
   const [p, setP] = useState<Prefs>(defaultPrefs);
   const [saved, setSaved] = useState(false);
 
+  // ── Notification preferences state ──────────────────────────────────
+  const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs | null>(null);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifError, setNotifError] = useState<string | null>(null);
+  const [notifSaved, setNotifSaved] = useState(false);
+  // Track the detected local timezone once on mount
+  const detectedTz = useRef<string>(
+    typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : "UTC",
+  );
+
   function syncPrefs() {
     setP(loadPrefs());
   }
 
+  const loadNotifPrefs = useCallback(async () => {
+    const uid = await getUid();
+    if (!uid) return;
+    try {
+      const np = await cloudSync.pullNotificationPrefs(uid);
+      setNotifPrefs(np);
+    } catch {
+      // Non-fatal — UI shows current local state
+    }
+  }, []);
+
   useEffect(() => {
     syncPrefs();
+    loadNotifPrefs();
     // Re-read on tab/app focus so navigating to Settings after activating
     // premium shows the updated state without requiring a full page reload.
     window.addEventListener("focus", syncPrefs);
@@ -71,6 +104,28 @@ function Settings() {
       document.removeEventListener("visibilitychange", syncPrefs);
     };
   }, []);
+
+  async function saveNotifPrefs(next: NotificationPrefs) {
+    setNotifLoading(true);
+    setNotifError(null);
+    try {
+      const uid = await getUid();
+      if (!uid) throw new Error("Sign in to save notification settings.");
+      await cloudSync.syncNotificationPrefs(uid, next);
+      setNotifPrefs(next);
+      // When the user enables via Settings, also clear the discovery card dismissal
+      // so the card reflects current state (it checks notifPrefs?.enabled).
+      if (next.enabled) {
+        localStorage.setItem(NOTIF_DISMISSED_KEY, "true"); // keep card hidden
+      }
+      setNotifSaved(true);
+      setTimeout(() => setNotifSaved(false), 1500);
+    } catch (e) {
+      setNotifError(e instanceof Error ? e.message : "Could not save. Please try again.");
+    } finally {
+      setNotifLoading(false);
+    }
+  }
 
   function setTheme(theme: Theme) {
     const next = { ...p, theme };
@@ -201,6 +256,141 @@ function Settings() {
           <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
         </Link>
       </Section>
+
+      {NOTIFICATIONS_ENABLED && <Section delay={270} title="Notifications" subtitle="Control morning rain reminders.">
+        <div className="glass-card overflow-hidden rounded-[2rem]">
+          {/* Toggle row */}
+          <div className="flex items-center gap-3 px-4 py-3.5">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+              <Bell className="h-4 w-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">Rain reminders</p>
+              <p className="text-xs text-muted-foreground leading-snug">
+                Morning alert when meaningful rain is expected later today.
+              </p>
+            </div>
+            {/* Toggle */}
+            <button
+              role="switch"
+              aria-checked={notifPrefs?.enabled ?? false}
+              aria-label="Rain reminders"
+              disabled={notifLoading}
+              onClick={async () => {
+                const current = notifPrefs;
+                const willEnable = !(current?.enabled ?? false);
+                const tz = detectedTz.current;
+                // buildNotificationPrefs increments schedulingVersion whenever
+                // any scheduling field changes. enabled changing always triggers
+                // the backend: ON → compute nextCheckAt; OFF → delete nextCheckAt.
+                const next = buildNotificationPrefs(current, {
+                  enabled: willEnable,
+                  timezone: current?.timezone ?? tz,
+                  reminderHour: current?.reminderHour ?? 7,
+                  reminderMinute: current?.reminderMinute ?? 30,
+                });
+                await saveNotifPrefs(next);
+              }}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                (notifPrefs?.enabled ?? false)
+                  ? "bg-primary"
+                  : "bg-foreground/20"
+              } disabled:opacity-50`}
+            >
+              <span
+                className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                  (notifPrefs?.enabled ?? false) ? "translate-x-5" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Reminder time — only when enabled */}
+          {notifPrefs?.enabled && (
+            <>
+              <div className="border-t border-border/40 px-4 py-3.5">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                    <Clock className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Reminder time</p>
+                    <p className="text-xs text-muted-foreground">When to check for rain in the morning.</p>
+                  </div>
+                  {/* Native time input — works on iOS Safari without extra dependencies */}
+                  <input
+                    type="time"
+                    aria-label="Reminder time"
+                    value={`${String(notifPrefs.reminderHour).padStart(2, "0")}:${String(notifPrefs.reminderMinute).padStart(2, "0")}`}
+                    onChange={async (e) => {
+                      const [hStr, mStr] = e.target.value.split(":");
+                      const h = parseInt(hStr, 10);
+                      const m = parseInt(mStr, 10);
+                      if (isNaN(h) || isNaN(m)) return;
+                      const tz = detectedTz.current;
+                      const desired = {
+                        enabled: notifPrefs.enabled,
+                        timezone: tz,
+                        reminderHour: h,
+                        reminderMinute: m,
+                      };
+                      // buildNotificationPrefs no-ops if nothing changed
+                      const next = buildNotificationPrefs(notifPrefs, desired);
+                      if (next.schedulingVersion === notifPrefs.schedulingVersion) return;
+                      await saveNotifPrefs(next);
+                    }}
+                    className="rounded-xl border border-border bg-background px-2.5 py-1.5 text-sm font-medium tabular-nums accent-primary"
+                  />
+                </div>
+              </div>
+
+              {/* Timezone row */}
+              <div className="border-t border-border/40 px-4 py-3.5">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                    <Globe className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium">Timezone</p>
+                    <p className="truncate text-xs text-muted-foreground">{notifPrefs.timezone}</p>
+                  </div>
+                  {/* Auto-update button shown only when detected tz differs from stored */}
+                  {notifPrefs.timezone !== detectedTz.current && (
+                    <button
+                      onClick={async () => {
+                        const tz = detectedTz.current;
+                        const next = buildNotificationPrefs(notifPrefs, {
+                          enabled: notifPrefs.enabled,
+                          timezone: tz,
+                          reminderHour: notifPrefs.reminderHour,
+                          reminderMinute: notifPrefs.reminderMinute,
+                        });
+                        await saveNotifPrefs(next);
+                      }}
+                      className="shrink-0 rounded-xl border border-primary/30 px-2.5 py-1 text-xs font-medium text-primary active:bg-primary/10"
+                    >
+                      Update
+                    </button>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Error + saved feedback */}
+        {notifError && (
+          <p className="mt-2 px-1 text-xs text-destructive">{notifError}</p>
+        )}
+        {notifSaved && !notifError && (
+          <p className="mt-2 px-1 text-xs text-primary font-medium">Saved.</p>
+        )}
+        {!p.onboarded && (
+          <p className="mt-2 px-1 text-xs text-muted-foreground">
+            <Link to="/signup" className="underline">Create a free account</Link> to enable reminders.
+          </p>
+        )}
+      </Section>}
 
       <Section delay={300} title="About">
         <div className="glass-card overflow-hidden rounded-[2rem]">

@@ -19,7 +19,11 @@ import {
   saveFavorite,
   loadFavorites,
   safeUUID,
+  NOTIF_DISMISSED_KEY,
+  NOTIFICATIONS_ENABLED,
+  buildNotificationPrefs,
   type Prefs,
+  type NotificationPrefs,
 } from "@/lib/preferences";
 import { cloudSync } from "@/lib/cloudSync";
 import { getUid } from "@/lib/auth";
@@ -43,6 +47,8 @@ import {
   Locate,
   Crown,
   RotateCw,
+  BellRing,
+  X,
 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -138,6 +144,16 @@ function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
 
+  // ── Notification discovery card ─────────────────────────────────────
+  const [notifDismissed, setNotifDismissed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem(NOTIF_DISMISSED_KEY) === "true";
+  });
+  const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs | null>(null);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifSuccess, setNotifSuccess] = useState(false);
+  const [notifError, setNotifError] = useState<string | null>(null);
+
   useEffect(() => {
     const p = loadPrefs();
     if (!p.onboarded) {
@@ -148,6 +164,22 @@ function Home() {
     setPrefs(p);
     setGreeting(computeGreeting());
   }, [navigate]);
+
+  // Load notification prefs once after sign-in is confirmed
+  useEffect(() => {
+    if (!prefs?.onboarded) return;
+    let cancelled = false;
+    getUid().then(async (uid) => {
+      if (!uid || cancelled) return;
+      try {
+        const np = await cloudSync.pullNotificationPrefs(uid);
+        if (!cancelled) setNotifPrefs(np);
+      } catch {
+        // Non-fatal — card stays visible as a conservative default
+      }
+    });
+    return () => { cancelled = true; };
+  }, [prefs?.onboarded]);
 
   useEffect(() => {
     if (!prefs) return;
@@ -621,6 +653,87 @@ function Home() {
             </section>
           );
         })()}
+      {/* ── Notification discovery card ─────────────────────────────────────
+           Show when: onboarded, reminders not already enabled, not dismissed */}
+      {NOTIFICATIONS_ENABLED && prefs?.onboarded && !notifDismissed && notifPrefs?.enabled !== true && (
+        <section className="glass-card mt-4 rounded-[2rem] p-5 animate-fade-up">
+          <div className="flex items-start gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary">
+              <BellRing className="h-5 w-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-semibold leading-snug">Don't get caught in the rain ☔</h3>
+              <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                Aeruvo can remind you in the morning when rain is expected later — even if you don't open the app.
+              </p>
+            </div>
+            <button
+              aria-label="Dismiss notification prompt"
+              onClick={() => {
+                localStorage.setItem(NOTIF_DISMISSED_KEY, "true");
+                setNotifDismissed(true);
+              }}
+              className="shrink-0 -mt-0.5 rounded-full p-1 text-muted-foreground/60 active:bg-foreground/10"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {notifError && (
+            <p className="mt-3 text-xs text-destructive">{notifError}</p>
+          )}
+          {notifSuccess ? (
+            <p className="mt-3 text-sm font-medium text-primary">✓ Rain reminders enabled in Aeruvo.</p>
+          ) : (
+            <div className="mt-3 flex gap-2">
+              <button
+                disabled={notifLoading}
+                onClick={async () => {
+                  setNotifLoading(true);
+                  try {
+                    const uid = await getUid();
+                    if (!uid) throw new Error("Not signed in");
+                    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                    // buildNotificationPrefs increments schedulingVersion whenever
+                    // any scheduling field (enabled, timezone, hour, minute) changes.
+                    // Enabling always changes enabled false→true, so sv always increments.
+                    const next = buildNotificationPrefs(notifPrefs, {
+                      enabled: true,
+                      timezone: tz,
+                      reminderHour: notifPrefs?.reminderHour ?? 7,
+                      reminderMinute: notifPrefs?.reminderMinute ?? 30,
+                    });
+                    await cloudSync.syncNotificationPrefs(uid, next);
+                    setNotifPrefs(next);
+                    setNotifSuccess(true);
+                    // After 2 s success message, permanently dismiss the card
+                    setTimeout(() => {
+                      localStorage.setItem(NOTIF_DISMISSED_KEY, "true");
+                      setNotifDismissed(true);
+                    }, 2000);
+                  } catch {
+                    setNotifError("Could not save. Check your connection and try again.");
+                  } finally {
+                    setNotifLoading(false);
+                  }
+                }}
+                className="flex-1 rounded-2xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground transition-opacity active:opacity-80 disabled:opacity-60"
+              >
+                {notifLoading ? "Saving…" : "Turn on reminders"}
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.setItem(NOTIF_DISMISSED_KEY, "true");
+                  setNotifDismissed(true);
+                }}
+                className="flex-1 rounded-2xl border border-border py-2.5 text-sm font-medium text-muted-foreground active:bg-foreground/5"
+              >
+                Not now
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
     </AppShell>
   );
 }
