@@ -25,7 +25,8 @@ service cloud.firestore {
     function isValidPrefs(data) {
       let allowed = [
         'coldSensitivity', 'commute', 'city', 'theme',
-        'name', 'email', 'onboarded', 'premium', 'trialEndsAt'
+        'name', 'email', 'onboarded', 'premium', 'trialEndsAt',
+        'clothingProfile'
       ];
       return data.keys().hasOnly(allowed)
         && data.coldSensitivity is string
@@ -33,6 +34,82 @@ service cloud.firestore {
         && data.theme is string
         && data.onboarded is bool
         && data.premium is bool;
+    }
+
+    // ── notificationPrefs rule helpers ─────────────────────────────────
+    //
+    // Client-owned fields (readable and writable by the authenticated user):
+    //   enabled, timezone, reminderHour, reminderMinute, schedulingVersion
+    //
+    // Backend-owned fields (written exclusively by Admin SDK / Cloud Function,
+    //   never writable by the client SDK — enforced by the rules below):
+    //   nextCheckAt, lastProcessedVersion
+    //
+    // schedulingVersion is a client-incrementable counter. When the client
+    // changes timezone, reminderHour, or reminderMinute it also increments
+    // schedulingVersion. The Cloud Function detects a mismatch between
+    // schedulingVersion and lastProcessedVersion and recalculates nextCheckAt
+    // before the next send. This is safe: the client controls only the signal
+    // "please recalculate", not the actual nextCheckAt value.
+
+    // Validates the VALUE TYPES of the client-owned fields.
+    // Used for both CREATE (full map) and UPDATE (resulting map) checks.
+    function notifPrefsValuesValid(np) {
+      return np.enabled is bool
+        && np.timezone is string
+        && np.timezone.size() > 0
+        && np.reminderHour is int
+        && np.reminderHour >= 0
+        && np.reminderHour <= 23
+        && np.reminderMinute is int
+        && np.reminderMinute >= 0
+        && np.reminderMinute <= 59
+        && np.schedulingVersion is int
+        && np.schedulingVersion >= 0;
+    }
+
+    // On CREATE: notificationPrefs must not contain any backend-owned field.
+    // The document does not yet exist, so there is no previous value to compare.
+    function notifPrefsValidOnCreate(np) {
+      let clientOwned = ['enabled', 'timezone', 'reminderHour', 'reminderMinute', 'schedulingVersion'];
+      return np.keys().hasOnly(clientOwned)
+        && notifPrefsValuesValid(np);
+    }
+
+    // On UPDATE: backend-owned fields (nextCheckAt, lastProcessedVersion) may
+    // already exist in the stored document. The client must not add, remove, or
+    // change them. We check this by asserting that for each backend field, if
+    // it existed before, it is identical in the result, and if it did not exist
+    // before, it is still absent in the result.
+    //
+    // request.resource.data = resulting document (after merge)
+    // resource.data         = current document (before write)
+    function notifPrefsBackendFieldsUntouched(incoming, existing) {
+      // nextCheckAt: must be unchanged (present→same value, absent→still absent)
+      let nextCheckAtOk =
+        (!("nextCheckAt" in existing)
+            && !("nextCheckAt" in incoming))
+        || (("nextCheckAt" in existing)
+            && ("nextCheckAt" in incoming)
+            && incoming.nextCheckAt == existing.nextCheckAt);
+      // lastProcessedVersion: same invariant
+      let lastProcOk =
+        (!("lastProcessedVersion" in existing)
+            && !("lastProcessedVersion" in incoming))
+        || (("lastProcessedVersion" in existing)
+            && ("lastProcessedVersion" in incoming)
+            && incoming.lastProcessedVersion == existing.lastProcessedVersion);
+      return nextCheckAtOk && lastProcOk;
+    }
+
+    // On UPDATE: the resulting notificationPrefs map must contain only the
+    // client-owned keys plus any backend-owned keys that already existed.
+    function notifPrefsValidOnUpdate(incoming, existing) {
+      let permitted = ['enabled', 'timezone', 'reminderHour', 'reminderMinute', 'schedulingVersion',
+                       'nextCheckAt', 'lastProcessedVersion'];
+      return incoming.keys().hasOnly(permitted)
+        && notifPrefsValuesValid(incoming)
+        && notifPrefsBackendFieldsUntouched(incoming, existing);
     }
 
     function isValidFavorite(data) {
@@ -53,12 +130,38 @@ service cloud.firestore {
       allow get: if request.auth != null && request.auth.uid == uid;
 
       // Only the authenticated owner may write their own profile.
-      // The document must contain only a `prefs` field with valid structure.
-      allow create, update: if
+      // Permitted top-level keys: prefs, notificationPrefs.
+      // CREATE and UPDATE are handled separately because:
+      //   • CREATE: no existing document exists, so we validate the full
+      //             incoming map and ensure no backend fields are introduced.
+      //   • UPDATE: the existing document may contain backend-owned fields
+      //             (nextCheckAt, lastProcessedVersion). We allow the client
+      //             to change client-owned fields while asserting that backend
+      //             fields remain exactly as they were.
+      allow create: if
         request.auth != null &&
         request.auth.uid == uid &&
-        request.resource.data.keys().hasOnly(['prefs']) &&
-        isValidPrefs(request.resource.data.prefs);
+        request.resource.data.keys().hasOnly(['prefs', 'notificationPrefs']) &&
+        // prefs must be valid when present
+        (!('prefs' in request.resource.data) || isValidPrefs(request.resource.data.prefs)) &&
+        // notificationPrefs: no backend fields allowed on create
+        (!('notificationPrefs' in request.resource.data)
+           || notifPrefsValidOnCreate(request.resource.data.notificationPrefs));
+
+      allow update: if
+        request.auth != null &&
+        request.auth.uid == uid &&
+        request.resource.data.keys().hasOnly(['prefs', 'notificationPrefs']) &&
+        // prefs must be valid when present
+        (!('prefs' in request.resource.data) || isValidPrefs(request.resource.data.prefs)) &&
+        // notificationPrefs: client-owned fields may change; backend fields must be unchanged
+        (!('notificationPrefs' in request.resource.data)
+           || notifPrefsValidOnUpdate(
+                request.resource.data.notificationPrefs,
+                // If notificationPrefs did not previously exist, treat as empty map
+                'notificationPrefs' in resource.data
+                  ? resource.data.notificationPrefs
+                  : {}));
 
       // Deletes are intentionally disabled via the API.
       // Account deletion is handled by admin tooling on request.

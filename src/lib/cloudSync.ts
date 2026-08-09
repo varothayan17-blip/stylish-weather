@@ -1,5 +1,5 @@
 import { getFirestoreDb, isFirebaseConfigured } from "./firebase";
-import type { Prefs, Favorite } from "./preferences";
+import type { Prefs, Favorite, NotificationPrefs } from "./preferences";
 
 /**
  * Firestore read/write — now keyed by Firebase Auth uid.
@@ -35,6 +35,17 @@ export interface CloudSync {
   pullAndMergePrefs(uid: string, local: Prefs): Promise<Prefs>;
   syncFavorite(uid: string, favorite: Favorite): Promise<void>;
   pullFavorites(uid: string): Promise<Favorite[]>;
+  /**
+   * Write the client-owned notification preference fields to Firestore.
+   * Only writes: enabled, timezone, reminderHour, reminderMinute.
+   * Never writes nextCheckAt — that field is backend-only.
+   */
+  syncNotificationPrefs(uid: string, prefs: NotificationPrefs): Promise<void>;
+  /**
+   * Read notification preferences from Firestore for the current user.
+   * Returns null if the document does not exist or has no notificationPrefs.
+   */
+  pullNotificationPrefs(uid: string): Promise<NotificationPrefs | null>;
 }
 
 export const localOnlySync: CloudSync = {
@@ -47,6 +58,10 @@ export const localOnlySync: CloudSync = {
   async syncFavorite() {},
   async pullFavorites() {
     return [];
+  },
+  async syncNotificationPrefs() {},
+  async pullNotificationPrefs() {
+    return null;
   },
 };
 
@@ -127,6 +142,51 @@ export const firestoreSync: CloudSync = {
       return snap.docs.map((d) => d.data() as Favorite);
     } catch {
       return [];
+    }
+  },
+
+  async syncNotificationPrefs(uid, prefs) {
+    const db = await getFirestoreDb();
+    if (!db) return;
+    const { doc, setDoc } = await import("firebase/firestore");
+    // Write only the client-owned fields. Defense-in-depth: nextCheckAt
+    // and lastProcessedVersion are intentionally excluded here — the
+    // Firestore rule also blocks them, but excluding them client-side
+    // means even a future code change cannot accidentally write them.
+    const safe: Record<string, unknown> = {
+      enabled: prefs.enabled,
+      timezone: prefs.timezone,
+      reminderHour: prefs.reminderHour,
+      reminderMinute: prefs.reminderMinute,
+      schedulingVersion: prefs.schedulingVersion,
+    };
+    await setDoc(
+      doc(db, "users", uid),
+      { notificationPrefs: safe },
+      { merge: true },
+    );
+  },
+
+  async pullNotificationPrefs(uid) {
+    const db = await getFirestoreDb();
+    if (!db) return null;
+    try {
+      const { doc, getDoc } = await import("firebase/firestore");
+      const snap = await getDoc(doc(db, "users", uid));
+      if (!snap.exists()) return null;
+      const data = snap.data()?.notificationPrefs;
+      if (!data) return null;
+      return {
+        enabled: data.enabled ?? false,
+        timezone: data.timezone ?? "",
+        reminderHour: data.reminderHour ?? 7,
+        reminderMinute: data.reminderMinute ?? 30,
+        schedulingVersion: data.schedulingVersion ?? 0,
+        nextCheckAt: data.nextCheckAt,        // backend-owned, read-only
+        lastProcessedVersion: data.lastProcessedVersion, // backend-owned, read-only
+      } satisfies NotificationPrefs;
+    } catch {
+      return null;
     }
   },
 };

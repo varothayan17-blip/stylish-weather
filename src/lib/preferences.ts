@@ -32,6 +32,77 @@ export type Prefs = {
   clothingProfile?: import("./clothingProfiles").ClothingProfileId;
 };
 
+/**
+ * Notification preferences stored in Firestore under users/{uid}.notificationPrefs.
+ *
+ * IMPORTANT — field-write restrictions:
+ *   enabled, timezone, reminderHour, reminderMinute — client-writable.
+ *   nextCheckAt — NEVER written by the client. Set and advanced exclusively
+ *                 by the backend Cloud Function via Admin SDK (which bypasses
+ *                 Firestore Security Rules). The client rules explicitly exclude
+ *                 this field from allowed client writes.
+ *
+ * nextCheckAt is stored here as an optional read-only field so the client can
+ * display "next reminder at ..." in a future settings UI without writing it.
+ *
+ * Default reminder time: 07:30 local time (hour=7, minute=30).
+ * Timezone: IANA string from Intl.DateTimeFormat().resolvedOptions().timeZone.
+ */
+export type NotificationPrefs = {
+  /** Whether the user has opted in to morning umbrella reminders. */
+  enabled: boolean;
+  /** IANA timezone identifier, e.g. "America/Toronto". */
+  timezone: string;
+  /** Local hour for the morning reminder (0–23). Default: 7. */
+  reminderHour: number;
+  /** Local minute for the morning reminder (0–59). Default: 30. */
+  reminderMinute: number;
+  /**
+   * Client-incrementable counter. Incremented whenever the client changes
+   * enabled, timezone, reminderHour, or reminderMinute.
+   *
+   * Serves two purposes in the Stage E backend:
+   *
+   * 1. TRIGGER ENTRY / RECURSION GUARD
+   *    The Firestore onDocumentUpdated trigger compares
+   *    before.schedulingVersion === after.schedulingVersion.
+   *    If equal → the write came from the backend (which never changes
+   *    schedulingVersion) → exit immediately to prevent infinite loops.
+   *    If different → client changed scheduling fields → recompute nextCheckAt.
+   *
+   * 2. IDEMPOTENCY ON RETRY
+   *    If the trigger fails and retries, schedulingVersion == lastProcessedVersion
+   *    means "already processed this version" → skip to avoid double-writes.
+   *    (Note: on retry, schedulingVersion != lastProcessedVersion because
+   *    lastProcessedVersion was not yet written before the failure.)
+   *
+   * The client controls only "signal that rescheduling is needed",
+   * never the actual nextCheckAt value.
+   */
+  schedulingVersion: number;
+  /**
+   * UTC epoch ms of the next scheduled check.
+   * SET AND ADVANCED BY THE BACKEND ONLY (Admin SDK / Cloud Function).
+   * Read-only on the client. The Firestore rule prevents the client from
+   * writing this field.
+   *
+   * When enabled = false, the backend DELETES this field (FieldValue.delete())
+   * so the document is definitively absent from the due-user query
+   * (WHERE notificationPrefs.nextCheckAt <= now). Documents with a missing
+   * field are excluded by Firestore inequality queries without requiring
+   * a composite index. Do not use null — rely on field absence instead.
+   */
+  nextCheckAt?: number;
+  /**
+   * The schedulingVersion the backend last successfully processed.
+   * Written by the Firestore trigger after computing nextCheckAt.
+   * The morning scheduler also checks schedulingVersion vs lastProcessedVersion
+   * as a fallback: if they differ (trigger failed), it recalculates before
+   * sending. BACKEND-ONLY. Never written by the client.
+   */
+  lastProcessedVersion?: number;
+};
+
 export const PREFS_KEY = "weatherwear:prefs";
 export const FAV_KEY = "weatherwear:favs";
 
