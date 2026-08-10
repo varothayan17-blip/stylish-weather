@@ -712,9 +712,8 @@ function Home() {
                           : result.reason === "dismissed"
                           ? `Permission dismissed — tap again to retry. (${result.errorCode})`
                           : `Could not enable reminders. (${result.errorCode})`;
+                      setNotifLoading(false); // clear before setNotifError so both render together
                       setNotifError(msg);
-                      // Do NOT return here — fall through to finally so
-                      // setNotifLoading(false) always runs and "Saving…" clears.
                     } else {
                       // Refresh notifPrefs from Firestore after full success
                       const updated = await cloudSync.pullNotificationPrefs(uid).catch(() => null);

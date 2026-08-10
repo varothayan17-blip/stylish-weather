@@ -1,34 +1,51 @@
 #!/usr/bin/env node
 /**
- * generate-sw-config.js
+ * generate-sw-config.cjs
  *
- * Auto-generates public/firebase-sw-config.js from VITE_FIREBASE_* environment
- * variables. Run as part of `npm run build` and `npm run dev` (via pre-hooks).
+ * Runs as `prebuild` and `predev` npm hooks.
+ * Does two things:
  *
- * The generated file is the ONLY place Firebase config appears for the
- * service worker — no hand-maintained duplicates, no postMessage races.
+ * 1. Writes public/firebase-sw-config.js from VITE_FIREBASE_* env vars.
+ *    (same-origin config for the service worker — no secrets, safe to serve)
  *
- * The values set here are the same public Firebase config values that Vite
- * already injects into the client bundle via import.meta.env.VITE_*. They
- * are NOT secrets. Do not add any private keys to this script or the output.
+ * 2. Copies Firebase compat scripts from node_modules/firebase/ into
+ *    public/vendor/ so sw.js can importScripts() from the same origin.
  *
- * Output: public/firebase-sw-config.js
- *   → self.AERUVO_FIREBASE_CONFIG = { apiKey, authDomain, projectId, appId }
+ * SOURCE OF FIREBASE VENDOR FILES:
+ *   node_modules/firebase/firebase-app-compat.js
+ *   node_modules/firebase/firebase-messaging-compat.js
  *
- * If VITE_FIREBASE_API_KEY is absent (local dev without Firebase, CI without
- * secrets), the script writes a file with config = null so the SW gracefully
- * skips FCM init rather than erroring.
+ *   These are UMD bundles included in the firebase npm package itself.
+ *   They are self-contained for browser/SW use (no gstatic, no external
+ *   imports when loaded via importScripts in a browser context).
+ *
+ *   The firebase-messaging-compat.js UMD factory reads from the global
+ *   `firebase` object set by firebase-app-compat.js — no require(), no CDN.
+ *
+ *   NO network access is required during builds. All dependencies come
+ *   from the npm install, which Vercel and CI already perform.
+ *
+ * VALIDATION:
+ *   Both files are validated for minimum size and expected content markers
+ *   before being written to public/vendor/. The build FAILS if either file
+ *   is missing from node_modules or fails validation.
+ *
+ * GITIGNORE:
+ *   public/vendor/ is gitignored — files are regenerated on every build.
+ *   public/firebase-sw-config.js is also gitignored.
  */
 
 const fs   = require("fs");
 const path = require("path");
 
-// Load .env files in order of priority (same as Vite's env loading)
+const root = path.resolve(__dirname, "..");
+
+// ── 1. Firebase SW config ─────────────────────────────────────────────────
+
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return {};
-  const raw = fs.readFileSync(filePath, "utf8");
   const result = {};
-  for (const line of raw.split("\n")) {
+  for (const line of fs.readFileSync(filePath, "utf8").split("\n")) {
     const stripped = line.trim();
     if (!stripped || stripped.startsWith("#")) continue;
     const eqIdx = stripped.indexOf("=");
@@ -40,40 +57,37 @@ function loadEnvFile(filePath) {
   return result;
 }
 
-const root = path.resolve(__dirname, "..");
-// Load env files in Vite priority order (later overrides earlier)
-const envBase  = loadEnvFile(path.join(root, ".env"));
-const envLocal = loadEnvFile(path.join(root, ".env.local"));
 const mode     = process.env.NODE_ENV === "production" ? "production" : "development";
-const envMode  = loadEnvFile(path.join(root, `.env.${mode}`));
-const envModeLocal = loadEnvFile(path.join(root, `.env.${mode}.local`));
+const env      = {
+  ...loadEnvFile(path.join(root, ".env")),
+  ...loadEnvFile(path.join(root, `.env.${mode}`)),
+  ...loadEnvFile(path.join(root, ".env.local")),
+  ...loadEnvFile(path.join(root, `.env.${mode}.local`)),
+  ...process.env,   // process.env has highest priority (Vercel / CI env vars)
+};
 
-const env = { ...envBase, ...envMode, ...envLocal, ...envModeLocal, ...process.env };
+const apiKey            = env.VITE_FIREBASE_API_KEY              || "";
+const authDomain        = env.VITE_FIREBASE_AUTH_DOMAIN          || "";
+const projectId         = env.VITE_FIREBASE_PROJECT_ID           || "";
+const messagingSenderId = env.VITE_FIREBASE_MESSAGING_SENDER_ID  || "";
+const appId             = env.VITE_FIREBASE_APP_ID               || "";
 
-const apiKey           = env.VITE_FIREBASE_API_KEY              || "";
-const authDomain       = env.VITE_FIREBASE_AUTH_DOMAIN          || "";
-const projectId        = env.VITE_FIREBASE_PROJECT_ID           || "";
-const messagingSenderId = env.VITE_FIREBASE_MESSAGING_SENDER_ID || "";
-const appId            = env.VITE_FIREBASE_APP_ID               || "";
+const configPath = path.join(root, "public", "firebase-sw-config.js");
 
-const outPath = path.join(root, "public", "firebase-sw-config.js");
-
-let content;
+let configContent;
 if (!apiKey || !projectId || !appId) {
-  content = `// Firebase SW config — generated at build time.
-// Firebase is not configured (VITE_FIREBASE_* vars absent).
+  configContent = `// Firebase SW config — generated at build time.
+// Firebase is not configured (VITE_FIREBASE_* env vars absent).
 // FCM background handling will be skipped gracefully.
 // To enable: set VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN,
 //            VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_APP_ID in .env.local
-// Also set VITE_FIREBASE_MESSAGING_SENDER_ID for full FCM compat.
+// Also set VITE_FIREBASE_MESSAGING_SENDER_ID for full FCM compatibility.
 self.AERUVO_FIREBASE_CONFIG = null;
 `;
 } else {
-  // These are PUBLIC config values — safe to write to a served file.
-  // They appear in the client bundle too. Do NOT add private keys here.
   const configObj = { apiKey, authDomain, projectId, appId };
   if (messagingSenderId) configObj.messagingSenderId = messagingSenderId;
-  content = `// Firebase SW config — auto-generated at build time from VITE_FIREBASE_* env vars.
+  configContent = `// Firebase SW config — auto-generated at build time from VITE_FIREBASE_* env vars.
 // Do not edit this file manually. Run the build script to regenerate.
 // This file is intentionally public — it contains only public Firebase config.
 // messagingSenderId is included when VITE_FIREBASE_MESSAGING_SENDER_ID is set.
@@ -81,5 +95,80 @@ self.AERUVO_FIREBASE_CONFIG = ${JSON.stringify(configObj, null, 2)};
 `;
 }
 
-fs.writeFileSync(outPath, content, "utf8");
-console.log(`[generate-sw-config] wrote ${outPath} (configured: ${Boolean(apiKey)})`);
+fs.writeFileSync(configPath, configContent, "utf8");
+console.log(`[generate-sw-config] wrote firebase-sw-config.js (configured: ${Boolean(apiKey)})`);
+
+// ── 2. Copy Firebase vendor scripts from node_modules ─────────────────────
+//
+// SOURCE: node_modules/firebase/ — part of the installed npm package.
+// These UMD bundles are self-contained for browser/SW importScripts() use:
+//   • No gstatic.com imports
+//   • No external ESM or CJS deps when loaded in SW/browser context
+//   • firebase-messaging-compat.js reads from the global `firebase` object
+//     set by firebase-app-compat.js (UMD browser path, not CJS path)
+//
+// VALIDATION: minimum size + expected content marker checked before copy.
+// BUILD FAILS if a file is missing or does not pass validation.
+
+const vendorDir = path.join(root, "public", "vendor");
+if (!fs.existsSync(vendorDir)) fs.mkdirSync(vendorDir, { recursive: true });
+
+const VENDOR_FILES = [
+  {
+    src:     path.join(root, "node_modules", "firebase", "firebase-app-compat.js"),
+    dest:    path.join(vendorDir, "firebase-app-compat.js"),
+    minSize: 20_000,   // actual file is ~31 KB
+    mustContain: "initializeApp",
+    desc:    "firebase-app-compat.js (from node_modules/firebase/)",
+  },
+  {
+    src:     path.join(root, "node_modules", "firebase", "firebase-messaging-compat.js"),
+    dest:    path.join(vendorDir, "firebase-messaging-compat.js"),
+    minSize: 40_000,   // actual file is ~49 KB
+    mustContain: "onBackgroundMessage",
+    desc:    "firebase-messaging-compat.js (from node_modules/firebase/)",
+  },
+];
+
+for (const { src, dest, minSize, mustContain, desc } of VENDOR_FILES) {
+  // Source must exist in node_modules — if not, npm install is broken
+  if (!fs.existsSync(src)) {
+    console.error(`[generate-sw-config] FATAL: ${desc} not found at ${src}`);
+    console.error("  Run: npm install");
+    process.exit(1);
+  }
+
+  const content = fs.readFileSync(src, "utf8");
+
+  // Validate size
+  if (content.length < minSize) {
+    console.error(
+      `[generate-sw-config] FATAL: ${desc} is too small (${content.length} bytes, expected >= ${minSize}).`
+    );
+    console.error("  The file may be corrupt. Try: rm -rf node_modules && npm install");
+    process.exit(1);
+  }
+
+  // Validate content marker
+  if (!content.includes(mustContain)) {
+    console.error(
+      `[generate-sw-config] FATAL: ${desc} does not contain expected marker "${mustContain}".`
+    );
+    console.error("  The file may be the wrong version or corrupt.");
+    process.exit(1);
+  }
+
+  // Validate: must not contain gstatic (would reintroduce CDN dependency)
+  if (content.includes("gstatic.com")) {
+    console.error(
+      `[generate-sw-config] FATAL: ${desc} contains gstatic.com references.`
+    );
+    console.error("  This would reintroduce a CDN dependency in the service worker.");
+    process.exit(1);
+  }
+
+  fs.writeFileSync(dest, content, "utf8");
+  console.log(`[generate-sw-config] copied ${desc} (${content.length} bytes)`);
+}
+
+console.log("[generate-sw-config] vendor scripts ready");

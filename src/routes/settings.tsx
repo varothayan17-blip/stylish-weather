@@ -296,6 +296,7 @@ function Settings() {
                       // SW_READY_TIMEOUT = serviceWorker.ready hung (10s)
                       // FID_TIMEOUT = SW ready but onRegistered never fired (15s)
                       // REGISTER_FAILED = register() threw (check console)
+                      setNotifLoading(false); // clear before setNotifError so both render together
                       setNotifError(
                         result.reason === "denied"
                           ? `Notifications blocked — enable in Settings app. (${result.errorCode})`
@@ -305,7 +306,7 @@ function Settings() {
                           ? `Permission dismissed — tap again to retry. (${result.errorCode})`
                           : `Could not enable reminders. (${result.errorCode})`
                       );
-                      // Do NOT return — fall through to finally so loading clears.
+                      // loading already cleared above; finally is the safety net
                     } else {
                       // Refresh from Firestore after full success
                       const uid2 = await getUid();

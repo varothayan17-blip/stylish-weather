@@ -41,3 +41,6 @@ dist-ssr
 
 # Auto-generated Firebase SW config (from scripts/generate-sw-config.js)
 public/firebase-sw-config.js
+
+# Auto-downloaded Firebase compat vendor scripts (from scripts/generate-sw-config.cjs)
+public/vendor/

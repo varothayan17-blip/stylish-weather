@@ -172,8 +172,37 @@ export async function orchestrateEnable(
   }
 
   // ── Step D: navigator.serviceWorker.ready (Phase 1, 10-second timeout) ──
-  // Isolated from the FID registration phase so we can tell these apart.
-  // On iOS PWA, this can hang if the SW is in installing/waiting state.
+  // Isolated from the FID phase. Run pre-ready diagnostics first so we
+  // can classify the SW state BEFORE waiting, helping distinguish between
+  // "never registered" vs "registered but stuck in installing/waiting".
+
+  // Pre-ready diagnostics — run before awaiting .ready
+  let swPreDiag = "unknown";
+  try {
+    const controller = navigator.serviceWorker.controller;
+    const allRegs = await navigator.serviceWorker.getRegistrations();
+    const reg = allRegs.find(r => r.active || r.installing || r.waiting);
+    if (!allRegs.length) {
+      swPreDiag = "SW_NOT_REGISTERED";
+    } else if (!controller && reg?.installing) {
+      swPreDiag = "SW_INSTALLING";
+    } else if (!controller && reg?.waiting) {
+      swPreDiag = "SW_WAITING";
+    } else if (!controller) {
+      swPreDiag = "SW_NO_CONTROLLER";
+    } else {
+      swPreDiag = "SW_CONTROLLED";
+    }
+    const scriptURL = reg?.active?.scriptURL ?? reg?.installing?.scriptURL ?? reg?.waiting?.scriptURL ?? "none";
+    notifLog(
+      `sw:pre-ready diag=${swPreDiag}`,
+      `regs=${allRegs.length} script=${scriptURL} ` +
+      `active-state=${reg?.active?.state ?? "none"}`,
+    );
+  } catch (diagErr) {
+    notifLog("sw:pre-ready-error", String(diagErr instanceof Error ? diagErr.message : diagErr));
+  }
+
   let swReg: ServiceWorkerRegistration;
   notifLog("sw:wait");
   try {
@@ -181,13 +210,12 @@ export async function orchestrateEnable(
       navigator.serviceWorker.ready,
       new Promise<never>((_, reject) =>
         setTimeout(() => {
-          notifLog("sw:timeout");
+          notifLog("sw:timeout", `pre-diag-was=${swPreDiag}`);
           reject(new Error("SW_READY_TIMEOUT"));
         }, 10_000),
       ),
     ]);
     notifLog("sw:ready",
-      // Log SW diagnostics (no secrets): scope, scriptURL, state
       `scope=${swReg.scope} ` +
       `script=${swReg.active?.scriptURL ?? "no-active"} ` +
       `state=${swReg.active?.state ?? "none"}`,
@@ -195,24 +223,11 @@ export async function orchestrateEnable(
   } catch (swErr) {
     const msg = swErr instanceof Error ? swErr.message : String(swErr);
     const isTimeout = msg === "SW_READY_TIMEOUT";
-    notifLog("sw:error", isTimeout ? "TIMEOUT" : msg);
-    return {
-      ok: false,
-      reason: "registration-failed",
-      errorCode: isTimeout ? "SW_READY_TIMEOUT" : "REGISTER_FAILED",
-    };
-  }
-
-  // Additional SW diagnostic: log all current registrations
-  try {
-    const allRegs = await navigator.serviceWorker.getRegistrations();
-    notifLog(`sw:all-registrations count=${allRegs.length}`,
-      allRegs.map(r =>
-        `[scope=${r.scope} active=${r.active?.scriptURL ?? "none"} state=${r.active?.state ?? "none"}]`
-      ).join(" "),
-    );
-  } catch {
-    // Non-fatal diagnostic
+    // Surface the pre-ready diagnosis in the error code so the UI
+    // shows exactly why the SW was not ready.
+    const errorCode = isTimeout ? `SW_READY_TIMEOUT(${swPreDiag})` : "SW_SCRIPT_FAILED";
+    notifLog("sw:error", errorCode);
+    return { ok: false, reason: "registration-failed", errorCode };
   }
 
   // ── Step E: FID registration (Phase 2, 15-second timeout) ────────────
