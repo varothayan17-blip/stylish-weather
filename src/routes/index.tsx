@@ -700,13 +700,17 @@ function Home() {
                     if (!result.ok) {
                       // errorCode shown in UI for Windows debugging (no Safari Inspector).
                       // Human-readable message + machine code in parentheses.
+                      // errorCode shown in UI — tells exactly which step failed.
+                      // SW_READY_TIMEOUT = serviceWorker.ready hung (10s)
+                      // FID_TIMEOUT = SW ready but onRegistered never fired (15s)
+                      // REGISTER_FAILED = register() threw (see console)
                       const msg =
                         result.reason === "denied"
-                          ? `Notifications are blocked. Enable them in your browser settings. (${result.errorCode})`
+                          ? `Notifications blocked — enable in Settings app. (${result.errorCode})`
                           : result.reason === "unsupported"
-                          ? `Your browser doesn't support push notifications yet. (${result.errorCode})`
+                          ? `Browser doesn't support reminders yet. (${result.errorCode})`
                           : result.reason === "dismissed"
-                          ? `Permission was dismissed. Tap 'Turn on reminders' to try again. (${result.errorCode})`
+                          ? `Permission dismissed — tap again to retry. (${result.errorCode})`
                           : `Could not enable reminders. (${result.errorCode})`;
                       setNotifError(msg);
                       // Do NOT return here — fall through to finally so

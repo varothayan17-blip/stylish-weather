@@ -2,21 +2,14 @@
  * notifications.ts — Firebase Cloud Messaging client for Aeruvo (Stage D)
  *
  * Firebase 12.15.0 API used (all current, non-deprecated):
- *   register(messaging, options)            — initiate FID-based registration
- *   onRegistered(messaging, callback)       — persistent listener; receives FID on
- *                                            registration and whenever FID changes
- *   unregister(messaging)                  — cleanly deregister
- *   onMessage(messaging, callback)         — foreground message listener
- *   isSupported()                          — browser capability check
+ *   register(messaging, options)     — initiate FID-based registration
+ *   onRegistered(messaging, cb)      — persistent FID delivery listener
+ *   unregister(messaging)            — cleanly deregister
+ *   onMessage(messaging, cb)         — foreground message listener
+ *   isSupported()                    — browser capability check
  *
- * NOT used (deprecated in 12.15.0):
- *   getToken() — use register()+onRegistered() instead
- *   deleteToken() — use unregister() instead
- *
- * Service worker config:
- *   public/firebase-sw-config.js is AUTO-GENERATED at build time by
- *   scripts/generate-sw-config.cjs from VITE_FIREBASE_* env vars.
- *   The SW importScripts() it at startup — no postMessage, no cold-start gap.
+ * NOT used (deprecated):
+ *   getToken() / deleteToken()
  */
 
 import { getFirebaseApp, getFirestoreDb } from "./firebase";
@@ -25,14 +18,15 @@ import { buildNotificationPrefs, type NotificationPrefs } from "./preferences";
 import { cloudSync } from "./cloudSync";
 
 // ── Diagnostic logging ────────────────────────────────────────────────────
-// Always-on (not DEV-only) so they appear in iPhone PWA console via
-// Safari Web Inspector OR can be captured in the UI error string.
-// NEVER logs FID, VAPID key, Firebase config, auth tokens, or email.
+// Always-on so logs appear whether or not Safari Web Inspector is connected.
+// NEVER logs: FID, VAPID key, Firebase config values, auth token, email.
 
 let _t0 = 0;
 function notifLog(label: string, extra?: string) {
   const elapsed = _t0 ? `+${Date.now() - _t0}ms` : "";
-  const msg = extra ? `[notif] ${label} ${extra} ${elapsed}` : `[notif] ${label} ${elapsed}`;
+  const msg = extra
+    ? `[notif] ${label} ${extra} ${elapsed}`
+    : `[notif] ${label} ${elapsed}`;
   console.log(msg);
 }
 
@@ -79,8 +73,6 @@ export type NotificationResult =
   | { ok: true }
   | {
       ok: false;
-      // errorCode is a short machine-readable token shown in the UI on Windows
-      // where Safari Web Inspector is unavailable. Also appears in console logs.
       reason:
         | "unsupported"
         | "denied"
@@ -90,7 +82,19 @@ export type NotificationResult =
         | "prefs-failed"
         | "no-app"
         | "no-uid";
-      errorCode: string; // e.g. "UNSUPPORTED", "REG_TIMEOUT", "FID_NOT_RECEIVED"
+      /**
+       * Visible error code shown in the UI.
+       * SW_READY_TIMEOUT    — navigator.serviceWorker.ready did not resolve in 10 s
+       * FID_TIMEOUT         — SW ready, register() ran, onRegistered never fired in 15 s
+       * REGISTER_FAILED     — register() itself threw/rejected (see console for Firebase error)
+       * DEVICE_WRITE_FAILED — Firestore setDoc for device record failed
+       * PREFS_WRITE_FAILED  — Firestore syncNotificationPrefs failed
+       * NO_APP              — Firebase app not initialised (check VITE_FIREBASE_* vars)
+       * UNSUPPORTED         — FCM not available on this browser/OS
+       * PERMISSION_DENIED   — OS notification permission blocked
+       * PERMISSION_DISMISSED — user dismissed the permission prompt
+       */
+      errorCode: string;
     };
 
 // ── Persistent FID synchronisation ───────────────────────────────────────
@@ -99,7 +103,6 @@ export async function initRegistrationSync(uid: string): Promise<() => void> {
   try {
     const supported = await isPushSupported();
     if (!supported) return () => {};
-
     if (typeof Notification === "undefined") return () => {};
     if (Notification.permission !== "granted") return () => {};
 
@@ -134,21 +137,6 @@ export async function initRegistrationSync(uid: string): Promise<() => void> {
 
 // ── Shared orchestration — enable ─────────────────────────────────────────
 
-/**
- * Atomic enable orchestration with milestone logging and visible error codes.
- *
- * Error codes surfaced in UI (for Windows debugging without Safari Inspector):
- *   UNSUPPORTED         — browser/OS does not support push
- *   PERMISSION_DENIED   — user denied in OS settings
- *   PERMISSION_DISMISSED — user dismissed without allowing
- *   NO_APP              — Firebase app not initialised
- *   NO_UID              — not signed in
- *   REG_TIMEOUT         — register() called but onRegistered never fired in 15s
- *   REGISTER_FAILED     — register() threw an error
- *   FID_NOT_RECEIVED    — onRegistered promise rejected for unknown reason
- *   DEVICE_WRITE_FAILED — Firestore write of device record failed
- *   PREFS_WRITE_FAILED  — Firestore write of notificationPrefs failed
- */
 export async function orchestrateEnable(
   uid: string,
   existingPrefs: NotificationPrefs | null,
@@ -156,7 +144,7 @@ export async function orchestrateEnable(
   _t0 = Date.now();
   notifLog("enable:start");
 
-  // Step A — support + permission
+  // ── Step A: push support check ────────────────────────────────────────
   const supported = await isPushSupported();
   if (!supported) {
     notifLog("support:false");
@@ -164,6 +152,7 @@ export async function orchestrateEnable(
   }
   notifLog("support:ok");
 
+  // ── Step B: notification permission (already-granted fast-path) ───────
   let permission: NotificationPermission;
   try {
     permission = await Notification.requestPermission();
@@ -175,82 +164,123 @@ export async function orchestrateEnable(
   if (permission === "denied")  return { ok: false, reason: "denied",    errorCode: "PERMISSION_DENIED" };
   if (permission !== "granted") return { ok: false, reason: "dismissed", errorCode: "PERMISSION_DISMISSED" };
 
-  // Step B — Firebase app
+  // ── Step C: Firebase app ──────────────────────────────────────────────
   const app = await getFirebaseApp();
   if (!app) {
     notifLog("no-app");
     return { ok: false, reason: "no-app", errorCode: "NO_APP" };
   }
 
-  // Step B — FID registration
+  // ── Step D: navigator.serviceWorker.ready (Phase 1, 10-second timeout) ──
+  // Isolated from the FID registration phase so we can tell these apart.
+  // On iOS PWA, this can hang if the SW is in installing/waiting state.
+  let swReg: ServiceWorkerRegistration;
+  notifLog("sw:wait");
+  try {
+    swReg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => {
+          notifLog("sw:timeout");
+          reject(new Error("SW_READY_TIMEOUT"));
+        }, 10_000),
+      ),
+    ]);
+    notifLog("sw:ready",
+      // Log SW diagnostics (no secrets): scope, scriptURL, state
+      `scope=${swReg.scope} ` +
+      `script=${swReg.active?.scriptURL ?? "no-active"} ` +
+      `state=${swReg.active?.state ?? "none"}`,
+    );
+  } catch (swErr) {
+    const msg = swErr instanceof Error ? swErr.message : String(swErr);
+    const isTimeout = msg === "SW_READY_TIMEOUT";
+    notifLog("sw:error", isTimeout ? "TIMEOUT" : msg);
+    return {
+      ok: false,
+      reason: "registration-failed",
+      errorCode: isTimeout ? "SW_READY_TIMEOUT" : "REGISTER_FAILED",
+    };
+  }
+
+  // Additional SW diagnostic: log all current registrations
+  try {
+    const allRegs = await navigator.serviceWorker.getRegistrations();
+    notifLog(`sw:all-registrations count=${allRegs.length}`,
+      allRegs.map(r =>
+        `[scope=${r.scope} active=${r.active?.scriptURL ?? "none"} state=${r.active?.state ?? "none"}]`
+      ).join(" "),
+    );
+  } catch {
+    // Non-fatal diagnostic
+  }
+
+  // ── Step E: FID registration (Phase 2, 15-second timeout) ────────────
+  // Only starts AFTER serviceWorker.ready has resolved.
+  // register() + onRegistered() are separate: register() resolving does NOT
+  // mean a FID was delivered. onRegistered fires asynchronously.
+  // FID_TIMEOUT fires if onRegistered never delivers within 15 s.
+  const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY as string | undefined;
+  notifLog("vapid:present", vapidKey ? "yes" : "NO — FID registration will likely fail");
+
   let fid: string;
-  let registerErrorCode = "FID_NOT_RECEIVED";
+  let fidErrorCode = "FID_TIMEOUT";
   try {
     const { getMessaging, register, onRegistered } = await import("firebase/messaging");
     const messaging = getMessaging(app);
-    const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY as string | undefined;
 
     fid = await new Promise<string>((resolve, reject) => {
-      // IMPORTANT: the 15-second master timeout covers the ENTIRE registration
-      // flow including navigator.serviceWorker.ready. On some iOS PWA states,
-      // serviceWorker.ready can hang indefinitely if the SW is in a broken
-      // state. Without this outer timeout wrapping sw.ready, the flow could
-      // hang forever before the inner timeout even starts.
-      const timeout = setTimeout(() => {
-        notifLog("timeout");
-        registerErrorCode = "REG_TIMEOUT";
-        reject(new Error("Registration timeout"));
+      const fidTimeout = setTimeout(() => {
+        notifLog("fid-timeout");
+        fidErrorCode = "FID_TIMEOUT";
+        reject(new Error("FID_TIMEOUT"));
       }, 15_000);
 
-      // Resolve serviceWorker.ready inside the promise so the master timeout
-      // above can cancel it if it hangs.
-      notifLog("sw:wait");
-      navigator.serviceWorker.ready.then((swReg) => {
-        notifLog("sw:ready");
+      // Attach listener BEFORE calling register() — avoids race condition
+      // where FID is delivered before the listener is set up.
+      notifLog("listener:attached");
+      const unsubscribe = onRegistered(messaging, (receivedFid) => {
+        clearTimeout(fidTimeout);
+        unsubscribe();
+        notifLog("onRegistered:fired");
+        // FID is intentionally NOT logged
+        resolve(receivedFid);
+      });
 
-        notifLog("listener:onRegistered-attached");
-        const unsubscribe = onRegistered(messaging, (receivedFid) => {
-          clearTimeout(timeout);
-          unsubscribe();
-          notifLog("onRegistered:fired");
-          resolve(receivedFid);
-        });
-
-        notifLog("register:start");
-        register(messaging, {
-          vapidKey: vapidKey || undefined,
-          serviceWorkerRegistration: swReg,
-        }).then(() => {
-          notifLog("register:resolved");
-        }).catch((err: unknown) => {
-          clearTimeout(timeout);
-          unsubscribe();
-          registerErrorCode = "REGISTER_FAILED";
-          notifLog("register:error", String(err instanceof Error ? err.message : err));
-          reject(err);
-        });
-      }).catch((swErr: unknown) => {
-        // serviceWorker.ready rejected (very unusual but possible)
-        clearTimeout(timeout);
-        registerErrorCode = "REGISTER_FAILED";
-        notifLog("sw:error", String(swErr instanceof Error ? swErr.message : swErr));
-        reject(swErr);
+      notifLog("register:start");
+      register(messaging, {
+        vapidKey: vapidKey || undefined,
+        serviceWorkerRegistration: swReg,
+      }).then(() => {
+        notifLog("register:resolved");
+        // Note: register() resolving ≠ FID delivered.
+        // onRegistered fires separately, possibly later.
+      }).catch((err: unknown) => {
+        clearTimeout(fidTimeout);
+        unsubscribe();
+        fidErrorCode = "REGISTER_FAILED";
+        // Log Firebase error code only (not secrets)
+        const errMsg = err instanceof Error ? err.message : String(err);
+        notifLog("register:error", errMsg);
+        reject(err);
       });
     });
-  } catch {
-    notifLog(`registration-failed errorCode:${registerErrorCode}`);
-    return { ok: false, reason: "registration-failed", errorCode: registerErrorCode };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    notifLog(`fid-phase-failed errorCode=${fidErrorCode}`, msg);
+    return { ok: false, reason: "registration-failed", errorCode: fidErrorCode };
   }
 
   const deviceId = getOrCreateDeviceId();
 
-  // Step C — write device record
+  // ── Step F: write device record ───────────────────────────────────────
   notifLog("device-write:start");
   try {
     await writeDeviceRecord(uid, fid, true, true);
     notifLog("device-write:success");
   } catch (err) {
-    notifLog("device-write:error", String(err instanceof Error ? err.message : err));
+    const msg = err instanceof Error ? err.message : String(err);
+    notifLog("device-write:error", msg);
     notifLog("rollback:start");
     try {
       const { getMessaging, unregister } = await import("firebase/messaging");
@@ -261,7 +291,7 @@ export async function orchestrateEnable(
     return { ok: false, reason: "firestore-failed", errorCode: "DEVICE_WRITE_FAILED" };
   }
 
-  // Step D — sync notificationPrefs
+  // ── Step G: sync notificationPrefs ───────────────────────────────────
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const nextPrefs = buildNotificationPrefs(existingPrefs, {
     enabled: true,
@@ -275,7 +305,8 @@ export async function orchestrateEnable(
     await cloudSync.syncNotificationPrefs(uid, nextPrefs);
     notifLog("prefs-write:success");
   } catch (err) {
-    notifLog("prefs-write:error", String(err instanceof Error ? err.message : err));
+    const msg = err instanceof Error ? err.message : String(err);
+    notifLog("prefs-write:error", msg);
     notifLog("rollback:start");
     try {
       const db = await getFirestoreDb();
@@ -320,11 +351,7 @@ export async function orchestrateDisable(
         const { doc, deleteDoc } = await import("firebase/firestore");
         await deleteDoc(doc(db, "users", uid, "devices", deviceId));
       }
-    } catch {
-      if (import.meta.env.DEV) {
-        console.warn("[aeruvo:notifications] device delete failed on disable");
-      }
-    }
+    } catch {}
   }
 
   try {
@@ -350,11 +377,7 @@ export async function cleanupDeviceOnSignOut(uid: string): Promise<void> {
       const { doc, deleteDoc } = await import("firebase/firestore");
       await deleteDoc(doc(db, "users", uid, "devices", deviceId));
     }
-  } catch {
-    if (import.meta.env.DEV) {
-      console.warn("[aeruvo:notifications] sign-out device cleanup failed");
-    }
-  }
+  } catch {}
 
   try {
     const app = await getFirebaseApp();

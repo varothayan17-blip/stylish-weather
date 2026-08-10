@@ -292,13 +292,17 @@ function Settings() {
                     if (!uid) throw new Error("Sign in to enable reminders.");
                     const result = await orchestrateEnable(uid, current);
                     if (!result.ok) {
+                      // errorCode identifies the exact failing step.
+                      // SW_READY_TIMEOUT = serviceWorker.ready hung (10s)
+                      // FID_TIMEOUT = SW ready but onRegistered never fired (15s)
+                      // REGISTER_FAILED = register() threw (check console)
                       setNotifError(
                         result.reason === "denied"
-                          ? `Notifications are blocked. Enable them in your browser settings. (${result.errorCode})`
+                          ? `Notifications blocked — enable in Settings app. (${result.errorCode})`
                           : result.reason === "unsupported"
-                          ? `Your browser doesn't support push notifications yet. (${result.errorCode})`
+                          ? `Browser doesn't support reminders yet. (${result.errorCode})`
                           : result.reason === "dismissed"
-                          ? `Permission was dismissed. Try again to enable reminders. (${result.errorCode})`
+                          ? `Permission dismissed — tap again to retry. (${result.errorCode})`
                           : `Could not enable reminders. (${result.errorCode})`
                       );
                       // Do NOT return — fall through to finally so loading clears.
