@@ -118,7 +118,7 @@ const neutral: ClothingProfile = {
       subBands: [
         {
           minFeels: 25,
-          items: ["T-shirt", "Shorts", "Breathable sneakers"],
+          items: ["T-shirt", "Lightweight pants, chinos, or shorts", "Breathable sneakers"],
         },
         {
           minFeels: 22,
@@ -128,7 +128,7 @@ const neutral: ClothingProfile = {
     },
     hot: {
       // >28°C: split at 34°C (intense heat vs warm)
-      items: ["Linen shirt", "Shorts", "Sandals", "Cap"],
+      items: ["Breathable T-shirt", "Shorts or lightweight pants", "Sandals or sneakers"],
       openFootwear: "Sandals",
       subBands: [
         {
@@ -138,8 +138,8 @@ const neutral: ClothingProfile = {
         },
         {
           minFeels: 28,
-          items: ["Breathable T-shirt", "Shorts", "Sandals"],
-          openFootwear: "Sandals",
+          items: ["Breathable T-shirt", "Shorts or lightweight pants", "Sandals or sneakers"],
+          openFootwear: "Sandals or sneakers",
         },
       ],
     },
@@ -215,12 +215,12 @@ const mens: ClothingProfile = {
     },
     warm: {
       // 22–28°C — two sub-ranges
-      items: ["T-shirt", "Shorts or chinos", "Sneakers"],
+      items: ["T-shirt", "Chinos, lightweight pants, or shorts", "Sneakers"],
       subBands: [
         {
-          // 25–28°C: warmer end — T-shirt and shorts
+          // 25–28°C: warmer end — T-shirt with pants or shorts as options
           minFeels: 25,
-          items: ["Lightweight cotton T-shirt", "Shorts", "Breathable sneakers"],
+          items: ["Lightweight cotton T-shirt", "Chinos, lightweight pants, or shorts", "Breathable sneakers"],
         },
         {
           // 22–24°C: cooler warm — T-shirt with chinos
@@ -231,7 +231,7 @@ const mens: ClothingProfile = {
     },
     hot: {
       // >28°C — two sub-ranges from the spec
-      items: ["Linen shirt", "Shorts", "Sandals", "Cap"],
+      items: ["Linen shirt", "Shorts or chinos", "Sandals", "Cap"],
       openFootwear: "Sandals",
       subBands: [
         {
@@ -243,7 +243,7 @@ const mens: ClothingProfile = {
         {
           // 28–33°C: hot but manageable — lightweight cotton
           minFeels: 28,
-          items: ["Lightweight cotton T-shirt", "Shorts", "Breathable sneakers"],
+          items: ["Lightweight cotton T-shirt", "Shorts or chinos", "Breathable sneakers"],
           openFootwear: "Breathable sneakers",
         },
       ],
@@ -340,12 +340,12 @@ const womens: ClothingProfile = {
     },
     warm: {
       // 22–28°C
-      items: ["Blouse or tank top", "Shorts, skirt, or light trousers", "Sandals or sneakers"],
+      items: ["T-shirt, light blouse, or tank top", "Lightweight pants, jeans, skirt, or shorts", "Sneakers, sandals, or flats"],
       openFootwear: "Sandals or sneakers",
       subBands: [
         {
           minFeels: 25,
-          items: ["Blouse or tank top", "Shorts or lightweight skirt", "Sandals or sneakers"],
+          items: ["T-shirt, light blouse, or tank top", "Lightweight pants, jeans, skirt, or shorts", "Sneakers, sandals, or flats"],
           openFootwear: "Sandals or sneakers",
         },
         {
@@ -356,7 +356,7 @@ const womens: ClothingProfile = {
     },
     hot: {
       // >28°C
-      items: ["Tank top or summer dress", "Shorts or lightweight skirt", "Sandals", "Sun hat"],
+      items: ["Cotton T-shirt or tank top", "Shorts, skirt, or lightweight pants", "Sandals or sneakers", "Sun hat"],
       openFootwear: "Sandals",
       subBands: [
         {
@@ -373,7 +373,7 @@ const womens: ClothingProfile = {
         {
           // 28–33°C: warm but comfortable
           minFeels: 28,
-          items: ["Cotton T-shirt or tank top", "Shorts or skirt", "Sandals or sneakers"],
+          items: ["Cotton T-shirt or tank top", "Shorts, skirt, or lightweight pants", "Sandals or sneakers"],
           openFootwear: "Sandals or sneakers",
         },
       ],
