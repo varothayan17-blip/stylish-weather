@@ -294,27 +294,26 @@ function Settings() {
                     if (!result.ok) {
                       setNotifError(
                         result.reason === "denied"
-                          ? "Notifications are blocked. Enable them in your browser settings."
+                          ? `Notifications are blocked. Enable them in your browser settings. (${result.errorCode})`
                           : result.reason === "unsupported"
-                          ? "Your browser doesn't support push notifications yet."
+                          ? `Your browser doesn't support push notifications yet. (${result.errorCode})`
                           : result.reason === "dismissed"
-                          ? "Permission was dismissed. Try again to enable reminders."
-                          : result.reason === "prefs-failed"
-                          ? "Preferences could not be saved. Please try again."
-                          : "Could not register. Check your connection and try again."
+                          ? `Permission was dismissed. Try again to enable reminders. (${result.errorCode})`
+                          : `Could not enable reminders. (${result.errorCode})`
                       );
-                      return;
+                      // Do NOT return — fall through to finally so loading clears.
+                    } else {
+                      // Refresh from Firestore after full success
+                      const uid2 = await getUid();
+                      if (uid2) {
+                        const updated = await cloudSync.pullNotificationPrefs(uid2).catch(() => null);
+                        if (updated) setNotifPrefs(updated);
+                      }
+                      setNotifSaved(true);
+                      setTimeout(() => setNotifSaved(false), 1500);
                     }
-                    // Refresh from Firestore after full success
-                    const uid2 = await getUid();
-                    if (uid2) {
-                      const updated = await cloudSync.pullNotificationPrefs(uid2).catch(() => null);
-                      if (updated) setNotifPrefs(updated);
-                    }
-                    setNotifSaved(true);
-                    setTimeout(() => setNotifSaved(false), 1500);
                   } catch (e) {
-                    setNotifError(e instanceof Error ? e.message : "Could not save.");
+                    setNotifError(`Could not save. (UNEXPECTED: ${e instanceof Error ? e.message : String(e)})`);
                   } finally {
                     setNotifLoading(false);
                   }

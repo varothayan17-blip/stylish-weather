@@ -698,33 +698,34 @@ function Home() {
                     // device record, AND notificationPrefs atomically with rollback.
                     const result = await orchestrateEnable(uid, notifPrefs);
                     if (!result.ok) {
+                      // errorCode shown in UI for Windows debugging (no Safari Inspector).
+                      // Human-readable message + machine code in parentheses.
                       const msg =
                         result.reason === "denied"
-                          ? "Notifications are blocked. Enable them in your browser settings."
+                          ? `Notifications are blocked. Enable them in your browser settings. (${result.errorCode})`
                           : result.reason === "unsupported"
-                          ? "Your browser doesn't support push notifications yet."
+                          ? `Your browser doesn't support push notifications yet. (${result.errorCode})`
                           : result.reason === "dismissed"
-                          ? "Permission was dismissed. Tap 'Turn on reminders' to try again."
-                          : result.reason === "registration-failed"
-                          ? "Could not register. Check your connection and try again."
-                          : result.reason === "prefs-failed"
-                          ? "Preferences could not be saved. Please try again."
-                          : "Could not save. Check your connection and try again.";
+                          ? `Permission was dismissed. Tap 'Turn on reminders' to try again. (${result.errorCode})`
+                          : `Could not enable reminders. (${result.errorCode})`;
                       setNotifError(msg);
-                      return;
+                      // Do NOT return here — fall through to finally so
+                      // setNotifLoading(false) always runs and "Saving…" clears.
+                    } else {
+                      // Refresh notifPrefs from Firestore after full success
+                      const updated = await cloudSync.pullNotificationPrefs(uid).catch(() => null);
+                      if (updated) setNotifPrefs(updated);
+                      setNotifSuccess(true);
+                      // After 2 s success message, permanently dismiss the card
+                      setTimeout(() => {
+                        localStorage.setItem(NOTIF_DISMISSED_KEY, "true");
+                        setNotifDismissed(true);
+                      }, 2000);
                     }
-                    // Refresh notifPrefs from Firestore after full success
-                    const updated = await cloudSync.pullNotificationPrefs(uid).catch(() => null);
-                    if (updated) setNotifPrefs(updated);
-                    setNotifSuccess(true);
-                    // After 2 s success message, permanently dismiss the card
-                    setTimeout(() => {
-                      localStorage.setItem(NOTIF_DISMISSED_KEY, "true");
-                      setNotifDismissed(true);
-                    }, 2000);
-                  } catch {
-                    setNotifError("Could not save. Check your connection and try again.");
+                  } catch (e) {
+                    setNotifError(`Could not save. Check your connection. (UNEXPECTED: ${e instanceof Error ? e.message : String(e)})`);
                   } finally {
+                    // Always clear "Saving…" — this runs regardless of success/failure/error.
                     setNotifLoading(false);
                   }
                 }}

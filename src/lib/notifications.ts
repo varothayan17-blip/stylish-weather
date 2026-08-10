@@ -24,6 +24,18 @@ import { getUid } from "./auth";
 import { buildNotificationPrefs, type NotificationPrefs } from "./preferences";
 import { cloudSync } from "./cloudSync";
 
+// ── Diagnostic logging ────────────────────────────────────────────────────
+// Always-on (not DEV-only) so they appear in iPhone PWA console via
+// Safari Web Inspector OR can be captured in the UI error string.
+// NEVER logs FID, VAPID key, Firebase config, auth tokens, or email.
+
+let _t0 = 0;
+function notifLog(label: string, extra?: string) {
+  const elapsed = _t0 ? `+${Date.now() - _t0}ms` : "";
+  const msg = extra ? `[notif] ${label} ${extra} ${elapsed}` : `[notif] ${label} ${elapsed}`;
+  console.log(msg);
+}
+
 // ── Device-ID persistence ─────────────────────────────────────────────────
 
 const DEVICE_ID_KEY = "weatherwear:device-id";
@@ -67,6 +79,8 @@ export type NotificationResult =
   | { ok: true }
   | {
       ok: false;
+      // errorCode is a short machine-readable token shown in the UI on Windows
+      // where Safari Web Inspector is unavailable. Also appears in console logs.
       reason:
         | "unsupported"
         | "denied"
@@ -76,39 +90,16 @@ export type NotificationResult =
         | "prefs-failed"
         | "no-app"
         | "no-uid";
+      errorCode: string; // e.g. "UNSUPPORTED", "REG_TIMEOUT", "FID_NOT_RECEIVED"
     };
 
 // ── Persistent FID synchronisation ───────────────────────────────────────
 
-/**
- * Establish the persistent onRegistered listener for the current session.
- *
- * Firebase calls onRegistered() when:
- *   • The FID is first issued after register()
- *   • The FID changes (e.g. browser/service worker lifecycle rotation)
- *
- * This function should be called once per session at app startup when
- * all of these are true:
- *   • VITE_NOTIFICATIONS_ENABLED
- *   • user is authenticated (uid available)
- *   • notificationPrefs.enabled === true
- *   • push is supported
- *
- * On each FID delivery: updates THIS device's Firestore record only —
- * preserves createdAt, updates fid + updatedAt + enabled=true.
- *
- * FIDs are not logged.
- *
- * Returns a cleanup function that removes the listener.
- * Errors are non-fatal: if this fails, enable/disable still works.
- */
 export async function initRegistrationSync(uid: string): Promise<() => void> {
   try {
     const supported = await isPushSupported();
     if (!supported) return () => {};
 
-    // Do NOT request permission automatically at startup.
-    // Only proceed if permission was already granted by a previous explicit action.
     if (typeof Notification === "undefined") return () => {};
     if (Notification.permission !== "granted") return () => {};
 
@@ -118,39 +109,22 @@ export async function initRegistrationSync(uid: string): Promise<() => void> {
     const { getMessaging, register, onRegistered } = await import("firebase/messaging");
     const messaging = getMessaging(app);
 
-    // Step A: establish onRegistered listener BEFORE calling register().
-    // Firebase may call this immediately (if FID is cached) or after async
-    // registration completes. Setting up the listener first avoids a race
-    // where register() resolves before the listener is attached.
     const unsubscribe = onRegistered(messaging, async (fid) => {
-      // FID refreshed or rotated — update only THIS device's Firestore record.
-      // Preserves createdAt, updates fid + updatedAt + enabled=true.
-      // FID value is not logged.
       try {
-        await writeDeviceRecord(uid, fid, true, false /* isCreate=false: preserve createdAt */);
+        await writeDeviceRecord(uid, fid, true, false);
       } catch {
-        // Non-fatal: Stage E will discover stale FIDs when sends fail.
         if (import.meta.env.DEV) {
           console.warn("[aeruvo:notifications] FID sync write failed");
         }
       }
     });
 
-    // Step B: call register() to trigger/refresh FID resolution.
-    // This is safe to call on every startup — Firebase returns the existing
-    // FID if it is still valid, or issues a new one if it has rotated.
-    // vapidKey and serviceWorkerRegistration are supplied so FCM can match
-    // the subscription to the correct Web Push endpoint.
     const swReg = await navigator.serviceWorker.ready;
     const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY as string | undefined;
     register(messaging, {
       vapidKey: vapidKey || undefined,
       serviceWorkerRegistration: swReg,
-    }).catch(() => {
-      // Non-fatal: register() failure at startup does not prevent the app
-      // from working. If FID is stale, Stage E will detect the delivery
-      // failure and the next startup attempt will retry.
-    });
+    }).catch(() => {});
 
     return unsubscribe;
   } catch {
@@ -161,90 +135,130 @@ export async function initRegistrationSync(uid: string): Promise<() => void> {
 // ── Shared orchestration — enable ─────────────────────────────────────────
 
 /**
- * Atomic enable orchestration. Used by BOTH Home card and Settings toggle
- * so behavior cannot diverge.
+ * Atomic enable orchestration with milestone logging and visible error codes.
  *
- * Step A: request browser Notification permission
- * Step B: register() → onRegistered() → receive FID
- * Step C: write device record to Firestore (enabled=true)
- * Step D: syncNotificationPrefs(enabled=true)
- *
- * Rollback on failure at step D:
- *   → delete device record (undo C)
- *   → best-effort unregister() (undo B)
- *   → return { ok: false, reason: "prefs-failed" }
- *   → caller must NOT set enabled=true in UI
- *
- * Only returns { ok: true } when all four steps succeed.
- *
- * @param uid           Authenticated user ID
- * @param existingPrefs Current notificationPrefs (may be null)
+ * Error codes surfaced in UI (for Windows debugging without Safari Inspector):
+ *   UNSUPPORTED         — browser/OS does not support push
+ *   PERMISSION_DENIED   — user denied in OS settings
+ *   PERMISSION_DISMISSED — user dismissed without allowing
+ *   NO_APP              — Firebase app not initialised
+ *   NO_UID              — not signed in
+ *   REG_TIMEOUT         — register() called but onRegistered never fired in 15s
+ *   REGISTER_FAILED     — register() threw an error
+ *   FID_NOT_RECEIVED    — onRegistered promise rejected for unknown reason
+ *   DEVICE_WRITE_FAILED — Firestore write of device record failed
+ *   PREFS_WRITE_FAILED  — Firestore write of notificationPrefs failed
  */
 export async function orchestrateEnable(
   uid: string,
   existingPrefs: NotificationPrefs | null,
 ): Promise<NotificationResult> {
-  // Step A — permission
+  _t0 = Date.now();
+  notifLog("enable:start");
+
+  // Step A — support + permission
   const supported = await isPushSupported();
-  if (!supported) return { ok: false, reason: "unsupported" };
+  if (!supported) {
+    notifLog("support:false");
+    return { ok: false, reason: "unsupported", errorCode: "UNSUPPORTED" };
+  }
+  notifLog("support:ok");
 
   let permission: NotificationPermission;
   try {
     permission = await Notification.requestPermission();
   } catch {
-    return { ok: false, reason: "denied" };
+    notifLog("permission:error");
+    return { ok: false, reason: "denied", errorCode: "PERMISSION_DENIED" };
   }
-  if (permission === "denied") return { ok: false, reason: "denied" };
-  if (permission !== "granted") return { ok: false, reason: "dismissed" };
+  notifLog(`permission:${permission}`);
+  if (permission === "denied")  return { ok: false, reason: "denied",    errorCode: "PERMISSION_DENIED" };
+  if (permission !== "granted") return { ok: false, reason: "dismissed", errorCode: "PERMISSION_DISMISSED" };
+
+  // Step B — Firebase app
+  const app = await getFirebaseApp();
+  if (!app) {
+    notifLog("no-app");
+    return { ok: false, reason: "no-app", errorCode: "NO_APP" };
+  }
 
   // Step B — FID registration
-  const app = await getFirebaseApp();
-  if (!app) return { ok: false, reason: "no-app" };
-
   let fid: string;
+  let registerErrorCode = "FID_NOT_RECEIVED";
   try {
     const { getMessaging, register, onRegistered } = await import("firebase/messaging");
     const messaging = getMessaging(app);
-    const swReg = await navigator.serviceWorker.ready;
     const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY as string | undefined;
 
     fid = await new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("Registration timeout")), 15_000);
-      const unsubscribe = onRegistered(messaging, (receivedFid) => {
+      // IMPORTANT: the 15-second master timeout covers the ENTIRE registration
+      // flow including navigator.serviceWorker.ready. On some iOS PWA states,
+      // serviceWorker.ready can hang indefinitely if the SW is in a broken
+      // state. Without this outer timeout wrapping sw.ready, the flow could
+      // hang forever before the inner timeout even starts.
+      const timeout = setTimeout(() => {
+        notifLog("timeout");
+        registerErrorCode = "REG_TIMEOUT";
+        reject(new Error("Registration timeout"));
+      }, 15_000);
+
+      // Resolve serviceWorker.ready inside the promise so the master timeout
+      // above can cancel it if it hangs.
+      notifLog("sw:wait");
+      navigator.serviceWorker.ready.then((swReg) => {
+        notifLog("sw:ready");
+
+        notifLog("listener:onRegistered-attached");
+        const unsubscribe = onRegistered(messaging, (receivedFid) => {
+          clearTimeout(timeout);
+          unsubscribe();
+          notifLog("onRegistered:fired");
+          resolve(receivedFid);
+        });
+
+        notifLog("register:start");
+        register(messaging, {
+          vapidKey: vapidKey || undefined,
+          serviceWorkerRegistration: swReg,
+        }).then(() => {
+          notifLog("register:resolved");
+        }).catch((err: unknown) => {
+          clearTimeout(timeout);
+          unsubscribe();
+          registerErrorCode = "REGISTER_FAILED";
+          notifLog("register:error", String(err instanceof Error ? err.message : err));
+          reject(err);
+        });
+      }).catch((swErr: unknown) => {
+        // serviceWorker.ready rejected (very unusual but possible)
         clearTimeout(timeout);
-        unsubscribe();
-        resolve(receivedFid);
-      });
-      register(messaging, {
-        vapidKey: vapidKey || undefined,
-        serviceWorkerRegistration: swReg,
-      }).catch((err) => {
-        clearTimeout(timeout);
-        unsubscribe();
-        reject(err);
+        registerErrorCode = "REGISTER_FAILED";
+        notifLog("sw:error", String(swErr instanceof Error ? swErr.message : swErr));
+        reject(swErr);
       });
     });
   } catch {
-    return { ok: false, reason: "registration-failed" };
+    notifLog(`registration-failed errorCode:${registerErrorCode}`);
+    return { ok: false, reason: "registration-failed", errorCode: registerErrorCode };
   }
 
   const deviceId = getOrCreateDeviceId();
 
-  // Step C — write device record (first-create path)
+  // Step C — write device record
+  notifLog("device-write:start");
   try {
-    await writeDeviceRecord(uid, fid, true, true /* is create */);
-  } catch {
-    // Rollback B: unregister locally
+    await writeDeviceRecord(uid, fid, true, true);
+    notifLog("device-write:success");
+  } catch (err) {
+    notifLog("device-write:error", String(err instanceof Error ? err.message : err));
+    notifLog("rollback:start");
     try {
       const { getMessaging, unregister } = await import("firebase/messaging");
       const appAgain = await getFirebaseApp();
       if (appAgain) await unregister(getMessaging(appAgain));
-    } catch {
-      if (import.meta.env.DEV) {
-        console.warn("[aeruvo:notifications] rollback unregister failed");
-      }
-    }
-    return { ok: false, reason: "firestore-failed" };
+    } catch {}
+    notifLog("rollback:done");
+    return { ok: false, reason: "firestore-failed", errorCode: "DEVICE_WRITE_FAILED" };
   }
 
   // Step D — sync notificationPrefs
@@ -256,53 +270,35 @@ export async function orchestrateEnable(
     reminderMinute: existingPrefs?.reminderMinute ?? 30,
   });
 
+  notifLog("prefs-write:start");
   try {
     await cloudSync.syncNotificationPrefs(uid, nextPrefs);
-  } catch {
-    // Rollback C: delete device record so no active device with disabled prefs
+    notifLog("prefs-write:success");
+  } catch (err) {
+    notifLog("prefs-write:error", String(err instanceof Error ? err.message : err));
+    notifLog("rollback:start");
     try {
       const db = await getFirestoreDb();
       if (db) {
         const { doc, deleteDoc } = await import("firebase/firestore");
         await deleteDoc(doc(db, "users", uid, "devices", deviceId));
       }
-    } catch {
-      if (import.meta.env.DEV) {
-        console.warn("[aeruvo:notifications] rollback device delete failed");
-      }
-    }
-    // Rollback B: best-effort unregister
+    } catch {}
     try {
       const { getMessaging, unregister } = await import("firebase/messaging");
       const appAgain = await getFirebaseApp();
       if (appAgain) await unregister(getMessaging(appAgain));
     } catch {}
-    return { ok: false, reason: "prefs-failed" };
+    notifLog("rollback:done");
+    return { ok: false, reason: "prefs-failed", errorCode: "PREFS_WRITE_FAILED" };
   }
 
+  notifLog("enable:success");
   return { ok: true };
 }
 
 // ── Shared orchestration — disable ────────────────────────────────────────
 
-/**
- * Atomic disable orchestration. Used by BOTH Settings toggle and any future
- * disable path.
- *
- * Server-safe order (fail-safe):
- *   Step 1: syncNotificationPrefs(enabled=false) — server stops scheduling
- *   Step 2: deleteDoc(devices/{deviceId})       — remove active device
- *   Step 3: best-effort unregister()             — local cleanup
- *
- * Step 1 first: if step 2 or 3 fail, the server already knows not to send.
- * Step 2 before step 3: Firestore record cleaned up before local state changes.
- *
- * Returns the updated NotificationPrefs for the caller to set in state.
- * Throws if step 1 fails (caller must show error and not claim disabled).
- *
- * @param uid           Authenticated user ID
- * @param existingPrefs Current notificationPrefs (must not be null)
- */
 export async function orchestrateDisable(
   uid: string,
   existingPrefs: NotificationPrefs,
@@ -314,10 +310,8 @@ export async function orchestrateDisable(
     reminderMinute: existingPrefs.reminderMinute,
   });
 
-  // Step 1 — prefs disabled on server FIRST (fail-safe)
-  await cloudSync.syncNotificationPrefs(uid, nextPrefs); // throws on failure
+  await cloudSync.syncNotificationPrefs(uid, nextPrefs);
 
-  // Step 2 — delete device record (best-effort after step 1)
   const deviceId = getStoredDeviceId();
   if (deviceId) {
     try {
@@ -333,7 +327,6 @@ export async function orchestrateDisable(
     }
   }
 
-  // Step 3 — local unregistration (best-effort)
   try {
     const app = await getFirebaseApp();
     if (app) {
@@ -347,17 +340,10 @@ export async function orchestrateDisable(
 
 // ── Sign-out cleanup ──────────────────────────────────────────────────────
 
-/**
- * Called in auth.ts signOut() before Firebase signOut, while uid is still valid.
- * Deletes THIS device's Firestore record and unregisters locally.
- * Never throws — sign-out always completes.
- * Only touches THIS device; other devices for the same account are untouched.
- */
 export async function cleanupDeviceOnSignOut(uid: string): Promise<void> {
   const deviceId = getStoredDeviceId();
   if (!deviceId) return;
 
-  // Firestore deletion first (fail-safe server state)
   try {
     const db = await getFirestoreDb();
     if (db) {
@@ -370,7 +356,6 @@ export async function cleanupDeviceOnSignOut(uid: string): Promise<void> {
     }
   }
 
-  // Best-effort local unregistration
   try {
     const app = await getFirebaseApp();
     if (app) {
@@ -382,10 +367,6 @@ export async function cleanupDeviceOnSignOut(uid: string): Promise<void> {
 
 // ── Foreground message handler ────────────────────────────────────────────
 
-/**
- * Listen for FCM messages when the app is foregrounded.
- * Stage D: no-op stub. Stage E: display in-app banner or update advice.
- */
 export async function listenForForegroundMessages(): Promise<() => void> {
   try {
     const app = await getFirebaseApp();
@@ -403,15 +384,6 @@ export async function listenForForegroundMessages(): Promise<() => void> {
 
 // ── Internal: write device record ─────────────────────────────────────────
 
-/**
- * Create or update the Firestore device document for this browser.
- *
- * isCreate=true: include fid + createdAt (Firestore create rule requires both)
- * isCreate=false: update fid + updatedAt only (createdAt must not change)
- *
- * When fid is null (legacy disable path): only update enabled + updatedAt.
- * FIDs are not logged.
- */
 async function writeDeviceRecord(
   uid: string,
   fid: string | null,
@@ -434,10 +406,9 @@ async function writeDeviceRecord(
   if (fid !== null) {
     data.fid = fid;
     if (isCreate) {
-      data.createdAt = now; // required on create; immutable after that
+      data.createdAt = now;
     }
   }
 
-  // merge:true preserves createdAt on update-path writes
   await setDoc(doc(db, "users", uid, "devices", deviceId), data, { merge: true });
 }
