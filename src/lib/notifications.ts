@@ -13,6 +13,7 @@
  */
 
 import { getFirebaseApp, getFirestoreDb } from "./firebase";
+import { ensureServiceWorkerRegistration, ServiceWorkerError } from "./registerSW";
 import { getUid } from "./auth";
 import { buildNotificationPrefs, type NotificationPrefs } from "./preferences";
 import { cloudSync } from "./cloudSync";
@@ -171,63 +172,29 @@ export async function orchestrateEnable(
     return { ok: false, reason: "no-app", errorCode: "NO_APP" };
   }
 
-  // ── Step D: navigator.serviceWorker.ready (Phase 1, 10-second timeout) ──
-  // Isolated from the FID phase. Run pre-ready diagnostics first so we
-  // can classify the SW state BEFORE waiting, helping distinguish between
-  // "never registered" vs "registered but stuck in installing/waiting".
-
-  // Pre-ready diagnostics — run before awaiting .ready
-  let swPreDiag = "unknown";
-  try {
-    const controller = navigator.serviceWorker.controller;
-    const allRegs = await navigator.serviceWorker.getRegistrations();
-    const reg = allRegs.find(r => r.active || r.installing || r.waiting);
-    if (!allRegs.length) {
-      swPreDiag = "SW_NOT_REGISTERED";
-    } else if (!controller && reg?.installing) {
-      swPreDiag = "SW_INSTALLING";
-    } else if (!controller && reg?.waiting) {
-      swPreDiag = "SW_WAITING";
-    } else if (!controller) {
-      swPreDiag = "SW_NO_CONTROLLER";
-    } else {
-      swPreDiag = "SW_CONTROLLED";
-    }
-    const scriptURL = reg?.active?.scriptURL ?? reg?.installing?.scriptURL ?? reg?.waiting?.scriptURL ?? "none";
-    notifLog(
-      `sw:pre-ready diag=${swPreDiag}`,
-      `regs=${allRegs.length} script=${scriptURL} ` +
-      `active-state=${reg?.active?.state ?? "none"}`,
-    );
-  } catch (diagErr) {
-    notifLog("sw:pre-ready-error", String(diagErr instanceof Error ? diagErr.message : diagErr));
-  }
-
+  // ── Step D: ensure SW is registered and active ───────────────────────
+  // Uses ensureServiceWorkerRegistration() which:
+  //   1. Checks for an existing /sw.js registration
+  //   2. Registers /sw.js immediately if not found (no load-event race)
+  //   3. Waits for activation with a 10-second bounded timeout
+  //   4. Returns the active ServiceWorkerRegistration
+  //
+  // This replaces navigator.serviceWorker.ready which hangs indefinitely
+  // when no SW is registered (SW_NOT_REGISTERED case).
   let swReg: ServiceWorkerRegistration;
   notifLog("sw:wait");
   try {
-    swReg = await Promise.race([
-      navigator.serviceWorker.ready,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => {
-          notifLog("sw:timeout", `pre-diag-was=${swPreDiag}`);
-          reject(new Error("SW_READY_TIMEOUT"));
-        }, 10_000),
-      ),
-    ]);
+    swReg = await ensureServiceWorkerRegistration(10_000);
     notifLog("sw:ready",
       `scope=${swReg.scope} ` +
       `script=${swReg.active?.scriptURL ?? "no-active"} ` +
       `state=${swReg.active?.state ?? "none"}`,
     );
   } catch (swErr) {
-    const msg = swErr instanceof Error ? swErr.message : String(swErr);
-    const isTimeout = msg === "SW_READY_TIMEOUT";
-    // Surface the pre-ready diagnosis in the error code so the UI
-    // shows exactly why the SW was not ready.
-    const errorCode = isTimeout ? `SW_READY_TIMEOUT(${swPreDiag})` : "SW_SCRIPT_FAILED";
-    notifLog("sw:error", errorCode);
-    return { ok: false, reason: "registration-failed", errorCode };
+    const code = swErr instanceof ServiceWorkerError ? swErr.code : "SW_SCRIPT_FAILED";
+    const msg  = swErr instanceof Error ? swErr.message : String(swErr);
+    notifLog("sw:error", `${code}: ${msg}`);
+    return { ok: false, reason: "registration-failed", errorCode: code };
   }
 
   // ── Step E: FID registration (Phase 2, 15-second timeout) ────────────
