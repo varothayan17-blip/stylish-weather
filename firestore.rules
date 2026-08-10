@@ -186,6 +186,53 @@ service cloud.firestore {
         // Favorites cannot be deleted via the API.
         allow delete: if false;
       }
+
+      // ── users/{uid}/devices/{deviceId} ──────────────────────────────
+      // FID (Firebase Installation ID) + device metadata for push notifications.
+      // Stage D uses register()/onRegistered() — the FID is stored as "fid".
+      // One document per browser/device, keyed by a stable client-generated UUID.
+
+      match /devices/{deviceId} {
+        // Owner can read their own device records.
+        allow read: if request.auth != null && request.auth.uid == uid;
+
+        // CREATE: enable flow writes fid + createdAt for the first time.
+        // fid must be a non-empty string, max 512 chars (FIDs are ~22 chars;
+        // 512 gives headroom for future formats without accepting arbitrary data).
+        allow create: if request.auth != null
+          && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly([
+               "fid", "platform", "enabled", "createdAt", "updatedAt"
+             ])
+          && "fid" in request.resource.data
+          && request.resource.data.fid is string
+          && request.resource.data.fid.size() > 0
+          && request.resource.data.fid.size() <= 512
+          && "createdAt" in request.resource.data
+          && request.resource.data.createdAt is int
+          && request.resource.data.platform in ["web", "android", "ios"]
+          && request.resource.data.enabled is bool
+          && request.resource.data.updatedAt is int;
+
+        // UPDATE: disable flow updates enabled + updatedAt only.
+        // createdAt must remain unchanged (compared to existing value).
+        // fid may remain present (preserved from create) but is not required
+        // in the incoming data because the disable flow uses merge:true
+        // and does not re-send fid.
+        allow update: if request.auth != null
+          && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly([
+               "fid", "platform", "enabled", "createdAt", "updatedAt"
+             ])
+          && request.resource.data.platform in ["web", "android", "ios"]
+          && request.resource.data.enabled is bool
+          && request.resource.data.updatedAt is int
+          // createdAt must not change after creation
+          && request.resource.data.createdAt == resource.data.createdAt;
+
+        // Owner can delete their own device record (sign-out cleanup).
+        allow delete: if request.auth != null && request.auth.uid == uid;
+      }
     }
 
     // ── Deny everything else ───────────────────────────────────────────────

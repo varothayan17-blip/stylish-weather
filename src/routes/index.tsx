@@ -26,6 +26,7 @@ import {
   type NotificationPrefs,
 } from "@/lib/preferences";
 import { cloudSync } from "@/lib/cloudSync";
+import { orchestrateEnable } from "@/lib/notifications";
 import { getUid } from "@/lib/auth";
 import { getErrorMessage } from "@/lib/utils";
 import { recommend } from "@/lib/recommend";
@@ -682,7 +683,7 @@ function Home() {
             <p className="mt-3 text-xs text-destructive">{notifError}</p>
           )}
           {notifSuccess ? (
-            <p className="mt-3 text-sm font-medium text-primary">✓ Rain reminders enabled in Aeruvo.</p>
+            <p className="mt-3 text-sm font-medium text-primary">✓ Rain reminders are ready.</p>
           ) : (
             <div className="mt-3 flex gap-2">
               <button
@@ -692,18 +693,29 @@ function Home() {
                   try {
                     const uid = await getUid();
                     if (!uid) throw new Error("Not signed in");
-                    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                    // buildNotificationPrefs increments schedulingVersion whenever
-                    // any scheduling field (enabled, timezone, hour, minute) changes.
-                    // Enabling always changes enabled false→true, so sv always increments.
-                    const next = buildNotificationPrefs(notifPrefs, {
-                      enabled: true,
-                      timezone: tz,
-                      reminderHour: notifPrefs?.reminderHour ?? 7,
-                      reminderMinute: notifPrefs?.reminderMinute ?? 30,
-                    });
-                    await cloudSync.syncNotificationPrefs(uid, next);
-                    setNotifPrefs(next);
+
+                    // orchestrateEnable handles permission, FID registration,
+                    // device record, AND notificationPrefs atomically with rollback.
+                    const result = await orchestrateEnable(uid, notifPrefs);
+                    if (!result.ok) {
+                      const msg =
+                        result.reason === "denied"
+                          ? "Notifications are blocked. Enable them in your browser settings."
+                          : result.reason === "unsupported"
+                          ? "Your browser doesn't support push notifications yet."
+                          : result.reason === "dismissed"
+                          ? "Permission was dismissed. Tap 'Turn on reminders' to try again."
+                          : result.reason === "registration-failed"
+                          ? "Could not register. Check your connection and try again."
+                          : result.reason === "prefs-failed"
+                          ? "Preferences could not be saved. Please try again."
+                          : "Could not save. Check your connection and try again.";
+                      setNotifError(msg);
+                      return;
+                    }
+                    // Refresh notifPrefs from Firestore after full success
+                    const updated = await cloudSync.pullNotificationPrefs(uid).catch(() => null);
+                    if (updated) setNotifPrefs(updated);
                     setNotifSuccess(true);
                     // After 2 s success message, permanently dismiss the card
                     setTimeout(() => {

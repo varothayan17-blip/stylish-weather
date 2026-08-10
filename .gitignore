@@ -38,3 +38,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Auto-generated Firebase SW config (from scripts/generate-sw-config.js)
+public/firebase-sw-config.js

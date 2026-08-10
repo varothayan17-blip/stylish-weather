@@ -18,7 +18,7 @@ export function isFirebaseConfigured(): boolean {
 
 let appPromise: Promise<FirebaseApp | null> | null = null;
 
-function getFirebaseApp(): Promise<FirebaseApp | null> {
+export function getFirebaseApp(): Promise<FirebaseApp | null> {
   if (!isFirebaseConfigured()) return Promise.resolve(null);
   if (!appPromise) {
     appPromise = import("firebase/app").then(({ initializeApp, getApps }) => {
@@ -27,6 +27,12 @@ function getFirebaseApp(): Promise<FirebaseApp | null> {
         apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
         authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
         projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+        // messagingSenderId is used by Firebase Messaging (Web Push).
+        // Optional for VAPID-keyed push, but included for completeness
+        // and compatibility with firebase-messaging-compat in the SW.
+        ...(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID
+          ? { messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID }
+          : {}),
         appId: import.meta.env.VITE_FIREBASE_APP_ID,
       });
     });

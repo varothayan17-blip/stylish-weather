@@ -17,6 +17,7 @@ import {
 } from "@/lib/preferences";
 import { cloudSync } from "@/lib/cloudSync";
 import { getUid } from "@/lib/auth";
+import { orchestrateEnable, orchestrateDisable } from "@/lib/notifications";
 import { applyTheme, type Theme } from "@/lib/theme";
 import {
   Sun,
@@ -280,16 +281,62 @@ function Settings() {
                 const current = notifPrefs;
                 const willEnable = !(current?.enabled ?? false);
                 const tz = detectedTz.current;
-                // buildNotificationPrefs increments schedulingVersion whenever
-                // any scheduling field changes. enabled changing always triggers
-                // the backend: ON → compute nextCheckAt; OFF → delete nextCheckAt.
-                const next = buildNotificationPrefs(current, {
-                  enabled: willEnable,
-                  timezone: current?.timezone ?? tz,
-                  reminderHour: current?.reminderHour ?? 7,
-                  reminderMinute: current?.reminderMinute ?? 30,
-                });
-                await saveNotifPrefs(next);
+
+                if (willEnable) {
+                  // Toggle ON: orchestrateEnable handles permission, FID,
+                  // device record, and notificationPrefs atomically with rollback.
+                  setNotifLoading(true);
+                  setNotifError(null);
+                  try {
+                    const uid = await getUid();
+                    if (!uid) throw new Error("Sign in to enable reminders.");
+                    const result = await orchestrateEnable(uid, current);
+                    if (!result.ok) {
+                      setNotifError(
+                        result.reason === "denied"
+                          ? "Notifications are blocked. Enable them in your browser settings."
+                          : result.reason === "unsupported"
+                          ? "Your browser doesn't support push notifications yet."
+                          : result.reason === "dismissed"
+                          ? "Permission was dismissed. Try again to enable reminders."
+                          : result.reason === "prefs-failed"
+                          ? "Preferences could not be saved. Please try again."
+                          : "Could not register. Check your connection and try again."
+                      );
+                      return;
+                    }
+                    // Refresh from Firestore after full success
+                    const uid2 = await getUid();
+                    if (uid2) {
+                      const updated = await cloudSync.pullNotificationPrefs(uid2).catch(() => null);
+                      if (updated) setNotifPrefs(updated);
+                    }
+                    setNotifSaved(true);
+                    setTimeout(() => setNotifSaved(false), 1500);
+                  } catch (e) {
+                    setNotifError(e instanceof Error ? e.message : "Could not save.");
+                  } finally {
+                    setNotifLoading(false);
+                  }
+                } else {
+                  // Toggle OFF: orchestrateDisable handles prefs-first (server-safe)
+                  // then device deletion, then best-effort unregister.
+                  if (!current) return;
+                  const uid3 = await getUid();
+                  if (!uid3) { setNotifError("Not signed in."); return; }
+                  setNotifLoading(true);
+                  setNotifError(null);
+                  try {
+                    const next = await orchestrateDisable(uid3, current);
+                    setNotifPrefs(next);
+                    setNotifSaved(true);
+                    setTimeout(() => setNotifSaved(false), 1500);
+                  } catch (e) {
+                    setNotifError(e instanceof Error ? e.message : "Could not disable reminders.");
+                  } finally {
+                    setNotifLoading(false);
+                  }
+                }
               }}
               className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
                 (notifPrefs?.enabled ?? false)

@@ -83,6 +83,18 @@ export const firebaseEmailAuth: AuthProvider = {
   },
 
   async signOut() {
+    // Clean up the current device's FCM token and Firestore record before
+    // signing out. We do this while the uid is still available.
+    // Failure is non-fatal — sign-out always completes.
+    try {
+      const uid = await getUid();
+      if (uid) {
+        const { cleanupDeviceOnSignOut } = await import("./notifications");
+        await cleanupDeviceOnSignOut(uid);
+      }
+    } catch {
+      // Non-fatal — proceed with sign-out
+    }
     const fbAuth = await getFirebaseAuth();
     if (fbAuth) {
       const { signOut } = await import("firebase/auth");

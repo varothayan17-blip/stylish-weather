@@ -13,6 +13,10 @@ import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { THEME_BOOT_SCRIPT } from "../lib/theme";
 import { registerServiceWorker } from "../lib/registerSW";
+import { NOTIFICATIONS_ENABLED } from "../lib/preferences";
+import { initRegistrationSync } from "../lib/notifications";
+import { getUid } from "../lib/auth";
+import { cloudSync } from "../lib/cloudSync";
 import { subscribeToAuthState } from "../lib/auth";
 
 function NotFoundComponent() {
@@ -129,6 +133,21 @@ function RootComponent() {
 
   useEffect(() => {
     registerServiceWorker();
+
+    // Persistent FID synchronisation: when notifications are enabled and the
+    // user is authenticated, establish the onRegistered listener so Aeruvo
+    // always has the current FID even if Firebase rotates it.
+    let unsubFid: (() => void) | undefined;
+    if (NOTIFICATIONS_ENABLED) {
+      getUid().then(async (uid) => {
+        if (!uid) return;
+        const np = await cloudSync.pullNotificationPrefs(uid).catch(() => null);
+        if (np?.enabled) {
+          unsubFid = await initRegistrationSync(uid);
+        }
+      }).catch(() => {});
+    }
+
     // Subscribe to Firebase Auth state. Fires immediately if a session already
     // exists (app reopen / page refresh) and syncs Firestore prefs silently.
     // Returns an unsubscribe function — call it on cleanup to avoid memory leaks.
@@ -138,7 +157,7 @@ function RootComponent() {
     }).then((fn) => {
       unsubscribe = fn;
     });
-    return () => unsubscribe?.();
+    return () => { unsubscribe?.(); unsubFid?.(); };
   }, []);
 
   return (
