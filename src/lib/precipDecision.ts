@@ -229,6 +229,6 @@ function timePeriod(startH: number, endH: number): string {
   if (mid < 12) return "in the late morning";
   if (mid < 14) return "around midday";
   if (mid < 17) return "in the afternoon";
-  if (mid < 20) return "this evening";
+  if (mid < 22) return "this evening";
   return "overnight";
 }
