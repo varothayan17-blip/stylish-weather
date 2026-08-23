@@ -181,3 +181,122 @@ P2/P3: Add verifyEntitlementServer(uid) to src/server.ts or a dedicated
 server function. Use firebase-admin to read users/{uid}/entitlements/premium.
 Never trust client-provided premium status for server-side AI operations.
 `;
+
+// ── useEntitlement hook ───────────────────────────────────────────────────
+
+/**
+ * React hook: subscribes to the current user's entitlement.
+ *
+ * Waits for Firebase Auth to resolve before querying Firestore.
+ * Never hangs forever — resolves to Free on auth timeout (5 s).
+ *
+ * Rules:
+ *   - Initialises as { loading: true }
+ *   - Resolves to { active: false, reason: "signed-out" } when no user
+ *   - Resolves to { active: false, reason: "missing" } when no entitlement doc
+ *   - Resolves to { active: true, entitlement } when backend grants Premium
+ *   - Resolves to { active: false, reason: "error" } on Firestore failure
+ *   - Re-fetches when auth state changes (sign-in / sign-out)
+ *   - Re-fetches on tab focus (user may have completed checkout in another tab)
+ *   - localStorage and prefs.premium are NEVER consulted
+ *
+ * Use this hook instead of calling fetchEntitlement() directly in useEffect.
+ */
+export function useEntitlement(): EntitlementResult {
+  // Lazily import React hooks to keep this file importable outside React contexts
+  // (e.g. in tests). The import is synchronous once React is loaded.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { useState, useEffect } = require("react") as typeof import("react");
+
+  const [result, setResult] = useState<EntitlementResult>({ loading: true });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      // Wait for Firebase Auth to initialise — currentUser is null until
+      // the SDK has rehydrated the persisted session. We wait up to 5 s.
+      // If auth doesn't resolve in time, treat as signed-out (Free).
+      let uid: string | null = null;
+      try {
+        const { getFirebaseAuth } = await import("./firebase");
+        const fbAuth = await getFirebaseAuth();
+
+        if (fbAuth) {
+          // currentUser may already be populated (fast path)
+          if (fbAuth.currentUser) {
+            uid = fbAuth.currentUser.uid;
+          } else {
+            // Wait for the auth state to settle with a 5-second timeout
+            uid = await new Promise<string | null>((resolve) => {
+              const timer = setTimeout(() => {
+                unsubscribe();
+                resolve(null); // timeout → treat as signed-out
+              }, 5_000);
+
+              const { onAuthStateChanged } = require("firebase/auth") as typeof import("firebase/auth");
+              const unsubscribe = onAuthStateChanged(fbAuth, (user) => {
+                clearTimeout(timer);
+                unsubscribe();
+                resolve(user?.uid ?? null);
+              });
+            });
+          }
+        }
+      } catch {
+        uid = null;
+      }
+
+      if (cancelled) return;
+
+      if (!uid) {
+        setResult({ loading: false, active: false, reason: "signed-out" });
+        return;
+      }
+
+      // Now fetch the entitlement document
+      const entResult = await fetchEntitlementForUid(uid);
+      if (!cancelled) setResult(entResult);
+    }
+
+    load();
+
+    // Re-fetch on tab focus: user may have completed Stripe checkout
+    // in another tab and the entitlement doc was just created.
+    const onFocus = () => { if (!cancelled) load(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return result;
+}
+
+/**
+ * Internal: fetch entitlement for a known uid.
+ * Separated from fetchEntitlement() so useEntitlement can pass the
+ * auth-resolved uid directly without calling getUid() again.
+ */
+async function fetchEntitlementForUid(uid: string): Promise<EntitlementResult> {
+  try {
+    const { getFirestoreDb } = await import("./firebase");
+    const db = await getFirestoreDb();
+    if (!db) return { loading: false, active: false, reason: "error" };
+
+    const { doc, getDoc } = await import("firebase/firestore");
+    const snap = await getDoc(doc(db, "users", uid, "entitlements", "premium"));
+
+    if (!snap.exists()) return { loading: false, active: false, reason: "missing" };
+    const data = snap.data() as PremiumEntitlement;
+    if (!data.active) return { loading: false, active: false, reason: "inactive" };
+    return { loading: false, active: true, entitlement: data };
+  } catch {
+    return { loading: false, active: false, reason: "error" };
+  }
+}

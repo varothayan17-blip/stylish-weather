@@ -1,11 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
-import { fetchEntitlement } from "@/lib/entitlement";
+import { useEntitlement } from "@/lib/entitlement";
 import { billing } from "@/lib/billing";
 import { getErrorMessage } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import { Sparkles, Check, Shirt, Bell, BarChart3 } from "lucide-react";
-import type { EntitlementResult } from "@/lib/entitlement";
 
 export const Route = createFileRoute("/premium")({
   head: () => ({
@@ -45,28 +44,11 @@ const features = [
 ];
 
 function Premium() {
-  const [entitlement, setEntitlement] = useState<EntitlementResult>({ loading: true });
+  // useEntitlement: waits for Auth to settle, re-fetches on focus,
+  // never hangs. localStorage and prefs.premium are NOT consulted.
+  const entitlement = useEntitlement();
   const [activating, setActivating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Premium state comes exclusively from the Firestore entitlements subcollection.
-    // localStorage and prefs.premium are NOT consulted — they are not authoritative.
-    async function load() {
-      const result = await fetchEntitlement();
-      setEntitlement(result);
-    }
-    load();
-
-    // Refresh on tab focus (user may have completed checkout in another tab)
-    function onFocus() { load(); }
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
-    };
-  }, []);
 
   const isActive = !entitlement.loading && entitlement.active;
 

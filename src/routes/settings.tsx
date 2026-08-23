@@ -16,7 +16,7 @@ import {
   type NotificationPrefs,
 } from "@/lib/preferences";
 import { cloudSync } from "@/lib/cloudSync";
-import { fetchEntitlement, type EntitlementResult } from "@/lib/entitlement";
+import { useEntitlement, type EntitlementResult } from "@/lib/entitlement";
 import { getUid } from "@/lib/auth";
 import { orchestrateEnable, orchestrateDisable, isIosSafariNonInstalled } from "@/lib/notifications";
 import { applyTheme, type Theme } from "@/lib/theme";
@@ -73,7 +73,8 @@ function Settings() {
   const [notifError, setNotifError] = useState<string | null>(null);
   const [notifSaved, setNotifSaved] = useState(false);
   // Entitlement from Firestore only — never from prefs or localStorage.
-  const [entitlement, setEntitlement] = useState<EntitlementResult>({ loading: true });
+  // useEntitlement waits for Auth to settle — never hangs on "Loading...".
+  const entitlement = useEntitlement();
   // Track the detected local timezone once on mount
   const detectedTz = useRef<string>(
     typeof Intl !== "undefined"
