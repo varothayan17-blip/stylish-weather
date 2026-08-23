@@ -16,8 +16,9 @@ import {
   type NotificationPrefs,
 } from "@/lib/preferences";
 import { cloudSync } from "@/lib/cloudSync";
+import { fetchEntitlement, type EntitlementResult } from "@/lib/entitlement";
 import { getUid } from "@/lib/auth";
-import { orchestrateEnable, orchestrateDisable } from "@/lib/notifications";
+import { orchestrateEnable, orchestrateDisable, isIosSafariNonInstalled } from "@/lib/notifications";
 import { applyTheme, type Theme } from "@/lib/theme";
 import {
   Sun,
@@ -71,6 +72,8 @@ function Settings() {
   const [notifLoading, setNotifLoading] = useState(false);
   const [notifError, setNotifError] = useState<string | null>(null);
   const [notifSaved, setNotifSaved] = useState(false);
+  // Entitlement from Firestore only — never from prefs or localStorage.
+  const [entitlement, setEntitlement] = useState<EntitlementResult>({ loading: true });
   // Track the detected local timezone once on mount
   const detectedTz = useRef<string>(
     typeof Intl !== "undefined"
@@ -243,13 +246,15 @@ function Settings() {
             </div>
             <div>
               <span className="text-sm font-medium">
-                {p.premium ? "Premium active" : "You're on the Free plan"}
+                {entitlement.loading
+                  ? "Loading…"
+                  : entitlement.active
+                  ? "Premium active"
+                  : "You're on the Free plan"}
               </span>
-              {p.premium && p.trialEndsAt && (
+              {!entitlement.loading && entitlement.active && entitlement.entitlement.trialEnd && (
                 <p className="text-xs text-muted-foreground">
-                  {Date.now() < p.trialEndsAt
-                    ? `Trial ends ${new Date(p.trialEndsAt).toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`
-                    : "Trial expired"}
+                  Trial ends {new Date(entitlement.entitlement.trialEnd).toLocaleDateString("en-CA", { month: "short", day: "numeric" })}
                 </p>
               )}
             </div>
@@ -297,15 +302,21 @@ function Settings() {
                       // FID_TIMEOUT = SW ready but onRegistered never fired (15s)
                       // REGISTER_FAILED = register() threw (check console)
                       setNotifLoading(false); // clear before setNotifError so both render together
-                      setNotifError(
-                        result.reason === "denied"
-                          ? `Notifications blocked — enable in Settings app. (${result.errorCode})`
-                          : result.reason === "unsupported"
-                          ? `Browser doesn't support reminders yet. (${result.errorCode})`
-                          : result.reason === "dismissed"
-                          ? `Permission dismissed — tap again to retry. (${result.errorCode})`
-                          : `Could not enable reminders. (${result.errorCode})`
-                      );
+                      const isIosNonInstalled =
+                        result.reason === "unsupported" && isIosSafariNonInstalled();
+                      const settingsMsg = isIosNonInstalled
+                        ? "Add Aeruvo to your Home Screen to enable rain reminders. Tap the Share button ↑ → Add to Home Screen, then open Aeruvo from your Home Screen icon."
+                        : result.reason === "denied"
+                        ? "Notifications blocked — enable them in iPhone Settings → Notifications → Aeruvo."
+                        : result.reason === "dismissed"
+                        ? "Permission dismissed — try again to enable reminders."
+                        : result.reason === "unsupported"
+                        ? "Your browser doesn't support push notifications."
+                        : import.meta.env.DEV
+                        ? `Could not enable reminders. (${result.errorCode})`
+                        : "Could not enable reminders. Check your connection and try again.";
+                      if (import.meta.env.DEV) console.warn("[notif] error:", result.errorCode);
+                      setNotifError(settingsMsg);
                       // loading already cleared above; finally is the safety net
                     } else {
                       // Refresh from Firestore after full success

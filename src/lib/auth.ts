@@ -114,7 +114,7 @@ async function afterSignIn(uid: string, name: string, email: string): Promise<vo
   const local = loadPrefs();
   const withIdentity = { ...local, name: name || local.name, email, onboarded: true };
 
-  // Pull cloud prefs and merge — cloud premium/trial/settings win.
+  // Pull cloud prefs and merge — cloud settings win.
   const merged = await cloudSync.pullAndMergePrefs(uid, withIdentity);
   savePrefs(merged);
 
@@ -166,7 +166,7 @@ export async function getUid(): Promise<string | null> {
 /**
  * Subscribes to Firebase Auth state changes.
  * On session resume (app reopen, page refresh), syncs Firestore prefs
- * so premium status and trial info stay current.
+ * so preferences stay current.
  * Returns an unsubscribe function. Call from __root.tsx on app mount.
  * No-op (returns immediate unsubscribe) when Firebase is not configured.
  */
@@ -195,8 +195,7 @@ export async function subscribeToAuthState(
       });
       // Only write back if something relevant changed.
       if (
-        merged.premium !== local.premium ||
-        merged.trialEndsAt !== local.trialEndsAt ||
+        // premium/trialEndsAt comparisons removed in P1 — not in prefs anymore.
         merged.name !== local.name
       ) {
         savePrefs(merged);

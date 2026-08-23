@@ -68,7 +68,46 @@ export async function isPushSupported(): Promise<boolean> {
   }
 }
 
-// ── Result type ───────────────────────────────────────────────────────────
+// ── iOS environment detection ───────────────────────────────────────────────
+
+/**
+ * Returns true when running on iOS or iPadOS Safari.
+ * Detects by checking the user-agent for iPhone/iPad/iPod.
+ * This is the only reliable cross-version iOS detection without
+ * navigator.userAgentData (not available on Safari).
+ */
+export function isIosSafari(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+
+/**
+ * Returns true when the app is running as an installed Home Screen PWA on iOS.
+ * navigator.standalone is an Apple extension; it is true only in standalone mode.
+ * Fallback: matchMedia("(display-mode: standalone)") for future compatibility.
+ */
+export function isInstalledPwa(): boolean {
+  if (typeof window === "undefined") return false;
+  // Apple-specific: true when running in standalone (Home Screen) mode
+  if ((navigator as { standalone?: boolean }).standalone === true) return true;
+  // Standard display-mode check (also works on Chrome/Android)
+  try {
+    return window.matchMedia("(display-mode: standalone)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns true when the user is on iOS/iPadOS in Safari (not installed PWA).
+ * This is the case where Web Push is NOT available but CAN be unlocked
+ * by adding to Home Screen.
+ */
+export function isIosSafariNonInstalled(): boolean {
+  return isIosSafari() && !isInstalledPwa();
+}
+
+// ── Result type ──────────────────────────────────────────────────────────────
 
 export type NotificationResult =
   | { ok: true }

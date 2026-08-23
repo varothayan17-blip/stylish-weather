@@ -44,3 +44,7 @@ public/firebase-sw-config.js
 
 # Auto-downloaded Firebase compat vendor scripts (from scripts/generate-sw-config.cjs)
 public/vendor/
+
+scripts/test-push.cjs
+
+functions/lib/

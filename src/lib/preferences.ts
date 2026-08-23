@@ -19,9 +19,18 @@ export type Prefs = {
   name?: string;
   email?: string;
   onboarded?: boolean;
-  premium?: boolean;
-  /** Unix timestamp (ms) when the free trial ends. Null = no trial started. */
-  trialEndsAt?: number;
+  /**
+   * @deprecated Removed in P1 premium security hardening.
+   * Premium is now determined exclusively by users/{uid}/entitlements/premium
+   * in Firestore (backend-written, client-readable only).
+   * These fields remain typed as optional so existing localStorage values
+   * parse without errors, but they MUST NOT be used to gate any feature.
+   * They are stripped before Firestore writes in cloudSync.sanitizePrefs.
+   */
+  /** @deprecated Use entitlements/premium. Never authoritative. */
+  premium?: never;
+  /** @deprecated Use entitlements/premium. Never authoritative. */
+  trialEndsAt?: never;
   /**
    * Which clothing profile to use when building outfit recommendations.
    * Existing users who have no value saved default to "neutral" (gender-neutral),

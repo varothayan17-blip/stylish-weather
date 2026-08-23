@@ -22,18 +22,63 @@ service cloud.firestore {
 
     // ── Validation helpers ─────────────────────────────────────────────────
 
+    // isValidPrefs: TRANSITIONAL rules for P1 migration.
+    //
+    // Context: legacy users may have prefs.premium and prefs.trialEndsAt in
+    // Firestore from the old demo trial. These fields persist indefinitely.
+    //
+    // Why they persist: cloudSync.syncPrefs uses
+    //   setDoc(ref, { prefs: sanitizePrefs(prefs) }, { merge: true })
+    // Firestore merge:true operates at the FIELD-PATH level. Nested paths
+    // omitted from the write (prefs.premium, prefs.trialEndsAt) are left
+    // UNTOUCHED in the existing document. sanitizePrefs does NOT remove them.
+    // Only an explicit FieldValue.delete() or a full setDoc without merge
+    // would remove them. Neither happens in the current write path.
+    //
+    // Therefore:
+    //   - premium/trialEndsAt may remain in Firestore indefinitely
+    //   - They are NEVER authoritative for Premium (entitlement lives in
+    //     users/{uid}/entitlements/premium, written by backend only)
+    //   - These transitional rules tolerate their presence but prevent
+    //     clients from creating or changing them
+    //
+    // REQUIRED P2/P4 CLEANUP (does NOT happen automatically):
+    //   Run a one-time Admin SDK migration:
+    //     db.doc(`users/${uid}`).update({
+    //       'prefs.premium':    FieldValue.delete(),
+    //       'prefs.trialEndsAt': FieldValue.delete(),
+    //     })
+    //   for every user document that contains these fields.
+    //   After cleanup, tighten hasOnly() to coreAllowed only and
+    //   remove legacyPrefsFieldsUntouched entirely.
+
     function isValidPrefs(data) {
-      let allowed = [
+      let coreAllowed = [
         'coldSensitivity', 'commute', 'city', 'theme',
-        'name', 'email', 'onboarded', 'premium', 'trialEndsAt',
+        'name', 'email', 'onboarded',
         'clothingProfile'
       ];
-      return data.keys().hasOnly(allowed)
+      let allAllowed = coreAllowed.concat(['premium', 'trialEndsAt']);
+      return data.keys().hasOnly(allAllowed)
         && data.coldSensitivity is string
         && data.commute is string
         && data.theme is string
-        && data.onboarded is bool
-        && data.premium is bool;
+        && data.onboarded is bool;
+    }
+
+    // Immutability guard for legacy premium/trialEndsAt.
+    // If the field was absent in the existing doc it must remain absent.
+    // If present it must be unchanged. Clients cannot add or modify them.
+    function legacyPrefsFieldsUntouched(incoming, existing) {
+      let premiumOk =
+        (!('premium' in existing) && !('premium' in incoming))
+        || (('premium' in existing) && ('premium' in incoming)
+            && incoming.premium == existing.premium);
+      let trialOk =
+        (!('trialEndsAt' in existing) && !('trialEndsAt' in incoming))
+        || (('trialEndsAt' in existing) && ('trialEndsAt' in incoming)
+            && incoming.trialEndsAt == existing.trialEndsAt);
+      return premiumOk && trialOk;
     }
 
     // ── notificationPrefs rule helpers ─────────────────────────────────
@@ -142,8 +187,11 @@ service cloud.firestore {
         request.auth != null &&
         request.auth.uid == uid &&
         request.resource.data.keys().hasOnly(['prefs', 'notificationPrefs']) &&
-        // prefs must be valid when present
-        (!('prefs' in request.resource.data) || isValidPrefs(request.resource.data.prefs)) &&
+        // prefs must be valid when present; new docs must not contain premium/trialEndsAt
+        (!('prefs' in request.resource.data) || (
+          isValidPrefs(request.resource.data.prefs) &&
+          legacyPrefsFieldsUntouched(request.resource.data.prefs, {})
+        )) &&
         // notificationPrefs: no backend fields allowed on create
         (!('notificationPrefs' in request.resource.data)
            || notifPrefsValidOnCreate(request.resource.data.notificationPrefs));
@@ -152,8 +200,14 @@ service cloud.firestore {
         request.auth != null &&
         request.auth.uid == uid &&
         request.resource.data.keys().hasOnly(['prefs', 'notificationPrefs']) &&
-        // prefs must be valid when present
-        (!('prefs' in request.resource.data) || isValidPrefs(request.resource.data.prefs)) &&
+        // prefs must be valid when present; and legacy fields must not be added/changed
+        (!('prefs' in request.resource.data) || (
+          isValidPrefs(request.resource.data.prefs) &&
+          legacyPrefsFieldsUntouched(
+            request.resource.data.prefs,
+            'prefs' in resource.data ? resource.data.prefs : {}
+          )
+        )) &&
         // notificationPrefs: client-owned fields may change; backend fields must be unchanged
         (!('notificationPrefs' in request.resource.data)
            || notifPrefsValidOnUpdate(
@@ -232,6 +286,36 @@ service cloud.firestore {
 
         // Owner can delete their own device record (sign-out cleanup).
         allow delete: if request.auth != null && request.auth.uid == uid;
+      }
+
+      // ── users/{uid}/notificationEvents/{eventId} ─────────────────────
+      // Deduplication + audit log for sent rain reminders.
+      // Written exclusively by the Cloud Function via Admin SDK (which
+      // bypasses Firestore Security Rules entirely).
+      // Client reads are denied: Aeruvo has no notification-history UI.
+      // If a history feature is added later, enable read with: allow read:
+      //   if request.auth != null && request.auth.uid == uid;
+      match /notificationEvents/{eventId} {
+        allow read:  if false;  // No notification history UI yet
+        allow write: if false;  // Admin SDK only (bypasses rules)
+      }
+
+      // ── users/{uid}/entitlements/{entitlementId} ──────────────────────
+      // Premium entitlement documents.
+      // Written EXCLUSIVELY by the backend via Admin SDK (Stripe webhook
+      // handler). The client may read its own entitlement to determine
+      // whether Premium features are available, but may NEVER write to it.
+      //
+      // Current document: users/{uid}/entitlements/premium
+      // Fields: active, plan, source, status, trialEnd, currentPeriodEnd,
+      //         cancelAtPeriodEnd, stripeCustomerId, stripeSubscriptionId,
+      //         updatedAt
+      //
+      // P2/P3: After Stripe integration, the webhook handler writes this
+      // document. Until then, no document exists → all users are Free.
+      match /entitlements/{entitlementId} {
+        allow read:  if request.auth != null && request.auth.uid == uid;
+        allow write: if false;  // Admin SDK only — client can NEVER grant itself Premium
       }
     }
 

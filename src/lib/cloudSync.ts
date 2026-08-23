@@ -21,8 +21,9 @@ function sanitizePrefs(p: Prefs): Record<string, unknown> {
     name: p.name ?? null,
     email: p.email ?? null,
     onboarded: p.onboarded ?? false,
-    premium: p.premium ?? false,
-    trialEndsAt: p.trialEndsAt ?? null,
+    // premium and trialEndsAt intentionally omitted — P1 security hardening.
+    // These fields are no longer written to Firestore prefs by the client.
+    // Premium entitlement is stored exclusively in users/{uid}/entitlements/premium.
     clothingProfile: p.clothingProfile ?? "neutral",
     ...(p.city != null ? { city: { name: p.city.name, lat: p.city.lat, lon: p.city.lon } } : {}),
   };
@@ -90,11 +91,9 @@ export const firestoreSync: CloudSync = {
 
       const cloud = (snap.data()?.prefs ?? {}) as Partial<Prefs>;
 
-      const cloudHasMorePremium =
-        cloud.premium === true &&
-        (local.premium !== true ||
-          (cloud.trialEndsAt != null &&
-            (local.trialEndsAt == null || cloud.trialEndsAt > local.trialEndsAt)));
+      // cloudHasMorePremium logic removed in P1 security hardening.
+      // prefs.premium is no longer a source of truth. Premium state lives
+      // exclusively in users/{uid}/entitlements/premium (backend-written).
 
       const merged: Prefs = {
         coldSensitivity: cloud.coldSensitivity ?? local.coldSensitivity ?? "normal",
@@ -104,10 +103,7 @@ export const firestoreSync: CloudSync = {
         name: cloud.name ?? local.name,
         email: cloud.email ?? local.email,
         onboarded: cloud.onboarded ?? local.onboarded,
-        premium: cloudHasMorePremium ? cloud.premium : (local.premium ?? cloud.premium),
-        trialEndsAt: cloudHasMorePremium
-          ? cloud.trialEndsAt
-          : (local.trialEndsAt ?? cloud.trialEndsAt),
+        // premium and trialEndsAt omitted — not part of prefs merge in P1+.
       };
 
       return merged;

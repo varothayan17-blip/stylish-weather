@@ -1,20 +1,17 @@
-import { loadPrefs, savePrefs } from "./preferences";
-import { cloudSync } from "./cloudSync";
-import { getUid } from "./auth";
-
 /**
- * Same adapter shape as weatherProviders and cloudSync: one interface, a
- * local default that's what actually runs today, and a Stripe-backed
- * implementation that only activates once it's genuinely configured.
+ * billing.ts — Billing provider abstraction for Aeruvo.
  *
- * Real Stripe Checkout needs a server-side secret key to create a Checkout
- * Session — that can never live in client code, since VITE_* vars ship
- * inside the public bundle. `stripeBilling.startCheckout` is written
- * against the shape that requires (a server endpoint that creates the
- * session), but that endpoint doesn't exist yet — calling it today throws
- * a clear, specific error rather than silently doing nothing or, worse,
- * tempting a secret key into client code.
+ * P1 SECURITY: localOnlyBilling no longer grants premium access.
+ *   The previous demo path (premium=true in localStorage) has been removed.
+ *   Premium entitlement is backend-owned: users/{uid}/entitlements/premium.
+ *   Nothing the client can do will create an entitlement document.
+ *
+ * P2/P3: Implement stripeBilling.startCheckout() with a real server-side
+ *   /api/create-checkout-session endpoint. The Stripe secret key must NEVER
+ *   appear in client code or VITE_* variables. The webhook handler writes
+ *   the entitlement document to Firestore using Admin SDK.
  */
+
 export interface BillingProvider {
   id: string;
   isActive(): boolean;
@@ -26,22 +23,16 @@ export const localOnlyBilling: BillingProvider = {
   id: "local-only",
   isActive: () => true,
   async startCheckout() {
-    // Demo path: set premium=true and record a 7-day trial window so the UI
-    // can show when the trial expires. Replace this entire block with the
-    // Stripe redirect path (stripeBilling) once a real Stripe account exists.
-    const prefs = loadPrefs();
-    const trialEndsAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days from now
-    const updated = { ...prefs, premium: true, trialEndsAt };
-    savePrefs(updated);
-    // Push premium status to Firestore immediately so it appears on other
-    // devices the next time the same account signs in or the app opens.
-    const uid = await getUid();
-    if (uid) {
-      await cloudSync.syncPrefs(uid, updated).catch(() => {});
-    }
+    // P1: Secure checkout is not implemented yet.
+    // Payments and entitlement creation require a backend Stripe integration
+    // (P2/P3). Until that exists, we do nothing rather than grant fake premium
+    // access that could be exploited.
+    throw new Error(
+      "Premium checkout is coming soon. Stay tuned for Wardrobe AI and more!"
+    );
   },
   async openCustomerPortal() {
-    /* no-op — there's no real subscription to manage yet */
+    /* no-op — no subscription to manage yet */
   },
 };
 
@@ -53,16 +44,15 @@ export const stripeBilling: BillingProvider = {
   id: "stripe",
   isActive: isStripeConfigured,
   async startCheckout() {
-    // This endpoint doesn't exist yet — it needs to be added as a server
-    // route in src/server.ts (or a TanStack Start server function) that
-    // holds the Stripe secret key and creates a real Checkout Session,
-    // returning its hosted `url`. Modern Stripe Checkout is a server-side
-    // redirect URL, not a client-side stripe.redirectToCheckout() call.
+    // P2/P3: This endpoint needs to be implemented in src/server.ts or a
+    // TanStack Start server function. It holds the Stripe secret key and
+    // creates a real Checkout Session. After the user pays, Stripe sends a
+    // webhook to /api/stripe-webhook, which writes users/{uid}/entitlements/premium
+    // via Firebase Admin SDK — never via client code.
     const res = await fetch("/api/create-checkout-session", { method: "POST" });
     if (!res.ok) {
       throw new Error(
-        "Stripe is configured but /api/create-checkout-session isn't implemented yet — " +
-          "this is the server-side piece still needed before real payments can run.",
+        "Stripe is configured but /api/create-checkout-session isn't implemented yet."
       );
     }
     const { url } = await res.json();
@@ -78,4 +68,6 @@ export const stripeBilling: BillingProvider = {
   },
 };
 
-export const billing: BillingProvider = isStripeConfigured() ? stripeBilling : localOnlyBilling;
+export const billing: BillingProvider = isStripeConfigured()
+  ? stripeBilling
+  : localOnlyBilling;

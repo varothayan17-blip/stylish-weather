@@ -26,7 +26,7 @@ import {
   type NotificationPrefs,
 } from "@/lib/preferences";
 import { cloudSync } from "@/lib/cloudSync";
-import { orchestrateEnable } from "@/lib/notifications";
+import { orchestrateEnable, isIosSafariNonInstalled } from "@/lib/notifications";
 import { getUid } from "@/lib/auth";
 import { getErrorMessage } from "@/lib/utils";
 import { recommend } from "@/lib/recommend";
@@ -704,15 +704,24 @@ function Home() {
                       // SW_READY_TIMEOUT = serviceWorker.ready hung (10s)
                       // FID_TIMEOUT = SW ready but onRegistered never fired (15s)
                       // REGISTER_FAILED = register() threw (see console)
-                      const msg =
-                        result.reason === "denied"
-                          ? `Notifications blocked — enable in Settings app. (${result.errorCode})`
-                          : result.reason === "unsupported"
-                          ? `Browser doesn't support reminders yet. (${result.errorCode})`
-                          : result.reason === "dismissed"
-                          ? `Permission dismissed — tap again to retry. (${result.errorCode})`
-                          : `Could not enable reminders. (${result.errorCode})`;
-                      setNotifLoading(false); // clear before setNotifError so both render together
+                      // For iOS Safari (non-installed PWA): show install instructions.
+                      // For all others: show user-friendly message without internal codes.
+                      // Diagnostic codes remain in DEV console only.
+                      const isIosNonInstalled =
+                        result.reason === "unsupported" && isIosSafariNonInstalled();
+                      const msg = isIosNonInstalled
+                        ? "Add Aeruvo to your Home Screen to enable rain reminders. Tap the Share button ↑ → Add to Home Screen, then open Aeruvo from your Home Screen icon."
+                        : result.reason === "denied"
+                        ? "Notifications blocked — enable them in iPhone Settings → Notifications → Aeruvo."
+                        : result.reason === "dismissed"
+                        ? "Permission dismissed — tap 'Turn on reminders' to try again."
+                        : result.reason === "unsupported"
+                        ? "Your browser doesn't support push notifications."
+                        : import.meta.env.DEV
+                        ? `Could not enable reminders. (${result.errorCode})`
+                        : "Could not enable reminders. Check your connection and try again.";
+                      if (import.meta.env.DEV) console.warn("[notif] error:", result.errorCode);
+                      setNotifLoading(false);
                       setNotifError(msg);
                     } else {
                       // Refresh notifPrefs from Firestore after full success
