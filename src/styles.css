@@ -314,3 +314,22 @@
     animation: none !important;
   }
 }
+
+/* ── Wardrobe scan sweep animation ──────────────────────────────────── */
+@keyframes scan-sweep {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(400%); }
+}
+
+.scan-sweep {
+  animation: scan-sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Respect user's motion preference — static overlay instead of sweep */
+@media (prefers-reduced-motion: reduce) {
+  .scan-sweep {
+    animation: none;
+    transform: translateY(150%);
+    opacity: 0.5;
+  }
+}

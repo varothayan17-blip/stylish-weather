@@ -27,7 +27,7 @@ export function BottomNav() {
                 to={to}
                 aria-current={active ? "page" : undefined}
                 aria-label={label}
-                className={`press relative flex flex-1 flex-col items-center gap-0.5 rounded-full px-3 py-2 ${
+                className={`press relative flex flex-1 flex-col items-center gap-0.5 rounded-full px-1.5 py-2 ${
                   active
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
@@ -43,7 +43,7 @@ export function BottomNav() {
                   className={`relative h-5 w-5 transition-transform duration-300 ${active ? "scale-110" : ""}`}
                   strokeWidth={active ? 2.2 : 1.7}
                 />
-                <span className="relative text-[10px] font-medium tracking-wide">
+                <span className="relative text-[10px] font-medium">
                   {label}
                 </span>
               </Link>
