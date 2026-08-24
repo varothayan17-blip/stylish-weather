@@ -243,19 +243,18 @@ async function callGemini(
       ],
     }],
     generationConfig: {
-      // temperature is not supported by gemini-3.7-flash thinking models;
-      // removed to avoid warnings or unexpected API behaviour.
+      // temperature is not supported by gemini-3.7-flash thinking models.
       // 512 output tokens is ample for our JSON schema (~350 tokens typical).
       maxOutputTokens: 512,
       responseMimeType: "application/json",
-    },
-    // thinkingConfig: request low-budget thinking for gemini-3.7-flash.
-    // Without this, the model defaults to extended thinking which can take
-    // 20-40 s for image tasks. Budget of 512 tokens gives fast structured
-    // classification while preserving image understanding quality.
-    // See: ai.google.dev/gemini-api/docs/thinking
-    thinkingConfig: {
-      thinkingBudget: 512,
+      // thinkingConfig belongs INSIDE generationConfig for the Gemini REST API
+      // (v1beta generateContent). Placing it at the top level of the request
+      // body causes: "Unknown name thinkingConfig: Cannot find field" (HTTP 400).
+      // thinkingBudget=512 → fast structured classification (~3-8 s) vs the
+      // default extended thinking that caused 20-40 s timeouts.
+      thinkingConfig: {
+        thinkingBudget: 512,
+      },
     },
   };
 
