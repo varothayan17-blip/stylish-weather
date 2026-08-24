@@ -1,40 +1,70 @@
 /**
  * billing.ts — Billing provider abstraction for Aeruvo.
  *
- * P1 SECURITY: localOnlyBilling no longer grants premium access.
- *   The previous demo path (premium=true in localStorage) has been removed.
- *   Premium entitlement is backend-owned: users/{uid}/entitlements/premium.
- *   Nothing the client can do will create an entitlement document.
+ * SECURITY MODEL:
+ *   - Server endpoints verify the Firebase ID token before creating sessions.
+ *   - The uid comes from the VERIFIED token, not from any client-supplied param.
+ *   - The Stripe secret key lives in server-only env vars (never VITE_*).
+ *   - Entitlement is only written by the Stripe webhook handler on the server.
+ *   - Returning from Stripe checkout does NOT grant Premium — only the webhook does.
  *
- * P2/P3: Implement stripeBilling.startCheckout() with a real server-side
- *   /api/create-checkout-session endpoint. The Stripe secret key must NEVER
- *   appear in client code or VITE_* variables. The webhook handler writes
- *   the entitlement document to Firestore using Admin SDK.
+ * Client-visible env var (safe — publishable key only):
+ *   VITE_STRIPE_PUBLISHABLE_KEY — used only to detect if Stripe is configured.
+ *
+ * Server-only env vars (never in VITE_*):
+ *   STRIPE_SECRET_KEY
+ *   STRIPE_WEBHOOK_SECRET
+ *   STRIPE_PREMIUM_PRICE_ID
+ *   (see src/lib/stripe-server.ts for full server-only env var list)
  */
+
+import { getFirebaseAuth } from "./firebase";
+
+// ── Get a Firebase ID token to authenticate API requests ──────────────────
+
+async function getIdToken(): Promise<string | null> {
+  try {
+    const fbAuth = await getFirebaseAuth();
+    const user = fbAuth?.currentUser;
+    if (!user) return null;
+    return await user.getIdToken();
+  } catch {
+    return null;
+  }
+}
+
+// ── Authenticated fetch to a server endpoint ──────────────────────────────
+
+async function authedPost(path: string, body?: Record<string, unknown>): Promise<{ url: string }> {
+  const idToken = await getIdToken();
+  if (!idToken) throw new Error("You must be signed in to access Premium.");
+
+  const res = await fetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${idToken}`,
+    },
+    body: JSON.stringify(body ?? {}),
+  });
+
+  if (!res.ok) {
+    let message = `Server error: ${res.status}`;
+    try { message = (await res.json() as { error?: string }).error ?? message; } catch { /* no body */ }
+    throw new Error(message);
+  }
+
+  return res.json() as Promise<{ url: string }>;
+}
+
+// ── Billing provider interface ─────────────────────────────────────────────
 
 export interface BillingProvider {
   id: string;
   isActive(): boolean;
-  startCheckout(): Promise<void>;
+  startCheckout(userEmail?: string): Promise<void>;
   openCustomerPortal(): Promise<void>;
 }
-
-export const localOnlyBilling: BillingProvider = {
-  id: "local-only",
-  isActive: () => true,
-  async startCheckout() {
-    // P1: Secure checkout is not implemented yet.
-    // Payments and entitlement creation require a backend Stripe integration
-    // (P2/P3). Until that exists, we do nothing rather than grant fake premium
-    // access that could be exploited.
-    throw new Error(
-      "Premium checkout is coming soon. Stay tuned for Wardrobe AI and more!"
-    );
-  },
-  async openCustomerPortal() {
-    /* no-op — no subscription to manage yet */
-  },
-};
 
 function isStripeConfigured(): boolean {
   return Boolean(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
@@ -43,28 +73,35 @@ function isStripeConfigured(): boolean {
 export const stripeBilling: BillingProvider = {
   id: "stripe",
   isActive: isStripeConfigured,
-  async startCheckout() {
-    // P2/P3: This endpoint needs to be implemented in src/server.ts or a
-    // TanStack Start server function. It holds the Stripe secret key and
-    // creates a real Checkout Session. After the user pays, Stripe sends a
-    // webhook to /api/stripe-webhook, which writes users/{uid}/entitlements/premium
-    // via Firebase Admin SDK — never via client code.
-    const res = await fetch("/api/create-checkout-session", { method: "POST" });
-    if (!res.ok) {
-      throw new Error(
-        "Stripe is configured but /api/create-checkout-session isn't implemented yet."
-      );
-    }
-    const { url } = await res.json();
+
+  async startCheckout(userEmail?: string) {
+    // Server verifies Firebase Auth token → uid from verified token, not client.
+    // email is passed for display in Stripe checkout (not for identity).
+    const { url } = await authedPost("/api/create-checkout-session", { email: userEmail ?? "" });
     window.location.href = url;
   },
+
   async openCustomerPortal() {
-    const res = await fetch("/api/create-portal-session", { method: "POST" });
-    if (!res.ok) {
-      throw new Error("/api/create-portal-session isn't implemented yet.");
-    }
-    const { url } = await res.json();
+    const { url } = await authedPost("/api/create-portal-session");
     window.location.href = url;
+  },
+};
+
+export const localOnlyBilling: BillingProvider = {
+  id: "local-only",
+  isActive: () => true,
+
+  async startCheckout() {
+    // Stripe is not configured — show a helpful message.
+    // Premium checkout requires STRIPE_SECRET_KEY and related server env vars.
+    // This path is hit in local development without Stripe configured.
+    throw new Error(
+      "Premium checkout is not available yet. Add VITE_STRIPE_PUBLISHABLE_KEY to enable Stripe."
+    );
+  },
+
+  async openCustomerPortal() {
+    /* no-op */
   },
 };
 

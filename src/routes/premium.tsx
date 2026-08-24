@@ -5,11 +5,12 @@ import { billing } from "@/lib/billing";
 import { getErrorMessage } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import { Sparkles, Check, Shirt, Bell, BarChart3 } from "lucide-react";
+import { loadPrefs } from "@/lib/preferences";
 
 export const Route = createFileRoute("/premium")({
   head: () => ({
     meta: [
-      { title: "Aeruvo Premium — $1/month" },
+      { title: "Aeruvo Premium — CA$2.99/month" },
       {
         name: "description",
         content:
@@ -51,12 +52,22 @@ function Premium() {
   const [error, setError] = useState<string | null>(null);
 
   const isActive = !entitlement.loading && entitlement.active;
+  // Detect return from Stripe checkout — do NOT grant Premium from URL param.
+  // The webhook writes the entitlement; useEntitlement() will reflect it once
+  // Firestore updates (may take a few seconds after checkout completes).
+  const searchParams = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams();
+  const checkoutStatus = searchParams.get("checkout") as "success" | "cancelled" | null;
 
   async function startCheckout() {
     setActivating(true);
     setError(null);
     try {
-      await billing.startCheckout();
+      // Pass email for display in Stripe checkout (not for identity).
+      // The server uses the Firebase Auth token to establish identity.
+      const email = loadPrefs().email ?? "";
+      await billing.startCheckout(email);
     } catch (e) {
       setError(getErrorMessage(e, "Couldn't start checkout"));
     } finally {
@@ -75,7 +86,7 @@ function Premium() {
         </span>
         <h1 className="mt-3 text-4xl font-semibold tracking-tight">
           {isActive ? "You're a member." : "Dress smarter for "}
-          {!isActive ? <span className="text-gradient">$1/month</span> : null}
+          {!isActive ? <span className="text-gradient">CA$2.99/month</span> : null}
         </h1>
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
           {isActive
@@ -128,11 +139,21 @@ function Premium() {
         /* ── Upgrade card (free users) ─────────────────────── */
         <div className="glass-card overflow-hidden rounded-[2rem] p-6 animate-fade-up delay-100">
           <div className="flex items-baseline gap-2">
-            <span className="text-5xl font-extralight tracking-tighter">$1</span>
+            <span className="text-5xl font-extralight tracking-tighter">CA$2.99</span>
             <span className="text-sm text-muted-foreground">/ month</span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">Cancel anytime. Wardrobe AI coming soon.</p>
 
+          {checkoutStatus === "success" && !isActive && (
+            <p className="mt-3 text-xs leading-relaxed text-green-600">
+              Payment received — activating your subscription… (may take a few seconds)
+            </p>
+          )}
+          {checkoutStatus === "cancelled" && (
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+              Checkout cancelled. You can try again below.
+            </p>
+          )}
           {error && <p className="mt-3 text-xs leading-relaxed text-destructive">{error}</p>}
 
           <ul className="mt-6 space-y-4">

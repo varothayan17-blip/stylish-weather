@@ -288,6 +288,16 @@ service cloud.firestore {
         allow delete: if request.auth != null && request.auth.uid == uid;
       }
 
+      // ── users/{uid}/billing/{docId} ──────────────────────────────────
+      // Backend-owned Stripe customer mapping.
+      // Written exclusively by the server (Admin SDK) — never by the client.
+      // Contains: stripeCustomerId, updatedAt
+      // Client has no UI reason to read this; deny both directions.
+      match /billing/{docId} {
+        allow read:  if false;  // No client UI reads Stripe customer ID
+        allow write: if false;  // Admin SDK only
+      }
+
       // ── users/{uid}/notificationEvents/{eventId} ─────────────────────
       // Deduplication + audit log for sent rain reminders.
       // Written exclusively by the Cloud Function via Admin SDK (which
