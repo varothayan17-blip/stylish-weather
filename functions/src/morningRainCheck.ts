@@ -379,20 +379,29 @@ async function processUser(
     await eventRef.update({
       status: "no-rain",
       umbrellaLevel: advice?.level ?? 0,
-      sentAt: Timestamp.now(),
+      // evaluatedAt: when the weather check completed — NOT sentAt,
+      // because no push was attempted on this path.
+      evaluatedAt: Timestamp.now(),
     });
     await advanceNextCheckAt(uid, nowUtcMs, timezone, remHour, remMinute, db);
     return;
   }
 
   // ── Notification content ───────────────────────────────────────────────
+  // Level 1 (35–49%): gentle nudge — possible rain.
+  // Level 2 (≥ 50%): confident recommendation — rain is likely.
+  // Level 3 (≥ 65% or thunder): strong recommendation.
   const hasThunder = advice.level === 3 && advice.timing.toLowerCase().includes("thunderstorm");
   const title = hasThunder
     ? "Thunderstorms later today ⛈️"
     : advice.level === 3
     ? "Bring an umbrella ☔"
-    : "Rain expected later today ☔";
-  const body = `${advice.timing} Consider taking an umbrella before you leave.`;
+    : advice.level === 2
+    ? "Rain likely later today ☔"
+    : "Possible rain later today 🌂";  // level 1
+  const body = advice.level >= 2
+    ? `${advice.timing} Rain is likely — take an umbrella.`
+    : `${advice.timing} You might want to bring an umbrella just in case.`;
 
   // ── Send to enabled devices (bounded) ────────────────────────────────
   // Limit to most-recently-updated enabled devices to protect against

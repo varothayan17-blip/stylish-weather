@@ -13,7 +13,7 @@
  *   UmbrellaLevel          — 0–3 umbrella intensity tier
  *   LookAheadAdvice        — result of lookAheadUmbrellaAdvice()
  *   lookAheadUmbrellaAdvice() — full-day future rain window detection
- *   notificationEligible()    — push-notification threshold gate (level ≥ 2)
+ *   notificationEligible()    — push-notification threshold gate (level ≥ 1)
  *
  * Imported by:
  *   • precipAdvice.ts — re-exports these symbols so existing callers are unchanged
@@ -193,18 +193,22 @@ export function lookAheadUmbrellaAdvice(
 /**
  * Returns true when a LookAheadAdvice result warrants a push notification.
  *
- * Push notifications are MORE conservative than in-app advice:
+ * Push thresholds:
  *   level 0 → no push  (no meaningful window found)
- *   level 1 → no push  (35–49% sustained — "consider carrying" in-app only)
- *   level 2 → eligible (≥ 50% sustained rain)
- *   level 3 → eligible (≥ 65% rain or any thunder)
+ *   level 1 → gentle push  (35–49% — possible rain; consider taking an umbrella)
+ *   level 2 → standard push (≥ 50% sustained — rain is likely; take an umbrella)
+ *   level 3 → urgent push   (≥ 65% or thunder — strongly recommended)
+ *
+ * Level 1 was previously suppressed. It is now included because users opted in
+ * to umbrella reminders specifically to avoid getting caught in rain. A forecast
+ * of 35–49% probability is meaningful for that purpose.
  *
  * This gate is the single source of truth for the push threshold.
  * The Cloud Function and any future notification path must call this
  * function rather than re-implementing the threshold.
  */
 export function notificationEligible(advice: LookAheadAdvice): boolean {
-  return advice.level >= 2;
+  return advice.level >= 1;
 }
 
 // ---------------------------------------------------------------------------
