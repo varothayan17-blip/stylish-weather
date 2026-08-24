@@ -6,6 +6,7 @@ import { ItemTile } from "@/components/wardrobe/ItemTile";
 import { AddClothingSheet } from "@/components/wardrobe/AddClothingSheet";
 import { ItemDetailSheet } from "@/components/wardrobe/ItemDetailSheet";
 import { useWardrobe, wardrobe } from "@/components/wardrobe/wardrobeStore";
+import { WardrobeEntrance } from "@/components/wardrobe/WardrobeEntrance";
 import { CATEGORIES, TODAY_PICK_IDS, type WardrobeItem } from "@/components/wardrobe/wardrobeData";
 
 export const Route = createFileRoute("/wardrobe")({
@@ -34,6 +35,7 @@ const FILTERS = ["All", ...CATEGORIES] as const;
 function Wardrobe() {
   const items = useWardrobe();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
+  const [intro, setIntro] = useState(true);
   const [adding, setAdding] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -48,7 +50,15 @@ function Wardrobe() {
   const current = items.find((i) => i.id === selected) ?? null;
 
   return (
-    <AppShell>
+    <>
+      {intro && <WardrobeEntrance onDone={() => setIntro(false)} />}
+      <div
+        style={intro
+          ? { opacity: 0, pointerEvents: "none" }
+          : { opacity: 1, transition: "opacity 300ms ease" }
+        }
+      >
+      <AppShell>
       <header className="mb-6 animate-fade-up">
         <div className="flex items-center gap-2">
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
@@ -196,5 +206,7 @@ function Wardrobe() {
         onRemove={() => current && wardrobe.remove(current.id)}
       />
     </AppShell>
+      </div>
+    </>
   );
 }
