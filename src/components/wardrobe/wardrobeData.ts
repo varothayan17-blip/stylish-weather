@@ -37,6 +37,8 @@ export type WardrobeItem = {
   tint: string;
   favourite?: boolean;
   unavailable?: boolean;
+  /** Full AI analysis attached when item was scanned with Gemini. */
+  aiAnalysis?: import("@/lib/wardrobe-types").ClothingAnalysis;
 };
 
 export const SEED_ITEMS: WardrobeItem[] = [
@@ -126,7 +128,12 @@ export const SEED_ITEMS: WardrobeItem[] = [
   },
 ];
 
-/** Mock scan result used by the Add clothing flow. Not an AI call. */
+/**
+ * DEV-ONLY mock scan result.
+ * The real Add clothing flow now uses /api/wardrobe/scan (Gemini AI).
+ * This is ONLY used as a skeleton shape reference in the confirm form.
+ * It is never returned by production AI analysis.
+ */
 export const MOCK_SCAN_RESULT: Omit<WardrobeItem, "id"> = {
   name: "Black hoodie",
   category: "Tops",

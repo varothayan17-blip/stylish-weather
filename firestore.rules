@@ -327,6 +327,16 @@ service cloud.firestore {
         allow read:  if request.auth != null && request.auth.uid == uid;
         allow write: if false;  // Admin SDK only — client can NEVER grant itself Premium
       }
+
+      // ── users/{uid}/quotas/{quotaId} ──────────────────────────────────
+      // Server-side usage counters (e.g. wardrobeAi scan quota).
+      // Written exclusively by Admin SDK via Firestore transactions.
+      // Client must not write quotas — doing so would allow quota bypass.
+      // Client read is denied; remaining scans are returned in the API response.
+      match /quotas/{quotaId} {
+        allow read:  if false;  // Remaining scans returned in API response body
+        allow write: if false;  // Admin SDK only
+      }
     }
 
     // ── Deny everything else ───────────────────────────────────────────────

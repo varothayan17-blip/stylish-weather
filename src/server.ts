@@ -10,6 +10,10 @@ async function getApiHandlers() {
   return import("./lib/stripe-api-handlers");
 }
 
+async function getWardrobeHandlers() {
+  return import("./lib/wardrobe-ai-handler");
+}
+
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -56,6 +60,7 @@ export default {
         "/api/create-checkout-session",
         "/api/create-portal-session",
         "/api/stripe-webhook",
+        "/api/wardrobe/scan",
       ]);
       if (apiPaths.has(pathname)) {
         // Reject all non-POST methods explicitly — prevents information disclosure
@@ -75,6 +80,10 @@ export default {
         }
         if (pathname === "/api/stripe-webhook") {
           return await handlers.handleStripeWebhook(request);
+        }
+        if (pathname === "/api/wardrobe/scan") {
+          const { handleWardrobeScan } = await getWardrobeHandlers();
+          return await handleWardrobeScan(request);
         }
       }
 
