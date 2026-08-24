@@ -289,8 +289,40 @@ async function callGemini(
 
   const elapsed = Date.now() - t0;
   if (!res.ok) {
-    // Do NOT forward Gemini error details to client — could leak API info
-    console.error(`[wardrobe-ai] Gemini HTTP error status=${res.status} elapsed=${elapsed}ms`);
+    // Read the error body for diagnostics.
+    // We log only safe structural fields — never the API key, token, or image.
+    let errCode: string | undefined;
+    let errMessage: string | undefined;
+    let errDetails: string | undefined;
+    try {
+      const errBody = await res.json() as {
+        error?: {
+          code?: number;
+          message?: string;
+          status?: string;
+          details?: Array<{ "@type"?: string; fieldViolations?: Array<{ field?: string; description?: string }> }>;
+        };
+      };
+      errCode    = String(errBody?.error?.code    ?? "");
+      errMessage = String(errBody?.error?.message ?? "").slice(0, 300); // cap length
+      errDetails = JSON.stringify(
+        (errBody?.error?.details ?? []).map(d => ({
+          type:            d["@type"],
+          fieldViolations: (d.fieldViolations ?? []).map(v => ({
+            field:       v.field,
+            description: v.description,
+          })),
+        }))
+      ).slice(0, 500); // cap length
+    } catch {
+      errMessage = "<could not parse error body>";
+    }
+    // Safe log: Google error code/message/field violations only.
+    // No API key, no UID, no image bytes, no Firebase token.
+    console.error(
+      `[wardrobe-ai] Gemini HTTP error status=${res.status} elapsed=${elapsed}ms` +
+      ` errCode=${errCode} errMessage=${errMessage} details=${errDetails}`
+    );
     if (res.status === 429) throw new ApiError(503, "AI service is busy. Please try again shortly.");
     throw new ApiError(502, "AI analysis failed. Please try another photo.");
   }
