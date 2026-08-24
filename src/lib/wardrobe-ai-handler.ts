@@ -34,6 +34,13 @@ const MAX_IMAGE_BYTES     = 8 * 1024 * 1024; // 8 MB after client compression
 const FREE_LIFETIME_LIMIT = 3;
 const PREMIUM_DAILY_LIMIT = parseInt(process.env.PREMIUM_WARDROBE_SCANS_PER_DAY ?? "20", 10);
 
+// Retry configuration for Gemini API calls.
+// Retryable: transient server errors. Non-retryable: 400/401/403/415.
+const GEMINI_RETRYABLE          = new Set([429, 500, 502, 503, 504]);
+const GEMINI_MAX_ATTEMPTS       = 2;       // 1 initial + 1 retry
+const GEMINI_TOTAL_DEADLINE_MS  = 50_000;  // overall budget across all attempts
+const GEMINI_ATTEMPT_TIMEOUT_MS = 22_000;  // per-attempt; 2×22+jitter ≤ 50 s
+
 const ACCEPTED_MIME = new Set([
   "image/jpeg",
   "image/jpg",
@@ -222,6 +229,7 @@ Return this exact JSON schema:
 async function callGemini(
   base64Image: string,
   mimeType: string,
+  attempt = 1,
 ): Promise<ClothingAnalysis> {
   const model  = getGeminiModel();
   const apiKey = getGeminiKey();
@@ -265,7 +273,7 @@ async function callGemini(
   const t0 = Date.now();
 
   // Safe log: model name only — no key, no image bytes, no token
-  console.info(`[wardrobe-ai] calling model=${model} thinkingBudget=512 maxOutputTokens=512`);
+  console.info(`[wardrobe-ai] attempt=${attempt} model=${model} thinkingBudget=512 maxOutputTokens=512`);
 
   let res: Response;
   try {
@@ -319,11 +327,11 @@ async function callGemini(
     // Safe log: Google error code/message/field violations only.
     // No API key, no UID, no image bytes, no Firebase token.
     console.error(
-      `[wardrobe-ai] Gemini HTTP error status=${res.status} elapsed=${elapsed}ms` +
+      `[wardrobe-ai] attempt=${attempt} Gemini HTTP error status=${res.status} elapsed=${elapsed}ms` +
       ` errCode=${errCode} errMessage=${errMessage} details=${errDetails}`
     );
-    if (res.status === 429) throw new ApiError(503, "AI service is busy. Please try again shortly.");
-    throw new ApiError(502, "AI analysis failed. Please try another photo.");
+    // Throw GeminiHttpError so callGeminiWithRetry can inspect the status.
+    throw new GeminiHttpError(res.status, `Gemini ${res.status}`);
   }
   console.info(`[wardrobe-ai] Gemini responded status=${res.status} elapsed=${elapsed}ms`);
 
@@ -342,6 +350,75 @@ async function callGemini(
   const result = validateAnalysis(text);
   console.info(`[wardrobe-ai] validation ok category=${result.category}`);
   return result;
+}
+
+// ── Retry wrapper ────────────────────────────────────────────────────────────
+
+/** Thrown by callGemini on a Gemini HTTP error so the retry wrapper can inspect the status. */
+class GeminiHttpError extends Error {
+  constructor(public readonly geminiStatus: number, message: string) {
+    super(message);
+    this.name = "GeminiHttpError";
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Retries callGemini up to GEMINI_MAX_ATTEMPTS for transient errors.
+ *
+ * RETRY POLICY:
+ *   Retryable: 429, 500, 502, 503, 504 (transient Gemini failures)
+ *   Non-retryable: 400, 401, 403, and any ApiError from our validation
+ *   Attempts: 2 total (1 initial + 1 retry)
+ *   Total deadline: GEMINI_TOTAL_DEADLINE_MS (50 s)
+ *   Backoff: 1 000 ms + 0–500 ms jitter between attempts
+ *
+ * Quota is reserved ONCE before this call. Refund happens in the caller
+ * only after ALL attempts are exhausted — never between retry attempts.
+ */
+async function callGeminiWithRetry(
+  base64Image: string,
+  mimeType: string,
+): Promise<ClothingAnalysis> {
+  const overallDeadline = Date.now() + GEMINI_TOTAL_DEADLINE_MS;
+
+  for (let attempt = 1; attempt <= GEMINI_MAX_ATTEMPTS; attempt++) {
+    const isLast = attempt === GEMINI_MAX_ATTEMPTS;
+    try {
+      return await callGemini(base64Image, mimeType, attempt);
+    } catch (err) {
+      // ApiError = permanent (our auth/validation errors) — never retry
+      if (err instanceof ApiError) throw err;
+
+      if (err instanceof GeminiHttpError) {
+        const retryable = GEMINI_RETRYABLE.has(err.geminiStatus);
+        console.warn(
+          `[wardrobe-ai] attempt=${attempt} geminiStatus=${err.geminiStatus}` +
+          ` retryable=${retryable} isLast=${isLast}`
+        );
+        if (!retryable || isLast) {
+          if (err.geminiStatus === 429)
+            throw new ApiError(503, "AI service is busy. Please try again shortly.");
+          throw new ApiError(502, "AI analysis failed. Please try another photo.");
+        }
+        const backoffMs = 1_000 + Math.floor(Math.random() * 500);
+        if (Date.now() + backoffMs >= overallDeadline) {
+          throw new ApiError(504, "AI analysis timed out. Please try again.");
+        }
+        console.info(`[wardrobe-ai] retrying in ${backoffMs}ms (attempt ${attempt}/${GEMINI_MAX_ATTEMPTS})`);
+        await sleep(backoffMs);
+        continue;
+      }
+
+      // Unexpected non-Gemini error (network failure) — not retryable
+      throw err;
+    }
+  }
+  // Unreachable — loop always returns or throws
+  throw new ApiError(502, "AI analysis failed. Please try another photo.");
 }
 
 // ── Response validation ───────────────────────────────────────────────────────
@@ -464,7 +541,7 @@ export async function handleWardrobeScan(request: Request): Promise<Response> {
     // 6. Call Gemini — refund quota on any provider/validation failure
     let analysis: import("./wardrobe-types").ClothingAnalysis;
     try {
-      analysis = await callGemini(base64, contentType);
+      analysis = await callGeminiWithRetry(base64, contentType);
     } catch (aiErr) {
       await refundQuota(uid, isPremium);
       throw aiErr;
