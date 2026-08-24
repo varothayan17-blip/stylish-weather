@@ -243,14 +243,30 @@ async function callGemini(
       ],
     }],
     generationConfig: {
-      temperature: 0.2,       // Low temp = more deterministic structured output
-      maxOutputTokens: 1024,
+      // temperature is not supported by gemini-3.7-flash thinking models;
+      // removed to avoid warnings or unexpected API behaviour.
+      // 512 output tokens is ample for our JSON schema (~350 tokens typical).
+      maxOutputTokens: 512,
       responseMimeType: "application/json",
+    },
+    // thinkingConfig: request low-budget thinking for gemini-3.7-flash.
+    // Without this, the model defaults to extended thinking which can take
+    // 20-40 s for image tasks. Budget of 512 tokens gives fast structured
+    // classification while preserving image understanding quality.
+    // See: ai.google.dev/gemini-api/docs/thinking
+    thinkingConfig: {
+      thinkingBudget: 512,
     },
   };
 
   const controller = new AbortController();
-  const timeout    = setTimeout(() => controller.abort(), 25_000);
+  // 50 s: gemini-3.7-flash with thinkingBudget=512 can take 20–40 s for images.
+  // Vercel hobby functions run up to 60 s; 50 s leaves a safe buffer.
+  const timeout    = setTimeout(() => controller.abort(), 50_000);
+  const t0 = Date.now();
+
+  // Safe log: model name only — no key, no image bytes, no token
+  console.info(`[wardrobe-ai] calling model=${model} thinkingBudget=512 maxOutputTokens=512`);
 
   let res: Response;
   try {
@@ -262,27 +278,39 @@ async function callGemini(
     });
   } catch (err) {
     clearTimeout(timeout);
+    const elapsed = Date.now() - t0;
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("aborted")) throw new ApiError(504, "AI analysis timed out. Please try again.");
+    const timedOut = msg.includes("aborted");
+    console.error(`[wardrobe-ai] fetch failed elapsed=${elapsed}ms timedOut=${timedOut}`);
+    if (timedOut) throw new ApiError(504, "AI analysis timed out. Please try again.");
     throw new ApiError(502, "AI service temporarily unavailable.");
   }
   clearTimeout(timeout);
 
+  const elapsed = Date.now() - t0;
   if (!res.ok) {
     // Do NOT forward Gemini error details to client — could leak API info
-    console.error(`[wardrobe-ai] Gemini error ${res.status}`);
+    console.error(`[wardrobe-ai] Gemini HTTP error status=${res.status} elapsed=${elapsed}ms`);
     if (res.status === 429) throw new ApiError(503, "AI service is busy. Please try again shortly.");
     throw new ApiError(502, "AI analysis failed. Please try another photo.");
   }
+  console.info(`[wardrobe-ai] Gemini responded status=${res.status} elapsed=${elapsed}ms`);
 
   const json = await res.json() as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
 
   const text = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  if (!text) throw new ApiError(502, "AI returned an empty response. Please try again.");
+  if (!text) {
+    console.error("[wardrobe-ai] Gemini returned empty text in candidates");
+    throw new ApiError(502, "AI returned an empty response. Please try again.");
+  }
 
-  return validateAnalysis(text);
+  // Log output length only — never the content (could contain user clothing details)
+  console.info(`[wardrobe-ai] validating response length=${text.length}`);
+  const result = validateAnalysis(text);
+  console.info(`[wardrobe-ai] validation ok category=${result.category}`);
+  return result;
 }
 
 // ── Response validation ───────────────────────────────────────────────────────
