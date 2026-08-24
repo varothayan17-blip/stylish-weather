@@ -32,5 +32,23 @@ export default defineConfig({
   // preset value and options to restore.
   nitro: {
     preset: "vercel",
+    // Keep server-only packages external so Nitro/Rollup does not attempt
+    // to bundle them into ESM chunks. Bundling these breaks CJS→ESM interop
+    // (e.g. firebase-admin SDK_VERSION error on Node 22) and inflates the
+    // function size unnecessarily.
+    //
+    // traceDeps: packages listed here are traced at build time (their files
+    // are copied to the output) and kept as node_modules references at
+    // runtime — they are NOT inlined into _libs/*.mjs chunks.
+    //
+    // SECURITY: firebase-admin and stripe must only run server-side.
+    // They are never imported by client code (confirmed by bundle audit).
+    traceDeps: [
+      "firebase-admin",
+      "firebase-admin/app",
+      "firebase-admin/auth",
+      "firebase-admin/firestore",
+      "stripe",
+    ],
   },
 });
