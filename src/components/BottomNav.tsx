@@ -1,12 +1,14 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Home, CalendarDays, Heart, Settings } from "lucide-react";
+import { Home, CalendarDays, Shirt, Heart, Settings } from "lucide-react";
 
 const items = [
   { to: "/", icon: Home, label: "Today" },
   { to: "/forecast", icon: CalendarDays, label: "Forecast" },
+  { to: "/wardrobe", icon: Shirt, label: "Wardrobe" },
   { to: "/saved", icon: Heart, label: "Saved" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ] as const;
+
 
 export function BottomNav() {
   const { location } = useRouterState();
