@@ -30,6 +30,7 @@ export default defineConfig({
   // they have been removed rather than left as dead config. If you need to
   // deploy to Cloudflare Workers again later, see DEPLOYMENT.md for the
   // preset value and options to restore.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   nitro: {
     preset: "vercel",
     // Keep server-only packages external so Nitro/Rollup does not attempt
@@ -43,12 +44,13 @@ export default defineConfig({
     //
     // SECURITY: firebase-admin and stripe must only run server-side.
     // They are never imported by client code (confirmed by bundle audit).
-    traceDeps: [
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ...({ traceDeps: [
       "firebase-admin",
       "firebase-admin/app",
       "firebase-admin/auth",
       "firebase-admin/firestore",
       "stripe",
-    ],
-  },
+    ] } as any),
+  } as any,
 });

@@ -56,6 +56,8 @@ export async function handleCreateCheckoutSession(request: Request): Promise<Res
       line_items: [{ price: priceId, quantity: 1 }],
       // uid in subscription metadata for webhook recovery if customer lookup fails
       subscription_data: {
+        // 7-day free trial — hardcoded server-side, not accepted from client.
+        trial_period_days: 7,
         metadata: { firebaseUid: uid },
       },
       // success_url does NOT grant Premium — only the webhook does.

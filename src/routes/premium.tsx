@@ -3,18 +3,18 @@ import { AppShell } from "@/components/AppShell";
 import { useEntitlement } from "@/lib/entitlement";
 import { billing } from "@/lib/billing";
 import { getErrorMessage } from "@/lib/utils";
-import { useEffect, useState } from "react";
-import { Sparkles, Check, Shirt, Bell, BarChart3 } from "lucide-react";
+import { useState } from "react";
+import { Sparkles, Check, Shirt, Bell, BarChart3, Settings } from "lucide-react";
 import { loadPrefs } from "@/lib/preferences";
 
 export const Route = createFileRoute("/premium")({
   head: () => ({
     meta: [
-      { title: "Aeruvo Premium — CA$2.99/month" },
+      { title: "Aeruvo Premium — 7 days free, then CA$2.99/month" },
       {
         name: "description",
         content:
-          "Advanced AI outfit recommendations, wardrobe tracking, and daily push notifications.",
+          "7-day free trial, then CA$2.99/month. Advanced AI outfit recommendations, wardrobe tracking, and daily push notifications.",
       },
     ],
   }),
@@ -44,17 +44,22 @@ const features = [
   },
 ];
 
+function fmt(ms: number) {
+  return new Date(ms).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
+}
+
 function Premium() {
-  // useEntitlement: waits for Auth to settle, re-fetches on focus,
-  // never hangs. localStorage and prefs.premium are NOT consulted.
   const entitlement = useEntitlement();
-  const [activating, setActivating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [activating, setActivating]     = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [error, setError]               = useState<string | null>(null);
 
   const isActive = !entitlement.loading && entitlement.active;
-  // Detect return from Stripe checkout — do NOT grant Premium from URL param.
-  // The webhook writes the entitlement; useEntitlement() will reflect it once
-  // Firestore updates (may take a few seconds after checkout completes).
+  const ent = !entitlement.loading && entitlement.active ? entitlement.entitlement : null;
+  const isTrialing      = ent?.status === "trialing";
+  const willCancel      = ent?.cancelAtPeriodEnd === true;
+  const periodEndMs     = ent?.currentPeriodEnd ?? 0;
+
   const searchParams = typeof window !== "undefined"
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams();
@@ -64,8 +69,6 @@ function Premium() {
     setActivating(true);
     setError(null);
     try {
-      // Pass email for display in Stripe checkout (not for identity).
-      // The server uses the Firebase Auth token to establish identity.
       const email = loadPrefs().email ?? "";
       await billing.startCheckout(email);
     } catch (e) {
@@ -75,8 +78,21 @@ function Premium() {
     }
   }
 
-  const buttonLabel = activating ? "Loading…" : isActive ? "✓ Premium active" : "Upgrade to Premium";
-  const buttonDisabled = activating || isActive || entitlement.loading;
+  async function openPortal() {
+    setPortalLoading(true);
+    setError(null);
+    try {
+      // POST /api/create-portal-session — requires Firebase ID token.
+      // Server resolves Stripe customer ID; never trusts any client-supplied ID.
+      await billing.openCustomerPortal();
+    } catch (e) {
+      setError(getErrorMessage(e, "Couldn't open billing portal"));
+    } finally {
+      setPortalLoading(false);
+    }
+  }
+
+  const checkoutButtonLabel = activating ? "Loading…" : "Start free trial";
 
   return (
     <AppShell>
@@ -85,8 +101,8 @@ function Premium() {
           <Sparkles className="h-3 w-3" /> Premium
         </span>
         <h1 className="mt-3 text-4xl font-semibold tracking-tight">
-          {isActive ? "You're a member." : "Dress smarter for "}
-          {!isActive ? <span className="text-gradient">CA$2.99/month</span> : null}
+          {isActive ? "You're a member." : "Dress smarter,"}
+          {!isActive ? <><br /><span className="text-gradient">starting free.</span></> : null}
         </h1>
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
           {isActive
@@ -95,8 +111,8 @@ function Premium() {
         </p>
       </header>
 
-      {/* ── Active member card ─────────────────────────────────── */}
-      {isActive && !entitlement.loading && entitlement.active ? (
+      {/* ── Active member card ─────────────────────────────────────── */}
+      {isActive && ent ? (
         <div className="animate-fade-up space-y-3 delay-100">
           <div className="glass-card rounded-[2rem] p-6">
             <div className="flex items-center gap-4">
@@ -104,10 +120,22 @@ function Premium() {
                 <Sparkles className="h-7 w-7" />
               </div>
               <div>
-                <p className="font-semibold">Premium active</p>
-                {entitlement.entitlement.trialEnd && (
+                <p className="font-semibold">
+                  {isTrialing ? "Free trial active" : "Premium active"}
+                </p>
+                {isTrialing && periodEndMs > 0 && (
                   <p className="mt-0.5 text-sm text-muted-foreground">
-                    Trial ends {new Date(entitlement.entitlement.trialEnd).toLocaleDateString("en-CA", { month: "short", day: "numeric" })}
+                    Trial ends {fmt(periodEndMs)}
+                  </p>
+                )}
+                {!isTrialing && willCancel && periodEndMs > 0 && (
+                  <p className="mt-0.5 text-sm text-amber-600">
+                    Plan ends {fmt(periodEndMs)} — access until then
+                  </p>
+                )}
+                {!isTrialing && !willCancel && periodEndMs > 0 && (
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    Renews {fmt(periodEndMs)}
                   </p>
                 )}
               </div>
@@ -127,22 +155,32 @@ function Premium() {
               ))}
             </div>
 
+            {error && (
+              <p className="mt-4 text-xs leading-relaxed text-destructive">{error}</p>
+            )}
+
+            {/* Manage subscription — opens Stripe Customer Portal server-side */}
             <button
-              disabled
-              className="mt-6 w-full rounded-2xl bg-primary/10 py-3.5 text-sm font-semibold text-primary opacity-80"
+              onClick={openPortal}
+              disabled={portalLoading}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl border border-border py-3.5 text-sm font-semibold transition-transform active:scale-[0.98] disabled:cursor-default disabled:opacity-60"
             >
-              ✓ Premium active — no action needed
+              <Settings className="h-4 w-4" />
+              {portalLoading ? "Opening portal…" : "Manage subscription"}
             </button>
           </div>
         </div>
+
       ) : (
-        /* ── Upgrade card (free users) ─────────────────────── */
+        /* ── Upgrade card (free / loading) ─────────────────────── */
         <div className="glass-card overflow-hidden rounded-[2rem] p-6 animate-fade-up delay-100">
-          <div className="flex items-baseline gap-2">
-            <span className="text-5xl font-extralight tracking-tighter">CA$2.99</span>
-            <span className="text-sm text-muted-foreground">/ month</span>
+          {/* Pricing */}
+          <div>
+            <p className="text-2xl font-semibold">7 days free</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              then CA$2.99/month — cancel anytime
+            </p>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">Cancel anytime. Wardrobe AI coming soon.</p>
 
           {checkoutStatus === "success" && !isActive && (
             <p className="mt-3 text-xs leading-relaxed text-green-600">
@@ -172,14 +210,14 @@ function Premium() {
 
           <button
             onClick={startCheckout}
-            disabled={buttonDisabled}
+            disabled={activating || entitlement.loading}
             className="mt-7 w-full rounded-2xl bg-foreground py-4 text-sm font-semibold text-background transition-transform active:scale-[0.98] disabled:cursor-default disabled:opacity-60"
           >
-            {buttonLabel}
+            {checkoutButtonLabel}
           </button>
 
           <p className="mt-4 text-center text-[10px] leading-relaxed text-muted-foreground/60">
-            Secure checkout. Powered by Stripe.
+            Secure checkout via Stripe. No credit card charged during trial.
           </p>
         </div>
       )}
