@@ -190,7 +190,9 @@ function Recommendation() {
                     const fav = {
                       id: safeUUID(),
                       title: rec.headline,
-                      items: rec.outfit,
+                      // recommendation.tsx is a legacy route without Premium context;
+                      // save all slots as generic (matched:false).
+                      slots: rec.outfit.map((text) => ({ matched: false as const, genericText: text })),
                       tempC: weather.tempC,
                       condition: weather.condition,
                       savedAt: Date.now(),

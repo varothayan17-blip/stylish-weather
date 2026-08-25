@@ -25,6 +25,8 @@ import {
   type Prefs,
   type NotificationPrefs,
 } from "@/lib/preferences";
+import { useResolvedOutfit } from "@/lib/resolvedOutfit";
+import { useResolvedSlots } from "@/lib/useResolvedSlots";
 import { cloudSync } from "@/lib/cloudSync";
 import { orchestrateEnable, isIosSafariNonInstalled } from "@/lib/notifications";
 import { getUid } from "@/lib/auth";
@@ -247,6 +249,11 @@ function Home() {
     () => (weather && prefs ? recommend(weather, prefs) : null),
     [weather, prefs],
   );
+  // useResolvedSlots must be called unconditionally (Rules of Hooks).
+  // When rec is null (weather not loaded yet), the hook returns empty slots.
+  const EMPTY_REC: Pick<NonNullable<typeof rec>, "outfit"|"effectiveFeelsC"|"headline"> = { outfit: [], effectiveFeelsC: 0, headline: "" };
+  const resolvedSlotsResult = useResolvedSlots(rec ?? EMPTY_REC);
+
   const risk = useMemo(
     () => (weather && prefs && rec ? computeRegretRisk(weather, prefs, rec) : null),
     [weather, prefs, rec],
@@ -482,7 +489,7 @@ function Home() {
             <p className="text-xl font-medium leading-snug tracking-tight">{rec.headline}</p>
 
             {/* Slot-by-slot list: generic for free users, personalised for Premium */}
-            <OutfitSlotList rec={rec} />
+            <OutfitSlotList rec={rec} slots={resolvedSlotsResult} />
 
             {/* Tiered umbrella advice — replaces the old boolean chip.
                 Visible directly on the Home screen so users never miss it. */}
@@ -561,10 +568,17 @@ function Home() {
                   // BUG FIX: crypto.randomUUID() throws on iOS < 15.4 with no error
                   // boundary. The whole handler silently failed. safeUUID() provides
                   // a fallback UUID-shaped string for older devices.
+                  // resolvedSlotsResult.resolvedSlots is the same value
+                  // displayed by OutfitSlotList — computed in this component,
+                  // passed down, no lag or async gap.
+                  const favSlots = resolvedSlotsResult.resolvedSlots.length > 0
+                    ? resolvedSlotsResult.resolvedSlots
+                    : rec.outfit.map((text) => ({ matched: false as const, genericText: text }));
+
                   const fav = {
                     id: safeUUID(),
                     title: rec.headline,
-                    items: rec.outfit,
+                    slots: favSlots,
                     tempC: weather.tempC,
                     condition: weather.condition,
                     savedAt: Date.now(),

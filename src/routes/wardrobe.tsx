@@ -6,8 +6,11 @@ import { ItemTile } from "@/components/wardrobe/ItemTile";
 import { AddClothingSheet } from "@/components/wardrobe/AddClothingSheet";
 import { ItemDetailSheet } from "@/components/wardrobe/ItemDetailSheet";
 import { useWardrobe, wardrobe } from "@/components/wardrobe/wardrobeStore";
+import { useResolvedOutfit, clearResolvedOutfit, isOutfitFresh } from "@/lib/resolvedOutfit";
+import { getUid } from "@/lib/auth";
+import { useEntitlement } from "@/lib/entitlement";
 import { WardrobeEntrance } from "@/components/wardrobe/WardrobeEntrance";
-import { CATEGORIES, TODAY_PICK_IDS, type WardrobeItem } from "@/components/wardrobe/wardrobeData";
+import { CATEGORIES, type WardrobeItem } from "@/components/wardrobe/wardrobeData";
 import { WARDROBE_OPEN_ITEM_KEY } from "@/lib/wardrobeMatch";
 
 export const Route = createFileRoute("/wardrobe")({
@@ -59,10 +62,33 @@ function Wardrobe() {
     () => (filter === "All" ? items : items.filter((i) => i.category === filter)),
     [items, filter],
   );
-  const picks = useMemo(
-    () => TODAY_PICK_IDS.map((id) => items.find((i) => i.id === id)).filter(Boolean) as WardrobeItem[],
-    [items],
-  );
+  const resolvedOutfit = useResolvedOutfit();
+  const entitlement    = useEntitlement();
+  const isPremium      = !entitlement.loading && entitlement.active;
+
+  // Clear stored snapshot when the user is not Premium (signed out or free)
+  // so a prior Premium session's clothing names cannot leak.
+  useEffect(() => {
+    if (!entitlement.loading && !isPremium) {
+      getUid().then((uid) => clearResolvedOutfit(uid));
+    }
+  }, [entitlement.loading, isPremium]);
+
+  // Live Today's picks: matched items from the current resolved outfit.
+  // Premium only. Uses the same snapshot as Home so they always agree.
+  // Unmatched slots and unavailable items are excluded.
+  // Stale (yesterday's) snapshots are filtered at the store level (loadFromStorage).
+  const picks = useMemo(() => {
+    if (!isPremium || !resolvedOutfit) return [];
+    if (!isOutfitFresh(resolvedOutfit)) return []; // extra safety check
+    return resolvedOutfit.slots
+      .filter((s) => s.matched)
+      .map((s) => {
+        if (!s.matched) return null;
+        return items.find((i) => i.id === s.itemId && !i.unavailable) ?? null;
+      })
+      .filter((item): item is WardrobeItem => item !== null);
+  }, [isPremium, resolvedOutfit, items]);
   const current = items.find((i) => i.id === selected) ?? null;
 
   return (
@@ -98,7 +124,10 @@ function Wardrobe() {
         <Plus className="h-4 w-4" /> Add clothing
       </button>
 
-      {items.length > 0 && picks.length > 0 && (
+      {/* Today's picks: live matches from the current Home recommendation.
+          Premium only — free users see the generic recommendation without
+          personal wardrobe items. Hidden if no matches or not yet resolved. */}
+      {isPremium && picks.length > 0 && (
         <section
           className="glass-card mb-6 rounded-[2rem] p-5 animate-fade-up"
           style={{ animationDelay: "80ms" }}
@@ -107,7 +136,7 @@ function Wardrobe() {
             <Sparkles className="h-4 w-4 text-primary" />
             <h2 className="text-base font-semibold tracking-tight">Today&apos;s picks</h2>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">Best match for today&apos;s weather</p>
+          <p className="mt-1 text-xs text-muted-foreground">From your wardrobe — best for today</p>
           <div className="mt-4 grid grid-cols-4 gap-2.5">
             {picks.map((p) => (
               <button
@@ -123,9 +152,6 @@ function Wardrobe() {
               </button>
             ))}
           </div>
-          <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-            Cool with rain later — these pieces balance warmth and water protection.
-          </p>
         </section>
       )}
 

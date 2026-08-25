@@ -212,19 +212,57 @@ export async function saveAndSyncPrefs(p: Prefs): Promise<void> {
   }
 }
 
+/**
+ * A single slot in a saved outfit.
+ * matched:true  → Premium save: real saved item name and its wardrobe ID.
+ * matched:false → Free save or unmatched slot: generic recommendation text.
+ *
+ * Snapshot semantics: itemName is the name at save time.
+ * Renaming/deleting the wardrobe item never alters the saved outfit.
+ */
+export type FavSlot =
+  | { matched: false; genericText: string }
+  | { matched: true;  genericText: string; itemName: string; itemId: string };
+
+/** Returns the display name for a FavSlot (without "Your " prefix). */
+export function favSlotDisplayName(slot: FavSlot): string {
+  return slot.matched ? slot.itemName : slot.genericText;
+}
+
 export type Favorite = {
   id: string;
   title: string;
-  items: string[];
+  /**
+   * Structured slots (FavSlot[]) for saves from v2 onward.
+   * Legacy saves use string[] — loadFavorites() always normalises these
+   * into FavSlot[] via legacyToFavSlots() for uniform rendering.
+   */
+  slots: FavSlot[];
+  /** @deprecated kept only for backward-compat reads; new saves use slots */
+  items?: string[];
   tempC: number;
   condition: string;
   savedAt: number;
 };
 
+/** Convert a legacy string[] items array to FavSlot[] for uniform rendering. */
+export function legacyToFavSlots(items: string[]): FavSlot[] {
+  return items.map((text) => ({ matched: false, genericText: text }));
+}
+
+/** Normalise a Favorite from any version to always have slots. */
+export function normalizeFavorite(raw: Favorite & { items?: string[] }): Favorite {
+  if (raw.slots && raw.slots.length > 0) return raw;
+  const items = (raw as { items?: string[] }).items ?? [];
+  return { ...raw, slots: legacyToFavSlots(items) };
+}
+
 export function loadFavorites(): Favorite[] {
   if (typeof window === "undefined") return [];
   try {
-    return JSON.parse(localStorage.getItem(FAV_KEY) ?? "[]");
+    const raw: Array<Favorite & { items?: string[] }> =
+      JSON.parse(localStorage.getItem(FAV_KEY) ?? "[]");
+    return raw.map(normalizeFavorite);
   } catch {
     return [];
   }

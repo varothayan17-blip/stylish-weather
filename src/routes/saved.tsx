@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { loadFavorites, removeFavorite, FAV_KEY, type Favorite } from "@/lib/preferences";
+import { loadFavorites, removeFavorite, FAV_KEY, favSlotDisplayName, type Favorite } from "@/lib/preferences";
 import { Heart, Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/saved")({
@@ -107,12 +107,12 @@ function Saved() {
                 </button>
               </div>
               <div className="mt-3 flex flex-wrap gap-1.5">
-                {f.items.map((it) => (
+                {f.slots.map((slot, si) => (
                   <span
-                    key={it}
+                    key={si}
                     className="rounded-full bg-primary/10 px-2.5 py-1 text-xs text-primary"
                   >
-                    {it}
+                    {slot.matched ? "Your " : ""}{favSlotDisplayName(slot)}
                   </span>
                 ))}
               </div>
