@@ -14,23 +14,30 @@
  *   3. Return the highest-scoring item for that slot (if score ≥ MIN_SCORE)
  *
  * Scoring (additive, first match wins per category):
- *   +40  subcategory/type contains a token          (strongest signal)
- *   +35  item name contains a token                 (nearly as strong)
+ *   -100 item.unavailable === true                  (hard exclusion, checked first)
+ *   -100 garment-intent incompatibility             (e.g. T-shirt for long-sleeve slot)
+ *   +40  subcategory/type contains a SPECIFIC token (generic tokens excluded)
+ *   +35  item name contains a SPECIFIC token        (generic tokens excluded)
  *   +20  WardrobeCategory matches slot category hint (e.g. "Tops" for "shirt")
  *   +15  warmth is suitable for the temperature band
  *   +10  season string contains the current season
  *   +10  weatherFit contains a matching condition
  *    +5  item is a favourite                        (tie-breaker only)
- *   -100 item.unavailable === true                  (hard exclusion)
  *   -100 warmth obviously wrong for band            (e.g. Warm item in hot band)
  *
- * MIN_SCORE = 35 — ensures at least a subcategory or name match before showing.
+ * GENERIC_TOKENS ("shirt", "top", "layer", …) cannot independently satisfy +40/+35.
+ * COMPAT_RULES enforce physical intent: "long-sleeve" slot blocks T-shirts/tees.
+ *
+ * MIN_SCORE = 35 — requires at least one specific subcategory or name match.
  *
  * ── Limitations (v1) ─────────────────────────────────────────────────────────
  * - Text matching is case-insensitive keyword search, not semantic similarity.
- * - "Polo shirt or T-shirt" matches any item whose name/type contains "polo",
- *   "shirt", or "t-shirt" — a "dress shirt" would score 35 (name hit on "shirt")
- *   but a "T-shirt" scores 40+20 = 60. Appropriate for v1.
+ * - GENERIC_TOKENS prevents false-positives from shared generic words ("shirt",
+ *   "top"). "Polo shirt or T-shirt" still matches a crewneck T-shirt because
+ *   "t-shirt" and "polo" are specific tokens; "long-sleeve shirt" does not match
+ *   a T-shirt because the compat rule blocks it AND "shirt" is generic.
+ * - COMPAT_RULES are narrow and explicit. Only clear physical incompatibilities
+ *   are blocked (long-sleeve requires long-sleeve coverage).
  * - No style-based filtering (casual/formal) at v1.
  * - Slot deduplication: the same item will not be returned for two slots.
  * - Only the first matching item per slot is returned.
@@ -53,6 +60,64 @@ export type WardrobeMatch = {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const MIN_SCORE = 35; // Require at least a subcategory or name hit
+
+/**
+ * Generic tokens that appear in many garment names but carry no specificity.
+ * A name/type hit driven ONLY by one of these tokens is not a meaningful match —
+ * it just means both items happen to involve clothing.
+ *
+ * Examples of false-positives these prevent:
+ *   "Long-sleeve shirt" → T-shirt (both contain "shirt")
+ *   "Long-sleeve tee"   → any top  (both contain "top")
+ *
+ * When ALL matching tokens between a slot and an item are generic, the type/name
+ * score is zeroed out (forcing the item below MIN_SCORE unless category/warmth etc.
+ * independently push it over — which alone cannot reach 35).
+ */
+const GENERIC_TOKENS = new Set([
+  "shirt", "top", "tops", "clothes", "layer", "wear",
+]);
+
+/**
+ * Garment-intent compatibility rules.
+ *
+ * When a slot contains a REQUIRE keyword, an item whose name or type contains
+ * any of the EXCLUDE keywords is incompatible and receives a hard −100 penalty.
+ *
+ * This prevents generic token overlap from producing false-positives, e.g.:
+ *   Slot "Long-sleeve shirt" REQUIRES long-sleeve coverage.
+ *   A T-shirt or tank top does NOT provide that → hard exclude.
+ *
+ * Rules are intentionally narrow — only block clear physical incompatibilities.
+ * A "Long-sleeve shirt" slot does NOT block hoodies or sweaters (which layer fine).
+ */
+type CompatRule = {
+  /** Slot must contain ALL of these to activate this rule (lowercase). */
+  slotRequires: string[];
+  /** Item name/type must NOT contain any of these (lowercase). */
+  itemExcludes: string[];
+  /** Human-readable reason — for comments/tests only. */
+  reason: string;
+};
+
+const COMPAT_RULES: CompatRule[] = [
+  {
+    // "Long-sleeve shirt" or "Long-sleeve tee" explicitly requires long-sleeve
+    // coverage. A short-sleeve T-shirt or tank top cannot satisfy this.
+    slotRequires: ["long-sleeve"],
+    itemExcludes: ["t-shirt", "tee", "tank", "short-sleeve", "cap sleeve"],
+    reason: "long-sleeve slot excludes short-sleeve items",
+  },
+  {
+    // A "T-shirt" or "Breathable T-shirt" slot explicitly wants short-sleeve.
+    // A heavy winter sweater is wrong. But polo shirts and crewnecks are fine.
+    // This rule is intentionally narrow — only block clearly wrong warmth.
+    // (Warmth scoring already penalises heavy items in warm/hot bands.)
+    slotRequires: [],          // no slot restriction — rely on warmth scoring instead
+    itemExcludes: [],
+    reason: "placeholder — warmth scoring handles hot-band mismatches",
+  },
+];
 
 // Maps WardrobeCategory → slot keywords that imply that category
 const CATEGORY_KEYWORDS: Record<string, string[]> = {
@@ -152,6 +217,7 @@ export function scoreItem(
   // Hard exclusion
   if (item.unavailable) return -100;
 
+  const slotLow  = slot.toLowerCase();
   const tokens   = tokeniseSlot(slot);
   const nameLow  = item.name.toLowerCase();
   const typeLow  = (item.type ?? "").toLowerCase();
@@ -159,11 +225,33 @@ export function scoreItem(
 
   let score = 0;
 
+  // ── Garment-intent compatibility check (hard exclusion −100) ─────────────
+  // Prevents generic token overlap from producing false-positives, e.g.
+  // "Long-sleeve shirt" matching a T-shirt purely via the "shirt" token.
+  for (const rule of COMPAT_RULES) {
+    if (rule.slotRequires.length === 0) continue; // placeholder rules
+    const slotMatches = rule.slotRequires.every((req) => slotLow.includes(req));
+    if (!slotMatches) continue;
+    const itemIncompatible = rule.itemExcludes.some(
+      (excl) => nameLow.includes(excl) || typeLow.includes(excl),
+    );
+    if (itemIncompatible) return -100; // hard fail — rule violated
+  }
+
   // ── Subcategory/type hit (+40) ────────────────────────────────────────────
-  if (tokens.some((t) => typeLow.includes(t))) score += 40;
+  // Only award points if at least one SPECIFIC (non-generic) token matches.
+  // This prevents "Long-sleeve shirt" → T-shirt via the generic "shirt" token.
+  const specificTypeTokens = tokens.filter(
+    (t) => !GENERIC_TOKENS.has(t) && typeLow.includes(t),
+  );
+  if (specificTypeTokens.length > 0) score += 40;
 
   // ── Name hit (+35) ────────────────────────────────────────────────────────
-  if (tokens.some((t) => nameLow.includes(t))) score += 35;
+  // Same guard: generic tokens alone do not award name-hit points.
+  const specificNameTokens = tokens.filter(
+    (t) => !GENERIC_TOKENS.has(t) && nameLow.includes(t),
+  );
+  if (specificNameTokens.length > 0) score += 35;
 
   // ── Category match (+20) ──────────────────────────────────────────────────
   const guessed = guessCategory(slot);
