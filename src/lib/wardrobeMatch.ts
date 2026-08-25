@@ -28,7 +28,9 @@
  * GENERIC_TOKENS ("shirt", "top", "layer", …) cannot independently satisfy +40/+35.
  * COMPAT_RULES enforce physical intent: "long-sleeve" slot blocks T-shirts/tees.
  *
- * MIN_SCORE = 35 — requires at least one specific subcategory or name match.
+ * MIN_SCORE = 40 — requires at least one specific text match (type or name).
+ *   category+warmth (35) alone is insufficient to avoid category-only false
+ *   positives like a hoodie matching a "Long-sleeve shirt" slot.
  *
  * ── Limitations (v1) ─────────────────────────────────────────────────────────
  * - Text matching is case-insensitive keyword search, not semantic similarity.
@@ -46,20 +48,41 @@
 import type { WardrobeItem } from "@/components/wardrobe/wardrobeData";
 import type { Recommendation } from "@/lib/recommend";
 
+// ── Shared navigation constant ───────────────────────────────────────────────
+
+/**
+ * sessionStorage key used by OutfitSlotList to tell wardrobe.tsx which item
+ * to open in the ItemDetailSheet after navigating to /wardrobe.
+ * Kept here (the shared matching module) so no UI component file needs to be
+ * imported solely for a string constant.
+ */
+export const WARDROBE_OPEN_ITEM_KEY = "aeruvo:wardrobe:open-item";
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type WardrobeMatch = {
   /** The raw outfit slot string, e.g. "Polo shirt or T-shirt" */
   slot: string;
+  /** Index into rec.outfit[] that this match corresponds to */
+  slotIndex: number;
   /** The matched wardrobe item */
   item: WardrobeItem;
   /** Debug score (hidden from UI) */
   score: number;
 };
 
+/**
+ * Slot-indexed map from outfit slot index → WardrobeMatch.
+ * Used by the slot-replacement UI to substitute specific item names
+ * directly into each outfit bullet while preserving slot order.
+ */
+export type SlotMatchMap = Map<number, WardrobeMatch>;
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const MIN_SCORE = 35; // Require at least a subcategory or name hit
+const MIN_SCORE = 40; // Require at least one specific text match.
+// Items with no specific text token match return 0 (early exit before this point).
+// Genuine matches have type/name hits: type(40)+cat(20)+warmth(15)+season(10)=85 minimum.
 
 /**
  * Generic tokens that appear in many garment names but carry no specificity.
@@ -98,6 +121,10 @@ type CompatRule = {
   itemExcludes: string[];
   /** Human-readable reason — for comments/tests only. */
   reason: string;
+  /** If set: item.category must equal this value or the item is rejected (−100). */
+  itemMustBeCategory?: string;
+  /** If set: rule only activates when guessCategory(slot) === this value. */
+  slotCategory?: string;
 };
 
 const COMPAT_RULES: CompatRule[] = [
@@ -109,13 +136,14 @@ const COMPAT_RULES: CompatRule[] = [
     reason: "long-sleeve slot excludes short-sleeve items",
   },
   {
-    // A "T-shirt" or "Breathable T-shirt" slot explicitly wants short-sleeve.
-    // A heavy winter sweater is wrong. But polo shirts and crewnecks are fine.
-    // This rule is intentionally narrow — only block clearly wrong warmth.
-    // (Warmth scoring already penalises heavy items in warm/hot bands.)
-    slotRequires: [],          // no slot restriction — rely on warmth scoring instead
+    // Footwear slots must only match Shoes category items.
+    // Prevents a Tops/Bottoms item from satisfying a "Sneakers" slot even if
+    // its name happened to contain the word "sneakers" or "shoes".
+    slotRequires: [],
     itemExcludes: [],
-    reason: "placeholder — warmth scoring handles hot-band mismatches",
+    slotCategory: "Shoes",
+    itemMustBeCategory: "Shoes",
+    reason: "footwear slot must match Shoes category items only",
   },
 ];
 
@@ -128,8 +156,8 @@ const CATEGORY_KEYWORDS: Record<string, string[]> = {
                  "skirt", "denim"],
   Outerwear:   ["jacket", "coat", "parka", "puffer", "blazer", "windbreaker",
                  "hoodie", "raincoat", "shell", "fleece", "overcoat"],
-  Shoes:       ["sneakers", "boots", "sandals", "shoes", "loafers", "flats",
-                 "runners", "footwear"],
+  Shoes:       ["sneakers", "trainers", "runners", "boots", "sandals", "shoes",
+                 "loafers", "flats", "footwear"],
   Accessories: ["hat", "beanie", "scarf", "gloves", "cap", "sunglasses",
                  "belt", "bag"],
 };
@@ -229,28 +257,47 @@ export function scoreItem(
   // Prevents generic token overlap from producing false-positives, e.g.
   // "Long-sleeve shirt" matching a T-shirt purely via the "shirt" token.
   for (const rule of COMPAT_RULES) {
-    if (rule.slotRequires.length === 0) continue; // placeholder rules
-    const slotMatches = rule.slotRequires.every((req) => slotLow.includes(req));
-    if (!slotMatches) continue;
-    const itemIncompatible = rule.itemExcludes.some(
-      (excl) => nameLow.includes(excl) || typeLow.includes(excl),
-    );
-    if (itemIncompatible) return -100; // hard fail — rule violated
+    // Text requirement: all slotRequires words must appear in the slot
+    const textOk =
+      rule.slotRequires.length === 0 ||
+      rule.slotRequires.every((req) => slotLow.includes(req));
+    // Category requirement: slot must classify as slotCategory (if set)
+    const catOk =
+      !rule.slotCategory ||
+      guessCategory(slot) === rule.slotCategory;
+    if (!textOk || !catOk) continue;
+
+    // Check name/type exclusions
+    if (rule.itemExcludes.some((excl) => nameLow.includes(excl) || typeLow.includes(excl))) {
+      return -100;
+    }
+    // Check category requirement
+    if (rule.itemMustBeCategory && item.category !== rule.itemMustBeCategory) {
+      return -100;
+    }
   }
 
-  // ── Subcategory/type hit (+40) ────────────────────────────────────────────
-  // Only award points if at least one SPECIFIC (non-generic) token matches.
-  // This prevents "Long-sleeve shirt" → T-shirt via the generic "shirt" token.
+  // ── Specific-token gate ───────────────────────────────────────────────────
+  // At least one specific (non-generic) token must match the item's type or
+  // name before any positive score is awarded. Without this gate, an item
+  // could score category(20) + warmth(15) + season(10) = 45 and pass
+  // MIN_SCORE=40 solely via auxiliary signals with NO textual evidence of
+  // compatibility — e.g. a T-shirt for a "Hoodie" slot in Summer.
   const specificTypeTokens = tokens.filter(
     (t) => !GENERIC_TOKENS.has(t) && typeLow.includes(t),
   );
-  if (specificTypeTokens.length > 0) score += 40;
-
-  // ── Name hit (+35) ────────────────────────────────────────────────────────
-  // Same guard: generic tokens alone do not award name-hit points.
   const specificNameTokens = tokens.filter(
     (t) => !GENERIC_TOKENS.has(t) && nameLow.includes(t),
   );
+  if (specificTypeTokens.length === 0 && specificNameTokens.length === 0) {
+    // No textual evidence of compatibility → skip this item entirely
+    return 0;
+  }
+
+  // ── Subcategory/type hit (+40) ────────────────────────────────────────────
+  if (specificTypeTokens.length > 0) score += 40;
+
+  // ── Name hit (+35) ────────────────────────────────────────────────────────
   if (specificNameTokens.length > 0) score += 35;
 
   // ── Category match (+20) ──────────────────────────────────────────────────
@@ -312,31 +359,38 @@ export function matchWardrobeToOutfit(
   const results: WardrobeMatch[] = [];
   const usedIds = new Set<string>();
 
-  // Only process clothing slots — skip accessories/footwear slots that are
-  // unlikely to have wardrobe matches in v1 (shoes, hats, scarves, umbrellas).
-  const clothingSlots = rec.outfit.filter((slot) => {
-    const sl = slot.toLowerCase();
-    // Skip if slot is purely accessory/footwear
-    const skipKeywords = ["sneakers", "boots", "sandals", "shoes", "footwear",
-                          "beanie", "scarf", "gloves", "cap", "hat", "socks"];
-    // Keep if it contains ANY clothing word, even if it also mentions footwear
-    const keepKeywords = ["shirt", "tee", "pants", "jeans", "chinos", "hoodie",
-                          "jacket", "coat", "sweater", "shorts", "blouse", "top",
-                          "long-sleeve", "polo", "layer", "parka", "fleece",
-                          "windbreaker", "pullover", "crewneck"];
-    const hasKeep = keepKeywords.some((k) => sl.includes(k));
-    const onlySkip = !hasKeep && skipKeywords.some((k) => sl.includes(k));
-    return !onlySkip;
-  });
+  // Slot filter:
+  //   skipKeywords — pure-accessory slots with no wardrobe-match support.
+  //   keepKeywords — words that confirm a slot should be scored.
+  // Footwear (sneakers, boots, shoes…) is now in keepKeywords so footwear
+  // slots pass through to the scorer. The compat rule + specific-token gate
+  // ensure only Shoes category items with matching names/types can score them.
+  const skipKeywords = ["beanie", "scarf", "gloves", "hat", "socks",
+                        "umbrella", "sunscreen", "sunglasses"];
+  const keepKeywords = ["shirt", "tee", "pants", "jeans", "chinos", "hoodie",
+                        "jacket", "coat", "sweater", "shorts", "blouse", "top",
+                        "long-sleeve", "polo", "layer", "parka", "fleece",
+                        "windbreaker", "pullover", "crewneck",
+                        "sneakers", "trainers", "runners", "boots", "shoes",
+                        "sandals", "loafers", "flats"];
+  // Carry original index so the UI can do in-place slot replacement.
+  const clothingSlots = rec.outfit
+    .map((slot, i) => ({ slot, originalIndex: i }))
+    .filter(({ slot }) => {
+      const sl = slot.toLowerCase();
+      const hasKeep = keepKeywords.some((k) => sl.includes(k));
+      const onlySkip = !hasKeep && skipKeywords.some((k) => sl.includes(k));
+      return !onlySkip;
+    });
 
-  for (const slot of clothingSlots.slice(0, 4)) { // max 4 slots to scan
+  for (const { slot, originalIndex } of clothingSlots.slice(0, 5)) { // max 5 (clothing + footwear)
     let best: WardrobeMatch | null = null;
 
     for (const item of available) {
       if (usedIds.has(item.id)) continue;
       const s = scoreItem(item, slot, band);
       if (s >= MIN_SCORE && (!best || s > best.score)) {
-        best = { slot, item, score: s };
+        best = { slot, slotIndex: originalIndex, item, score: s };
       }
     }
 
@@ -348,6 +402,28 @@ export function matchWardrobeToOutfit(
   }
 
   return results;
+}
+
+/**
+ * Returns a Map from outfit slot index → WardrobeMatch for slot-replacement UI.
+ *
+ * Premium UI uses this to substitute specific saved item names directly into
+ * each outfit bullet (e.g. slot 0 "Long-sleeve shirt" → "Your Navy hoodie")
+ * while preserving slot order and leaving unmatched slots as generic text.
+ *
+ * Same deduplication rules as matchWardrobeToOutfit: one item per slot.
+ */
+export function slotMatchMap(
+  rec: Pick<Recommendation, "outfit" | "effectiveFeelsC">,
+  items: WardrobeItem[],
+  band: string,
+): SlotMatchMap {
+  const matches = matchWardrobeToOutfit(rec, items, band);
+  const map: SlotMatchMap = new Map();
+  for (const m of matches) {
+    map.set(m.slotIndex, m);
+  }
+  return map;
 }
 
 /**

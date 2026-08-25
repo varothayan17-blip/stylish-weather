@@ -8,7 +8,7 @@ import { ItemDetailSheet } from "@/components/wardrobe/ItemDetailSheet";
 import { useWardrobe, wardrobe } from "@/components/wardrobe/wardrobeStore";
 import { WardrobeEntrance } from "@/components/wardrobe/WardrobeEntrance";
 import { CATEGORIES, TODAY_PICK_IDS, type WardrobeItem } from "@/components/wardrobe/wardrobeData";
-import { WARDROBE_OPEN_ITEM_KEY } from "@/components/WardrobeMatchSection";
+import { WARDROBE_OPEN_ITEM_KEY } from "@/lib/wardrobeMatch";
 
 export const Route = createFileRoute("/wardrobe")({
   head: () => ({

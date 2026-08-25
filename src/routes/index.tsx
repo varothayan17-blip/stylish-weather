@@ -33,7 +33,7 @@ import { recommend } from "@/lib/recommend";
 import { computeRegretRisk } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
 import { UMBRELLA_LABEL, UMBRELLA_ICON } from "@/lib/precipAdvice";
-import { WardrobeMatchSection } from "@/components/WardrobeMatchSection";
+import { OutfitSlotList } from "@/components/OutfitSlotList";
 import {
   Wind,
   Droplets,
@@ -481,17 +481,8 @@ function Home() {
           <div className="glass-card overflow-hidden rounded-[2rem] p-6">
             <p className="text-xl font-medium leading-snug tracking-tight">{rec.headline}</p>
 
-            <ul className="mt-5 space-y-2">
-              {rec.outfit.map((item) => (
-                <li key={item} className="flex items-center gap-3 text-sm">
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                  <span className="text-foreground/90">{item}</span>
-                </li>
-              ))}
-            </ul>
-
-            {/* Wardrobe matches — shown when saved items suit today's outfit */}
-            <WardrobeMatchSection rec={rec} />
+            {/* Slot-by-slot list: generic for free users, personalised for Premium */}
+            <OutfitSlotList rec={rec} />
 
             {/* Tiered umbrella advice — replaces the old boolean chip.
                 Visible directly on the Home screen so users never miss it. */}
