@@ -23,6 +23,7 @@
  *   document exists for any user → all users are Free tier.
  */
 
+import { useState, useEffect } from "react";
 import { getFirestoreDb } from "./firebase";
 import { getUid } from "./auth";
 
@@ -203,11 +204,6 @@ Never trust client-provided premium status for server-side AI operations.
  * Use this hook instead of calling fetchEntitlement() directly in useEffect.
  */
 export function useEntitlement(): EntitlementResult {
-  // Lazily import React hooks to keep this file importable outside React contexts
-  // (e.g. in tests). The import is synchronous once React is loaded.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { useState, useEffect } = require("react") as typeof import("react");
-
   const [result, setResult] = useState<EntitlementResult>({ loading: true });
 
   useEffect(() => {
@@ -227,14 +223,16 @@ export function useEntitlement(): EntitlementResult {
           if (fbAuth.currentUser) {
             uid = fbAuth.currentUser.uid;
           } else {
-            // Wait for the auth state to settle with a 5-second timeout
+            // Wait for the auth state to settle with a 5-second timeout.
+            // Hoist the firebase/auth import before the Promise executor
+            // (Promise callbacks are not async — await is not available inside them).
+            const { onAuthStateChanged } = await import("firebase/auth");
             uid = await new Promise<string | null>((resolve) => {
               const timer = setTimeout(() => {
                 unsubscribe();
                 resolve(null); // timeout → treat as signed-out
               }, 5_000);
 
-              const { onAuthStateChanged } = require("firebase/auth") as typeof import("firebase/auth");
               const unsubscribe = onAuthStateChanged(fbAuth, (user) => {
                 clearTimeout(timer);
                 unsubscribe();
