@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus, Sparkles, Shirt } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { ItemTile } from "@/components/wardrobe/ItemTile";
@@ -8,6 +8,7 @@ import { ItemDetailSheet } from "@/components/wardrobe/ItemDetailSheet";
 import { useWardrobe, wardrobe } from "@/components/wardrobe/wardrobeStore";
 import { WardrobeEntrance } from "@/components/wardrobe/WardrobeEntrance";
 import { CATEGORIES, TODAY_PICK_IDS, type WardrobeItem } from "@/components/wardrobe/wardrobeData";
+import { WARDROBE_OPEN_ITEM_KEY } from "@/components/WardrobeMatchSection";
 
 export const Route = createFileRoute("/wardrobe")({
   head: () => ({
@@ -34,6 +35,21 @@ const FILTERS = ["All", ...CATEGORIES] as const;
 
 function Wardrobe() {
   const items = useWardrobe();
+
+  // Open item detail when navigating from the "From your wardrobe" section
+  // on the Today screen. The item ID is stored in sessionStorage.
+  useEffect(() => {
+    try {
+      const id = typeof sessionStorage !== "undefined"
+        ? sessionStorage.getItem(WARDROBE_OPEN_ITEM_KEY)
+        : null;
+      if (id) {
+        sessionStorage.removeItem(WARDROBE_OPEN_ITEM_KEY);
+        setSelected(id);
+      }
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [intro, setIntro] = useState(true);
   const [adding, setAdding] = useState(false);

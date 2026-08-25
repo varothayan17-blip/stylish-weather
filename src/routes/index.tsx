@@ -33,6 +33,7 @@ import { recommend } from "@/lib/recommend";
 import { computeRegretRisk } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
 import { UMBRELLA_LABEL, UMBRELLA_ICON } from "@/lib/precipAdvice";
+import { WardrobeMatchSection } from "@/components/WardrobeMatchSection";
 import {
   Wind,
   Droplets,
@@ -488,6 +489,9 @@ function Home() {
                 </li>
               ))}
             </ul>
+
+            {/* Wardrobe matches — shown when saved items suit today's outfit */}
+            <WardrobeMatchSection rec={rec} />
 
             {/* Tiered umbrella advice — replaces the old boolean chip.
                 Visible directly on the Home screen so users never miss it. */}
