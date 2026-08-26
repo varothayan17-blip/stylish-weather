@@ -1,5 +1,6 @@
 import { getFirestoreDb, isFirebaseConfigured } from "./firebase";
 import type { Prefs, Favorite, NotificationPrefs } from "./preferences";
+import { normalizeFavorite } from "./preferences";
 
 /**
  * Firestore read/write — now keyed by Firebase Auth uid.
@@ -116,13 +117,20 @@ export const firestoreSync: CloudSync = {
     const db = await getFirestoreDb();
     if (!db) return;
     const { doc, setDoc, collection } = await import("firebase/firestore");
+    // Write both slots (v2) and items (legacy compatibility).
+    // slots is the authoritative representation; items is kept for
+    // backward compatibility with devices that have not yet updated.
+    // Firestore rules validate this exact shape.
     const safe = {
-      id: favorite.id ?? "",
-      title: favorite.title ?? "",
-      items: favorite.items ?? [],
-      tempC: favorite.tempC ?? 0,
+      id:        favorite.id ?? "",
+      title:     favorite.title ?? "",
+      slots:     favorite.slots ?? [],
+      items:     (favorite.slots ?? []).map((s) =>
+        s.matched ? s.itemName : s.genericText
+      ),
+      tempC:     favorite.tempC ?? 0,
       condition: favorite.condition ?? "",
-      savedAt: favorite.savedAt ?? Date.now(),
+      savedAt:   favorite.savedAt ?? Date.now(),
     };
     await setDoc(doc(collection(db, "users", uid, "favorites"), safe.id), safe);
   },
@@ -135,7 +143,7 @@ export const firestoreSync: CloudSync = {
       const snap = await getDocs(
         query(collection(db, "users", uid, "favorites"), orderBy("savedAt", "desc"), limit(50)),
       );
-      return snap.docs.map((d) => d.data() as Favorite);
+      return snap.docs.map((d) => normalizeFavorite(d.data() as Favorite & { items?: string[] }));
     } catch {
       return [];
     }

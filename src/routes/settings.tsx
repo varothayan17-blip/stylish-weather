@@ -16,6 +16,8 @@ import {
   type NotificationPrefs,
 } from "@/lib/preferences";
 import { cloudSync } from "@/lib/cloudSync";
+import { billing, StaleAuthError } from "@/lib/billing";
+import { getFirebaseAuth } from "@/lib/firebase";
 import { useEntitlement, type EntitlementResult } from "@/lib/entitlement";
 import { getUid } from "@/lib/auth";
 import { orchestrateEnable, orchestrateDisable, isIosSafariNonInstalled } from "@/lib/notifications";
@@ -39,6 +41,8 @@ import {
   Bell,
   Clock,
   Globe,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 
 export const Route = createFileRoute("/settings")({
@@ -139,6 +143,56 @@ function Settings() {
     applyTheme(theme);
     setSaved(true);
     setTimeout(() => setSaved(false), 1200);
+  }
+
+  const [deleting, setDeleting]               = useState(false);
+  const [deleteError, setDeleteError]         = useState<string | null>(null);
+  const [deleteScheduled, setDeleteScheduled] = useState(false);
+  const [deleteStep, setDeleteStep]           = useState<"idle"|"confirm"|"choose"|"done">("idle");
+
+  async function startDeleteFlow() {
+    setDeleteStep("confirm");
+    setDeleteError(null);
+  }
+
+  async function executeDelete(forfeitAccess: boolean) {
+    if (deleting) return; // prevent double submission
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      // Require fresh authentication before calling the server
+      const fbAuth = await getFirebaseAuth();
+      const user   = fbAuth?.currentUser;
+      if (!user) throw new Error("You must be signed in to delete your account.");
+
+      // Force token refresh to ensure auth_time is recent enough for the server check
+      // The server independently validates auth_time via verifyFreshToken()
+      await user.getIdToken(/* forceRefresh= */ false);
+
+      const result = await billing.deleteAccount(forfeitAccess);
+
+      if (result.mode === "scheduled" || result.alreadyScheduled) {
+        setDeleteScheduled(true);
+        setDeleteStep("done");
+      } else {
+        // Immediate deletion — clear local data and redirect
+        localStorage.clear();
+        window.location.href = "/welcome";
+      }
+    } catch (e) {
+      if (e instanceof StaleAuthError) {
+        setDeleteError(
+          "For your security, please sign out and sign in again before deleting your account.",
+        );
+      } else {
+        setDeleteError(
+          e instanceof Error ? e.message : "Could not delete account. Please try again.",
+        );
+      }
+      setDeleteStep("idle");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   function resetApp() {
@@ -485,6 +539,75 @@ function Settings() {
         >
           <RotateCcw className="h-4 w-4" /> Reset app data
         </button>
+
+        {/* ── Delete Account ──────────────────────────────────────── */}
+        {p.onboarded && (
+          <div className="mt-6 space-y-3">
+            {deleteStep === "idle" && (
+              <button
+                onClick={startDeleteFlow}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-destructive/50 py-3 text-sm font-medium text-destructive"
+              >
+                <Trash2 className="h-4 w-4" /> Delete account
+              </button>
+            )}
+
+            {deleteStep === "confirm" && (
+              <div className="rounded-2xl border border-destructive/40 bg-destructive/5 p-4 text-sm">
+                <div className="flex items-start gap-2 font-semibold text-destructive">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  Delete your Aeruvo account?
+                </div>
+                <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-foreground/75">
+                  <li>Your preferences, saved outfits and notification settings are deleted immediately.</li>
+                  <li>If you have an active subscription, it will be cancelled and your account deleted when the paid period ends — you keep access until then.</li>
+                  <li>Billing and consent records are retained as required by law.</li>
+                  <li>This action cannot be undone.</li>
+                </ul>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => setDeleteStep("idle")}
+                    className="flex-1 rounded-xl border border-border py-2 text-xs font-semibold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => executeDelete(false)}
+                    disabled={deleting}
+                    className="flex-1 rounded-xl bg-destructive py-2 text-xs font-semibold text-white disabled:opacity-60"
+                  >
+                    {deleting ? "Deleting…" : "Confirm delete"}
+                  </button>
+                </div>
+                {!entitlement.loading && entitlement.active && (
+                  <button
+                    onClick={() => executeDelete(true)}
+                    disabled={deleting}
+                    className="mt-2 w-full rounded-xl border border-destructive/40 py-2 text-xs font-medium text-destructive disabled:opacity-60"
+                  >
+                    {deleting ? "Deleting…" : "Delete immediately and forfeit remaining access"}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {deleteStep === "done" && deleteScheduled && (
+              <div className="rounded-2xl border border-border bg-card/60 p-4 text-sm text-foreground/80">
+                <p className="font-medium">Deletion scheduled.</p>
+                <p className="mt-1 text-xs">
+                  Your account will be deleted when your current subscription period ends.
+                  No further charges will be made. You may continue using Premium features until then.
+                </p>
+              </div>
+            )}
+
+            {deleteError && (
+              <p className="rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {deleteError}
+              </p>
+            )}
+          </div>
+        )}
       </Section>
 
       <div

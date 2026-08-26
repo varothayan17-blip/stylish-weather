@@ -1,7 +1,12 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { useEntitlement } from "@/lib/entitlement";
-import { billing } from "@/lib/billing";
+import { billing, AlreadySubscribedError } from "@/lib/billing";
+import {
+  CURRENT_TERMS_VERSION,
+  CURRENT_PRIVACY_VERSION,
+  SUBSCRIPTION_DISCLOSURE,
+} from "@/lib/policyVersions";
 import { getErrorMessage } from "@/lib/utils";
 import { useState } from "react";
 import { Sparkles, Check, Shirt, Bell, BarChart3, Settings } from "lucide-react";
@@ -50,9 +55,13 @@ function fmt(ms: number) {
 
 function Premium() {
   const entitlement = useEntitlement();
-  const [activating, setActivating]     = useState(false);
-  const [portalLoading, setPortalLoading] = useState(false);
-  const [error, setError]               = useState<string | null>(null);
+  const [activating, setActivating]           = useState(false);
+  const [portalLoading, setPortalLoading]     = useState(false);
+  const [error, setError]                     = useState<string | null>(null);
+  // Set true when the server returns 409 — distinct from generic errors.
+  const [alreadySubscribed, setAlreadySubscribed] = useState(false);
+  // Consent checkbox: must be ticked before checkout is enabled.
+  const [consentAccepted, setConsentAccepted]     = useState(false);
 
   const isActive = !entitlement.loading && entitlement.active;
   const ent = !entitlement.loading && entitlement.active ? entitlement.entitlement : null;
@@ -68,11 +77,17 @@ function Premium() {
   async function startCheckout() {
     setActivating(true);
     setError(null);
+    setAlreadySubscribed(false);
     try {
       const email = loadPrefs().email ?? "";
-      await billing.startCheckout(email);
+      await billing.startCheckout(email, CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION);
     } catch (e) {
-      setError(getErrorMessage(e, "Couldn't start checkout"));
+      if (e instanceof AlreadySubscribedError) {
+        // 409: server confirmed existing subscription — show Manage prompt.
+        setAlreadySubscribed(true);
+      } else {
+        setError(getErrorMessage(e, "Couldn't start checkout"));
+      }
     } finally {
       setActivating(false);
     }
@@ -208,13 +223,52 @@ function Premium() {
             ))}
           </ul>
 
-          <button
-            onClick={startCheckout}
-            disabled={activating || entitlement.loading}
-            className="mt-7 w-full rounded-2xl bg-foreground py-4 text-sm font-semibold text-background transition-transform active:scale-[0.98] disabled:cursor-default disabled:opacity-60"
-          >
-            {checkoutButtonLabel}
-          </button>
+          {/* 409: already subscribed — targeted message instead of generic error */}
+          {alreadySubscribed && (
+            <div className="mt-6 rounded-2xl border border-border bg-card p-4 text-sm">
+              <p className="font-medium text-foreground">
+                You already have an active subscription.
+              </p>
+              <button
+                onClick={openPortal}
+                disabled={portalLoading}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-border py-2.5 text-sm font-semibold transition-transform active:scale-[0.98] disabled:opacity-60"
+              >
+                {portalLoading ? "Opening…" : "Manage subscription"}
+              </button>
+            </div>
+          )}
+
+          {!alreadySubscribed && (
+            <div className="mt-6 space-y-4">
+              {/* ── Recurring-payment disclosure + consent ─────────────────── */}
+              <div className="rounded-2xl border border-border bg-card/60 p-4 text-xs leading-relaxed text-foreground/75">
+                <label className="flex gap-3">
+                  <input
+                    type="checkbox"
+                    checked={consentAccepted}
+                    onChange={(e) => setConsentAccepted(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded accent-primary"
+                    aria-label="Accept subscription terms"
+                  />
+                  <span>
+                    {SUBSCRIPTION_DISCLOSURE}{" "}
+                    By checking this box you confirm you have read and agree to the{" "}
+                    <Link to="/terms" className="text-primary underline underline-offset-2">Terms of Service</Link>
+                    {" "}and{" "}
+                    <Link to="/privacy" className="text-primary underline underline-offset-2">Privacy Policy</Link>.
+                  </span>
+                </label>
+              </div>
+              <button
+                onClick={startCheckout}
+                disabled={activating || entitlement.loading || !consentAccepted}
+                className="w-full rounded-2xl bg-foreground py-4 text-sm font-semibold text-background transition-transform active:scale-[0.98] disabled:cursor-default disabled:opacity-60"
+              >
+                {checkoutButtonLabel}
+              </button>
+            </div>
+          )}
 
           <p className="mt-4 text-center text-[10px] leading-relaxed text-muted-foreground/60">
             Secure checkout via Stripe. No credit card charged during trial.

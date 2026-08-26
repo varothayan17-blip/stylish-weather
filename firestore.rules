@@ -157,14 +157,48 @@ service cloud.firestore {
         && notifPrefsBackendFieldsUntouched(incoming, existing);
     }
 
+    // isValidFavorite validates saved outfit documents.
+    //
+    // v2 documents include both:
+    //   slots — structured FavSlot[] (authoritative, written by v2+ clients)
+    //   items — string[] derived from slots (legacy compatibility)
+    // v1 legacy documents include items only.
+    //
+    // Both shapes are accepted for backward compatibility.
+    // Required fields: id, title, tempC, condition, savedAt (always present).
+    // At least one of slots or items must be present.
+    // String fields are capped to prevent abuse.
     function isValidFavorite(data) {
-      return data.keys().hasAll(['id', 'title', 'items', 'tempC', 'condition', 'savedAt'])
+      // Firestore Rules CEL has no if/return — this is a single boolean expression.
+      // All conditions are composed with && and ||.
+
+      // Core required fields and their types/sizes
+      let hasCore =
+        data.keys().hasAll(['id', 'title', 'tempC', 'condition', 'savedAt'])
         && data.id is string
+        && data.id.size() > 0
+        && data.id.size() <= 128
         && data.title is string
-        && data.items is list
+        && data.title.size() <= 256
         && data.tempC is number
         && data.condition is string
+        && data.condition.size() <= 128
         && data.savedAt is number;
+
+      // Allowed top-level keys (no unexpected fields)
+      let allowedKeys = ['id', 'title', 'slots', 'items', 'tempC', 'condition', 'savedAt'];
+      let keysOk = data.keys().hasOnly(allowedKeys);
+
+      // At least one of slots or items must be present as a list
+      let hasSlots = ('slots' in data) && data.slots is list;
+      let hasItems = ('items' in data) && data.items is list;
+      let hasSlotOrItem = hasSlots || hasItems;
+
+      // Size limits: slots ≤ 20, items ≤ 20
+      let slotsOk = !hasSlots || data.slots.size() <= 20;
+      let itemsOk = !hasItems || data.items.size() <= 20;
+
+      return hasCore && keysOk && hasSlotOrItem && slotsOk && itemsOk;
     }
 
     // ── users/{uid} — profile document ────────────────────────────────────
@@ -298,6 +332,31 @@ service cloud.firestore {
         allow write: if false;  // Admin SDK only
       }
 
+      // ── users/{uid}/checkout/{docId} ─────────────────────────────────
+      // Server-controlled checkout session lease (state machine).
+      // Written by Admin SDK only — never by the client.
+      match /checkout/{docId} {
+        allow read:  if false;  // Admin SDK only
+        allow write: if false;  // Admin SDK only
+      }
+
+      // ── users/{uid}/consentRecords/{sessionId} ───────────────────────
+      // Checkout consent records — retained for legal hold period.
+      // Written by Admin SDK only. Client cannot read, write, or delete.
+      match /consentRecords/{docId} {
+        allow read:  if false;  // Admin SDK only
+        allow write: if false;  // Admin SDK only
+      }
+
+      // ── users/{uid}/pendingDeletion/{docId} ───────────────────────────
+      // Scheduled account deletion marker.
+      // Written by Admin SDK only. Client cannot read, write, or delete.
+      // The webhook reads this to complete scheduled deletions.
+      match /pendingDeletion/{docId} {
+        allow read:  if false;  // Admin SDK only
+        allow write: if false;  // Admin SDK only
+      }
+
       // ── users/{uid}/notificationEvents/{eventId} ─────────────────────
       // Deduplication + audit log for sent rain reminders.
       // Written exclusively by the Cloud Function via Admin SDK (which
@@ -339,10 +398,22 @@ service cloud.firestore {
       }
     }
 
-    // ── Deny everything else ───────────────────────────────────────────────
+    // ── deletionJobs/{jobId} ─────────────────────────────────────────────
+    // Admin-only deletion job records. Live at the Firestore root (not
+    // under users/{uid}) so they survive deletion of the user document tree
+    // and are accessible via Admin SDK even after Firebase Auth is deleted.
+    // Contains: job state, uid, timestamps, failed-collection list.
+    // No client read or write is permitted.
+    match /deletionJobs/{jobId} {
+      allow read:  if false;  // Admin SDK only
+      allow write: if false;  // Admin SDK only
+    }
+
+    // ── Deny everything else ─────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
     }
 
   }
+
 }

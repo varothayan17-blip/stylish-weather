@@ -61,6 +61,8 @@ export default {
         "/api/create-portal-session",
         "/api/stripe-webhook",
         "/api/wardrobe/scan",
+        "/api/delete-account",
+        "/api/reconcile-deletion",
       ]);
       if (apiPaths.has(pathname)) {
         // Reject all non-POST methods explicitly — prevents information disclosure
@@ -84,6 +86,14 @@ export default {
         if (pathname === "/api/wardrobe/scan") {
           const { handleWardrobeScan } = await getWardrobeHandlers();
           return await handleWardrobeScan(request);
+        }
+        if (pathname === "/api/delete-account") {
+          const { handleDeleteAccount } = await import("./lib/account-deletion-handler");
+          return await handleDeleteAccount(request);
+        }
+        if (pathname === "/api/reconcile-deletion") {
+          const { handleReconcileDeletion } = await import("./lib/account-deletion-handler");
+          return await handleReconcileDeletion(request);
         }
       }
 
