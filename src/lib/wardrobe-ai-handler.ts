@@ -1,57 +1,185 @@
 /**
  * wardrobe-ai-handler.ts — Server-only Wardrobe AI scan handler.
  *
- * IMPORTED ONLY FROM src/server.ts.
- * Must NEVER be imported from client-side code.
+ * IMPORTED ONLY FROM src/server.ts. Must NEVER be imported from client-side code.
  *
  * Route: POST /api/wardrobe/scan
  *
- * Security:
- *   1. Verify Firebase ID token (uid from token, never from body)
- *   2. Enforce image size limit (MAX_IMAGE_BYTES)
- *   3. Enforce accepted MIME types
- *   4. Check/increment quota via Firestore transaction (Admin SDK)
- *   5. Call Gemini with base64 image
- *   6. Validate structured JSON response
- *   7. Return sanitized result — no AI internals leaked
+ * ── QUOTA MODEL ───────────────────────────────────────────────────────────────
  *
- * Env vars required (server-only, NEVER VITE_*):
- *   GEMINI_API_KEY          — Gemini API key
- *   GEMINI_WARDROBE_MODEL   — model name (default: gemini-3.7-flash)
+ * Free accounts:
+ *   FREE_LIFETIME_LIMIT  = 3 successful scans, total, for the life of the account.
+ *   Failed scans (all provider attempts exhausted) do NOT consume the allowance.
+ *   Recommendations using already-scanned items consume zero scans.
  *
- * Privacy:
+ * Premium / active trial accounts:
+ *   PREMIUM_DAILY_LIMIT      = 15 successful scans per UTC day.
+ *   PREMIUM_ROLLING_30_LIMIT = 100 successful scans per rolling 30-day window.
+ *   Both limits are enforced independently (the stricter limit takes effect).
+ *   Free lifetime allowance is separate and unaffected by Premium scans.
+ *   cancel_at_period_end: Premium limits apply until entitlement.active becomes false.
+ *   Transition back to Free: remaining Free lifetime allowance resumes.
+ *
+ * Reserve-before-call:
+ *   Both counters are pre-incremented inside a Firestore transaction before calling
+ *   Gemini. Concurrent requests see the updated count and are rejected if at the
+ *   limit. On total provider failure, both counters are refunded atomically.
+ *   Retries within a single user scan request do NOT consume additional allowance.
+ *
+ * ── FAIL-CLOSED PRODUCTION CHECK ─────────────────────────────────────────────
+ *
+ *   GEMINI_SERVICE_TIER=paid   must be set in production (server-only, never VITE_*).
+ *   If absent or not "paid", scanning is disabled with a clear configuration error.
+ *   This prevents accidental use of a Free-tier key in production with personal data.
+ *
+ * ── PRIVACY ───────────────────────────────────────────────────────────────────
+ *
  *   Image bytes are NOT persisted after analysis.
- *   No image data, tokens, or API keys are logged.
+ *   No image data, prompts, garment descriptions, email, name, Firebase ID token,
+ *   or API key are written to logs.
+ *   Token usage metadata IS logged for cost and quota monitoring (safe operational data).
+ *
+ * ── ENV VARS (server-only, NEVER VITE_*) ─────────────────────────────────────
+ *
+ *   GEMINI_API_KEY           — Gemini API key (Paid project key in production)
+ *   GEMINI_WARDROBE_MODEL    — model name (default: gemini-3.6-flash)
+ *   GEMINI_SERVICE_TIER      — must be "paid" in production
+ *   (Quota limits are policy-locked constants, not env-var overrides in production)
  */
 
 import { verifyFirebaseToken, verifyEntitlementServer, getAdminDb, ApiError, apiErrorResponse } from "./stripe-server";
+import {
+  POLICY_FREE_LIFETIME_SCANS,
+  POLICY_PREMIUM_DAILY_SCANS,
+  POLICY_PREMIUM_ROLLING_SCANS,
+  POLICY_ROLLING_WINDOW_DAYS,
+} from "./policyVersions";
 import { FieldValue } from "firebase-admin/firestore";
 import type { ClothingAnalysis, ScanResponse } from "./wardrobe-types";
 
-// ── Configuration ─────────────────────────────────────────────────────────────
+// ── Configuration constants ───────────────────────────────────────────────────
 
-const MAX_IMAGE_BYTES     = 8 * 1024 * 1024; // 8 MB after client compression
-const FREE_LIFETIME_LIMIT = 3;
-const PREMIUM_DAILY_LIMIT = parseInt(process.env.PREMIUM_WARDROBE_SCANS_PER_DAY ?? "20", 10);
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB after client compression
+
+// ── Policy-locked quota constants ────────────────────────────────────────────
+//
+// These values are the customer-facing promises in the Terms of Service.
+// They MUST match the POLICY_* constants in policyVersions.ts.
+// Production startup asserts the match — divergence is a configuration error.
+// There are no runtime environment overrides in production.
+// Development may use WARDROBE_QUOTA_DEV_OVERRIDE=true to lower limits for testing.
+
+/** Free accounts: 3 successful scans for the life of the account. */
+const FREE_LIFETIME_LIMIT = POLICY_FREE_LIFETIME_SCANS;
+
+/** Premium / active trial: successful scans per UTC calendar day. */
+const PREMIUM_DAILY_LIMIT = POLICY_PREMIUM_DAILY_SCANS;
+
+/** Premium / active trial: successful scans per rolling 30-day window. */
+const PREMIUM_ROLLING_30_LIMIT = POLICY_PREMIUM_ROLLING_SCANS;
+
+/** Rolling window duration in milliseconds (30 full days). */
+const ROLLING_WINDOW_MS = POLICY_ROLLING_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+
+/**
+ * Assert that runtime quota values match the customer-facing policy constants.
+ * Called once at startup. Prevents silent Terms-vs-code divergence in production.
+ */
+function assertQuotaMatchesPolicy(): void {
+  const isProd = process.env.NODE_ENV === "production";
+  if (!isProd) return; // dev/test may use adjusted values
+  const mismatches: string[] = [];
+  if (FREE_LIFETIME_LIMIT    !== POLICY_FREE_LIFETIME_SCANS)   mismatches.push(`FREE_LIFETIME: code=${FREE_LIFETIME_LIMIT} policy=${POLICY_FREE_LIFETIME_SCANS}`);
+  if (PREMIUM_DAILY_LIMIT    !== POLICY_PREMIUM_DAILY_SCANS)   mismatches.push(`DAILY: code=${PREMIUM_DAILY_LIMIT} policy=${POLICY_PREMIUM_DAILY_SCANS}`);
+  if (PREMIUM_ROLLING_30_LIMIT !== POLICY_PREMIUM_ROLLING_SCANS) mismatches.push(`ROLLING: code=${PREMIUM_ROLLING_30_LIMIT} policy=${POLICY_PREMIUM_ROLLING_SCANS}`);
+  if (mismatches.length > 0) {
+    throw new Error(
+      "FATAL: Quota constants do not match customer-facing policy. " +
+      "Terms of Service would be inaccurate. Fix before deploying. " +
+      mismatches.join("; ")
+    );
+  }
+}
 
 // Retry configuration for Gemini API calls.
-// Retryable: transient server errors. Non-retryable: 400/401/403/415.
-const GEMINI_RETRYABLE          = new Set([429, 500, 502, 503, 504]);
-const GEMINI_MAX_ATTEMPTS       = 2;       // 1 initial + 1 retry
-const GEMINI_TOTAL_DEADLINE_MS  = 50_000;  // overall budget across all attempts
-const GEMINI_ATTEMPT_TIMEOUT_MS = 22_000;  // per-attempt; 2×22+jitter ≤ 50 s
+const GEMINI_RETRYABLE         = new Set([429, 500, 502, 503, 504]);
+const GEMINI_MAX_ATTEMPTS      = 2;
+const GEMINI_TOTAL_DEADLINE_MS = 50_000;
 
 const ACCEPTED_MIME = new Set([
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif",
+  "image/jpeg", "image/jpg", "image/png",
+  "image/webp", "image/heic", "image/heif",
 ]);
 
+// ── Production feature flag ──────────────────────────────────────────────────
+
+/**
+ * WARDROBE_AI_SCANNING_ENABLED=false disables scanning completely.
+ * No quota reservation and no Gemini call occur.
+ *
+ * This is the primary on/off switch for AI scanning, independent of the
+ * Paid-tier check. Set to "false" while the feature is under review.
+ * When "true" (or unset in dev), the Paid-tier check runs next.
+ *
+ * Returns a stable error code so the client can show a friendly message
+ * rather than a generic crash: "wardrobe_scanning_temporarily_unavailable".
+ */
+function assertScanningEnabled(): void {
+  const enabled = process.env.WARDROBE_AI_SCANNING_ENABLED;
+  // Treat missing as "true" in development so local dev works without extra config.
+  // In production, an explicit "true" is required (fail-closed).
+  const isProd = process.env.NODE_ENV === "production";
+  if (isProd && enabled !== "true") {
+    throw new ApiError(
+      503,
+      "Wardrobe scanning is temporarily unavailable while we improve it. " +
+      "You can still add clothing manually.",
+      "wardrobe_scanning_temporarily_unavailable",
+    );
+  }
+  if (!isProd && enabled === "false") {
+    throw new ApiError(
+      503,
+      "Wardrobe scanning is temporarily unavailable while we improve it. " +
+      "You can still add clothing manually.",
+      "wardrobe_scanning_temporarily_unavailable",
+    );
+  }
+}
+
+// ── Fail-closed Paid-tier check ───────────────────────────────────────────────
+
+/**
+ * Verifies that scanning is configured for a Paid Gemini project.
+ * Only reached when WARDROBE_AI_SCANNING_ENABLED=true.
+ *
+ * In production, GEMINI_SERVICE_TIER must be "paid".
+ * Never infer Paid status from the API key text.
+ */
+function assertPaidServiceConfigured(): void {
+  const tier   = process.env.GEMINI_SERVICE_TIER;
+  const isProd = process.env.NODE_ENV === "production";
+
+  if (isProd && tier !== "paid") {
+    throw new ApiError(
+      503,
+      "Wardrobe scanning is not available. " +
+      "GEMINI_SERVICE_TIER=paid must be set in production. " +
+      "Contact support if this is unexpected.",
+    );
+  }
+  if (!isProd && !tier) {
+    throw new ApiError(
+      503,
+      "Wardrobe scanning requires GEMINI_SERVICE_TIER to be configured. " +
+      "Set GEMINI_SERVICE_TIER=development for local testing. " +
+      "Personal data must not be submitted to Unpaid Services.",
+    );
+  }
+}
+
 function getGeminiModel(): string {
-  return process.env.GEMINI_WARDROBE_MODEL ?? "gemini-3.7-flash";
+  return process.env.GEMINI_WARDROBE_MODEL ?? "gemini-3.6-flash";
 }
 
 function getGeminiKey(): string {
@@ -60,127 +188,344 @@ function getGeminiKey(): string {
   return k;
 }
 
-// ── Quota helpers (Admin SDK — server only) ───────────────────────────────────
+// ── Quota schema ──────────────────────────────────────────────────────────────
 
+/**
+ * Firestore document: users/{uid}/quotas/wardrobeAi
+ *
+ * MIGRATION: legacy documents may be missing rolling30Count / rolling30StartMs.
+ * All reads default to 0 for missing fields — safe migration.
+ *
+ * lifetimeFreeScans — count of successful Free scans after all refunds are
+ *   applied. May be decremented by a refund when the Free window is still active
+ *   (Free has no reset window, so refund applies whenever it occurs).
+ */
 type QuotaData = {
-  lifetimeFreeScans: number;
-  scansToday: number;
-  resetDate: string;  // "YYYY-MM-DD" UTC
-  lastScanAt: number;
-  updatedAt: number;
+  lifetimeFreeScans:  number;
+  scansToday:         number;
+  resetDate:          string;   // "YYYY-MM-DD" UTC
+  rolling30Count:     number;
+  rolling30StartMs:   number;   // epoch ms
+  lastScanAt:         number;
+  updatedAt:          number;
 };
+
+/**
+ * Reservation record: users/{uid}/quotaReservations/{reservationId}
+ *
+ * Written by reserveQuota before calling Gemini. Used by refundQuota to
+ * apply the refund only to the window that was reserved — not the current
+ * window if a day or rolling boundary crossed between reservation and refund.
+ *
+ * STATUS lifecycle:
+ *   "reserved"  → created before Gemini call
+ *   "succeeded" → Gemini succeeded; finalised idempotently
+ *   "refunded"  → Gemini failed; counters refunded idempotently
+ *
+ * Cleanup: documents in terminal states ("succeeded", "refunded") may be
+ * deleted after 7 days by a background Admin task. They are never deleted
+ * by the client. "reserved" documents older than 5 minutes can be treated
+ * as stale (the request crashed before Gemini could succeed or fail).
+ *
+ * What is NOT stored: image bytes, prompts, garment descriptions, API keys.
+ */
+type ReservationStatus = "reserved" | "succeeded" | "refunded";
+
+type QuotaReservationRecord = {
+  reservationId:     string;   // UUID, also the Firestore doc ID
+  uid:               string;
+  isPremium:         boolean;
+  reservedDate:      string;   // "YYYY-MM-DD" UTC at time of reservation
+  reservedRolling30StartMs: number | null;  // rolling window start at reservation
+  reservedFree:      boolean;  // true if Free lifetime counter was incremented
+  reservedDaily:     boolean;  // true if daily counter was incremented
+  reservedRolling:   boolean;  // true if rolling counter was incremented
+  status:            ReservationStatus;
+  createdAt:         number;   // ms epoch
+  finalizedAt:       number | null;
+};
+
+function reservationPath(uid: string, id: string) {
+  return `users/${uid}/quotaReservations/${id}`;
+}
 
 function todayUTC(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/**
- * QUOTA DESIGN — reserve-then-refund pattern
- *
- * WHY reserve before Gemini:
- *   If we increment after Gemini, two parallel requests from the same user can
- *   both read lifetimeFreeScans=2 (below the 3 limit), both call Gemini, then
- *   both increment — using 2 scans where only 1 is allowed. The transaction
- *   reserve blocks this: the second concurrent request sees the updated count
- *   and is rejected with 429.
- *
- * WHY refund on AI failure:
- *   Gemini timeouts, 5xx errors, or unvalidatable responses are not the user's
- *   fault. refundQuota() atomically decrements after any such failure so the
- *   user does not lose a free scan.
- *
- * CRASH TRADEOFF:
- *   If the Vercel function crashes (OOM, hard timeout) after reserveQuota()
- *   but before refundQuota() runs, the counter is left incremented and no
- *   refund occurs. This is unavoidable in any reserve/refund design.
- *   The exposure is bounded: at most 1 lost scan per crash event.
- */
-
 type QuotaReservation = {
-  remainingFreeScans: number | null;
-  isPremium: boolean;
+  reservationId:       string;
+  isPremium:           boolean;
+  remainingFreeScans:  number | null;  // null for premium
+  remainingDaily:      number | null;  // null for free
+  remaining30Day:      number | null;  // null for free
+  dailyResetAt:        string | null;  // "YYYY-MM-DD" of next UTC midnight
+  rolling30ResetMs:    number | null;  // epoch ms when 30-day window resets
 };
 
 /**
- * Atomically check quota and reserve (pre-increment) one scan.
- * Parallel requests are blocked at the limit by the transaction.
+ * Atomically reserve one scan against all applicable limits.
+ * Writes a QuotaReservationRecord with a server-generated ID.
+ * The record captures the exact window parameters at reservation time so that
+ * refundQuota can safely refund the correct window even if a day or rolling
+ * boundary has since expired.
  */
 async function reserveQuota(
   uid: string,
   isPremium: boolean,
 ): Promise<QuotaReservation> {
-  const db  = getAdminDb();
-  const ref = db.doc(`users/${uid}/quotas/wardrobeAi`);
+  const db    = getAdminDb();
+  const ref   = db.doc(`users/${uid}/quotas/wardrobeAi`);
   const today = todayUTC();
+  const nowMs = Date.now();
+  const reservationId = crypto.randomUUID();
 
-  return db.runTransaction(async (tx) => {
+  const result = await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    const data = (snap.data() ?? {}) as Partial<QuotaData>;
+    const raw  = (snap.data() ?? {}) as Partial<QuotaData>;
 
-    const lifetimeFree = data.lifetimeFreeScans ?? 0;
-    const scansToday   = data.resetDate === today ? (data.scansToday ?? 0) : 0;
+    // Daily: reset if today has changed
+    const scansToday = raw.resetDate === today ? (raw.scansToday ?? 0) : 0;
+
+    // Rolling 30-day: default start = now if missing (fresh window for legacy docs)
+    const rolling30Start  = raw.rolling30StartMs ?? nowMs;
+    const windowExpiredMs = rolling30Start + ROLLING_WINDOW_MS;
+    const windowExpired   = nowMs >= windowExpiredMs;
+    const rolling30Count  = windowExpired ? 0 : (raw.rolling30Count ?? 0);
+    const rolling30StartMs = windowExpired ? nowMs : rolling30Start;
 
     if (isPremium) {
       if (scansToday >= PREMIUM_DAILY_LIMIT) {
-        throw new ApiError(429, `Daily scan limit reached. Try again tomorrow.`);
+        throw new ApiError(429,
+          `Daily scan limit reached (${PREMIUM_DAILY_LIMIT} per day). ` +
+          `Resets at midnight UTC.`);
       }
+      if (rolling30Count >= PREMIUM_ROLLING_30_LIMIT) {
+        const resetDate = new Date(rolling30StartMs + ROLLING_WINDOW_MS).toISOString().slice(0, 10);
+        throw new ApiError(429,
+          `Scan limit reached (${PREMIUM_ROLLING_30_LIMIT} per 30 days). ` +
+          `Resets on ${resetDate}.`);
+      }
+
       tx.set(ref, {
-        lifetimeFreeScans: lifetimeFree,
-        scansToday: scansToday + 1,
-        resetDate: today,
-        lastScanAt: Date.now(),
-        updatedAt: FieldValue.serverTimestamp(),
+        lifetimeFreeScans:  raw.lifetimeFreeScans ?? 0,
+        scansToday:          scansToday + 1,
+        resetDate:           today,
+        rolling30Count:      rolling30Count + 1,
+        rolling30StartMs,
+        lastScanAt:          nowMs,
+        updatedAt:           FieldValue.serverTimestamp() as unknown as number,
       }, { merge: true });
-      return { remainingFreeScans: null, isPremium: true };
+
+      return {
+        reservationId,
+        isPremium:          true,
+        remainingFreeScans: null,
+        remainingDaily:     PREMIUM_DAILY_LIMIT - (scansToday + 1),
+        remaining30Day:     PREMIUM_ROLLING_30_LIMIT - (rolling30Count + 1),
+        dailyResetAt:       today,
+        rolling30ResetMs:   rolling30StartMs + ROLLING_WINDOW_MS,
+        // Window info for safe refund
+        _reservedDate:      today,
+        _reservedRolling30StartMs: rolling30StartMs,
+      } as QuotaReservation & { _reservedDate: string; _reservedRolling30StartMs: number };
+
     } else {
+      const lifetimeFree = raw.lifetimeFreeScans ?? 0;
       if (lifetimeFree >= FREE_LIFETIME_LIMIT) {
-        throw new ApiError(429, `Free scan limit reached. Upgrade to Premium for more scans.`);
+        throw new ApiError(429,
+          `Free scan limit reached (${FREE_LIFETIME_LIMIT} lifetime). ` +
+          `Upgrade to Premium for more scans.`);
       }
-      const remaining = FREE_LIFETIME_LIMIT - lifetimeFree - 1;
+
       tx.set(ref, {
         lifetimeFreeScans: lifetimeFree + 1,
-        scansToday: scansToday + 1,
-        resetDate: today,
-        lastScanAt: Date.now(),
-        updatedAt: FieldValue.serverTimestamp(),
+        scansToday:         scansToday + 1,
+        resetDate:          today,
+        rolling30Count:     raw.rolling30Count ?? 0,
+        rolling30StartMs:   rolling30StartMs,
+        lastScanAt:         nowMs,
+        updatedAt:          FieldValue.serverTimestamp() as unknown as number,
       }, { merge: true });
-      return { remainingFreeScans: remaining, isPremium: false };
+
+      return {
+        reservationId,
+        isPremium:          false,
+        remainingFreeScans: FREE_LIFETIME_LIMIT - (lifetimeFree + 1),
+        remainingDaily:     null,
+        remaining30Day:     null,
+        dailyResetAt:       null,
+        rolling30ResetMs:   null,
+        _reservedDate:      today,
+        _reservedRolling30StartMs: null,
+      } as QuotaReservation & { _reservedDate: string; _reservedRolling30StartMs: number | null };
     }
   });
+
+  // Write the reservation record (outside the quota transaction so the quota
+  // transaction is not blocked by this additional write).
+  const extended = result as QuotaReservation & {
+    _reservedDate: string;
+    _reservedRolling30StartMs: number | null;
+  };
+  const record: QuotaReservationRecord = {
+    reservationId,
+    uid,
+    isPremium,
+    reservedDate:              extended._reservedDate,
+    reservedRolling30StartMs:  extended._reservedRolling30StartMs ?? null,
+    reservedFree:              !isPremium,
+    reservedDaily:             isPremium,
+    reservedRolling:           isPremium,
+    status:                    "reserved",
+    createdAt:                 nowMs,
+    finalizedAt:               null,
+  };
+  await getAdminDb().doc(reservationPath(uid, reservationId)).set(record);
+
+  return result;
 }
 
 /**
- * Refund one reserved scan on Gemini/validation failure.
- * Best-effort: if this call itself fails, the scan is not refunded
- * (bounded to 1 lost scan per incident — same as a crash scenario).
+ * Finalize the reservation as succeeded (Gemini returned a valid result).
+ * Idempotent: safe to call multiple times; only the first call takes effect.
  */
-async function refundQuota(uid: string, isPremium: boolean): Promise<void> {
+async function finalizeQuotaSuccess(uid: string, reservationId: string): Promise<void> {
   try {
-    const db  = getAdminDb();
-    const ref = db.doc(`users/${uid}/quotas/wardrobeAi`);
-    await db.runTransaction(async (tx) => {
+    const ref = getAdminDb().doc(reservationPath(uid, reservationId));
+    await getAdminDb().runTransaction(async (tx) => {
       const snap = await tx.get(ref);
-      const data = (snap.data() ?? {}) as Partial<QuotaData>;
-      const today = todayUTC();
-      const scansToday = data.resetDate === today ? (data.scansToday ?? 0) : 0;
-      const updates: Partial<QuotaData> = {
-        scansToday: Math.max(0, scansToday - 1),
-        updatedAt:  Date.now(),
-      };
-      if (!isPremium) {
-        updates.lifetimeFreeScans = Math.max(0, (data.lifetimeFreeScans ?? 0) - 1);
-      }
-      tx.set(ref, updates, { merge: true });
+      if (!snap.exists) return;
+      const rec = snap.data() as QuotaReservationRecord;
+      if (rec.status !== "reserved") return; // already finalized
+      tx.update(ref, { status: "succeeded", finalizedAt: Date.now() });
     });
-  } catch (refundErr) {
-    const safe = refundErr instanceof Error
-      ? { name: refundErr.name, message: refundErr.message }
-      : { message: String(refundErr) };
+  } catch (e) {
+    // Non-fatal: reservation record failure does not affect the scan result
+    const safe = e instanceof Error ? e.message : String(e);
+    console.error("[wardrobe-ai] reservation finalize-success failed:", safe);
+  }
+}
+
+/**
+ * Refund the quota reservation after total provider failure.
+ * Window-safe: only decrements the counter for the exact window that was reserved.
+ * If a UTC day or rolling window boundary has passed since reservation, the
+ * current counter has already reset — nothing to decrement.
+ * Idempotent: only the first call performs the decrement (status guard).
+ */
+async function refundQuota(uid: string, reservationId: string): Promise<void> {
+  try {
+    const db     = getAdminDb();
+    const recRef = db.doc(reservationPath(uid, reservationId));
+    const quotaRef = db.doc(`users/${uid}/quotas/wardrobeAi`);
+    const today  = todayUTC();
+    const nowMs  = Date.now();
+
+    await db.runTransaction(async (tx) => {
+      // Read both reservation record and current quota atomically
+      const [recSnap, quotaSnap] = await Promise.all([tx.get(recRef), tx.get(quotaRef)]);
+
+      if (!recSnap.exists) return; // reservation lost — best-effort, nothing to do
+      const rec = recSnap.data() as QuotaReservationRecord;
+      if (rec.status !== "reserved") return; // already succeeded or refunded — idempotent
+
+      const raw = (quotaSnap.data() ?? {}) as Partial<QuotaData>;
+
+      const updates: Partial<QuotaData> = { updatedAt: nowMs };
+
+      if (!rec.isPremium && rec.reservedFree) {
+        // Free lifetime counter: refund always (no reset window)
+        updates.lifetimeFreeScans = Math.max(0, (raw.lifetimeFreeScans ?? 0) - 1);
+      }
+
+      if (rec.isPremium && rec.reservedDaily) {
+        // Daily counter: only refund if the reserved day is still current
+        const currentDate  = raw.resetDate ?? today;
+        const scansToday   = currentDate === today ? (raw.scansToday ?? 0) : 0;
+        if (rec.reservedDate === today) {
+          updates.scansToday = Math.max(0, scansToday - 1);
+        }
+        // If rec.reservedDate !== today: the day has rolled over; the current
+        // scansToday counter has already reset to 0. No decrement needed.
+      }
+
+      if (rec.isPremium && rec.reservedRolling && rec.reservedRolling30StartMs !== null) {
+        // Rolling counter: only refund if the reserved window is still active
+        const currentWindowStart = raw.rolling30StartMs ?? 0;
+        if (currentWindowStart === rec.reservedRolling30StartMs) {
+          updates.rolling30Count = Math.max(0, (raw.rolling30Count ?? 0) - 1);
+        }
+        // If window has rotated: rolling30StartMs has changed; current counter
+        // counts from the new window start. No decrement needed.
+      }
+
+      tx.set(quotaRef, updates, { merge: true });
+      tx.update(recRef, { status: "refunded", finalizedAt: nowMs });
+    });
+  } catch (e) {
+    const safe = e instanceof Error ? { name: e.name, message: e.message } : {};
     console.error("[wardrobe-ai] quota refund failed:", safe);
   }
 }
 
-// ── Gemini structured-output prompt ──────────────────────────────────────────
+// ── Token-usage telemetry ─────────────────────────────────────────────────────
+
+/**
+ * Safe telemetry record for a Gemini call.
+ * Contains ONLY numeric/categorical operational metadata — no PII, no content.
+ */
+type GeminiTelemetry = {
+  model:          string;
+  inputTokens:    number;
+  outputTokens:   number;
+  thinkingTokens: number;
+  totalTokens:    number;
+  retryOccurred:  boolean;
+  success:        boolean;
+  timestampMs:    number;
+};
+
+function emitTelemetry(t: GeminiTelemetry): void {
+  try {
+    // Log only safe operational data — no prompt text, image bytes, or user identifiers.
+    console.info("[wardrobe-ai-telemetry]", JSON.stringify({
+      model:          t.model,
+      inputTokens:    t.inputTokens,
+      outputTokens:   t.outputTokens,
+      thinkingTokens: t.thinkingTokens,
+      totalTokens:    t.totalTokens,
+      retryOccurred:  t.retryOccurred,
+      success:        t.success,
+      timestampMs:    t.timestampMs,
+    }));
+  } catch {
+    // Telemetry failures must never break a successful scan.
+  }
+}
+
+// ── Scanner provider interface ───────────────────────────────────────────────
+
+/**
+ * WardrobeScanProvider — decouples the quota/UI layer from the AI provider.
+ *
+ * Gemini is the current implementation. This interface allows a future
+ * teen-compatible provider (self-hosted model, different API) to be swapped
+ * in without rewriting quota reservation, response validation, or client UI.
+ *
+ * A provider receives only the already-base64-encoded image and its MIME type.
+ * It must return a ClothingAnalysis (already validated) and usage telemetry.
+ * The provider MUST NOT log image bytes, prompts, or garment descriptions.
+ */
+interface WardrobeScanProvider {
+  readonly name: string;
+  analyze(
+    base64Image: string,
+    mimeType:    string,
+  ): Promise<{ analysis: ClothingAnalysis; retryOccurred: boolean }>;
+}
+
+// ── Gemini system prompt ──────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are a clothing analysis assistant for a weather-aware wardrobe app called Aeruvo.
 
@@ -221,20 +566,26 @@ Return this exact JSON schema:
     "waterResistance": number (0.0-1.0),
     "style": number (0.0-1.0)
   },
-  "evidence": "string (optional: one short sentence about what you can see, e.g. 'Looks like a medium-weight cotton hoodie with a kangaroo pocket.' Max 120 chars.)"
+  "evidence": "string (optional: one short sentence about what you can see. Max 120 chars.)"
 }`;
 
 // ── Gemini API call ───────────────────────────────────────────────────────────
 
+class GeminiHttpError extends Error {
+  constructor(public readonly geminiStatus: number, message: string) {
+    super(message);
+    this.name = "GeminiHttpError";
+  }
+}
+
 async function callGemini(
   base64Image: string,
-  mimeType: string,
-  attempt = 1,
-): Promise<ClothingAnalysis> {
+  mimeType:    string,
+  attempt:     number,
+): Promise<{ analysis: ClothingAnalysis; telemetry: Omit<GeminiTelemetry, "retryOccurred" | "success"> }> {
   const model  = getGeminiModel();
   const apiKey = getGeminiKey();
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const url    = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const body = {
     contents: [{
@@ -242,7 +593,7 @@ async function callGemini(
         {
           inline_data: {
             mime_type: mimeType === "image/heic" || mimeType === "image/heif"
-              ? "image/jpeg" // Gemini treats HEIC as JPEG after browser decode
+              ? "image/jpeg"
               : mimeType,
             data: base64Image,
           },
@@ -251,173 +602,162 @@ async function callGemini(
       ],
     }],
     generationConfig: {
-      // temperature is not supported by gemini-3.7-flash thinking models.
-      // 512 output tokens is ample for our JSON schema (~350 tokens typical).
-      maxOutputTokens: 512,
+      maxOutputTokens:  512,
       responseMimeType: "application/json",
-      // thinkingConfig belongs INSIDE generationConfig for the Gemini REST API
-      // (v1beta generateContent). Placing it at the top level of the request
-      // body causes: "Unknown name thinkingConfig: Cannot find field" (HTTP 400).
-      // thinkingBudget=512 → fast structured classification (~3-8 s) vs the
-      // default extended thinking that caused 20-40 s timeouts.
-      thinkingConfig: {
-        thinkingBudget: 512,
-      },
+      thinkingConfig:   { thinkingBudget: 512 },
     },
   };
 
   const controller = new AbortController();
-  // 50 s: gemini-3.7-flash with thinkingBudget=512 can take 20–40 s for images.
-  // Vercel hobby functions run up to 60 s; 50 s leaves a safe buffer.
   const timeout    = setTimeout(() => controller.abort(), 50_000);
-  const t0 = Date.now();
+  const t0         = Date.now();
 
-  // Safe log: model name only — no key, no image bytes, no token
-  console.info(`[wardrobe-ai] attempt=${attempt} model=${model} thinkingBudget=512 maxOutputTokens=512`);
+  // Log only model + attempt number — no key, no image, no prompt content
+  console.info(`[wardrobe-ai] attempt=${attempt} model=${model}`);
 
   let res: Response;
   try {
     res = await fetch(url, {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
+      body:    JSON.stringify(body),
+      signal:  controller.signal,
     });
   } catch (err) {
     clearTimeout(timeout);
-    const elapsed = Date.now() - t0;
-    const msg = err instanceof Error ? err.message : String(err);
-    const timedOut = msg.includes("aborted");
+    const elapsed   = Date.now() - t0;
+    const msg       = err instanceof Error ? err.message : String(err);
+    const timedOut  = msg.includes("aborted");
     console.error(`[wardrobe-ai] fetch failed elapsed=${elapsed}ms timedOut=${timedOut}`);
     if (timedOut) throw new ApiError(504, "AI analysis timed out. Please try again.");
     throw new ApiError(502, "AI service temporarily unavailable.");
   }
   clearTimeout(timeout);
-
   const elapsed = Date.now() - t0;
+
   if (!res.ok) {
-    // Read the error body for diagnostics.
-    // We log only safe structural fields — never the API key, token, or image.
-    let errCode: string | undefined;
-    let errMessage: string | undefined;
-    let errDetails: string | undefined;
+    let errCode = "", errMessage = "";
     try {
-      const errBody = await res.json() as {
-        error?: {
-          code?: number;
-          message?: string;
-          status?: string;
-          details?: Array<{ "@type"?: string; fieldViolations?: Array<{ field?: string; description?: string }> }>;
-        };
-      };
-      errCode    = String(errBody?.error?.code    ?? "");
-      errMessage = String(errBody?.error?.message ?? "").slice(0, 300); // cap length
-      errDetails = JSON.stringify(
-        (errBody?.error?.details ?? []).map(d => ({
-          type:            d["@type"],
-          fieldViolations: (d.fieldViolations ?? []).map(v => ({
-            field:       v.field,
-            description: v.description,
-          })),
-        }))
-      ).slice(0, 500); // cap length
-    } catch {
-      errMessage = "<could not parse error body>";
-    }
-    // Safe log: Google error code/message/field violations only.
-    // No API key, no UID, no image bytes, no Firebase token.
-    console.error(
-      `[wardrobe-ai] attempt=${attempt} Gemini HTTP error status=${res.status} elapsed=${elapsed}ms` +
-      ` errCode=${errCode} errMessage=${errMessage} details=${errDetails}`
-    );
-    // Throw GeminiHttpError so callGeminiWithRetry can inspect the status.
+      const errBody = await res.json() as { error?: { code?: number; message?: string } };
+      errCode    = String(errBody?.error?.code ?? "");
+      errMessage = String(errBody?.error?.message ?? "").slice(0, 200);
+    } catch { errMessage = "<unreadable>"; }
+    // Log only HTTP status and Google error code — no key, no image, no PII
+    console.error(`[wardrobe-ai] attempt=${attempt} status=${res.status} elapsed=${elapsed}ms errCode=${errCode} errMessage=${errMessage}`);
     throw new GeminiHttpError(res.status, `Gemini ${res.status}`);
   }
-  console.info(`[wardrobe-ai] Gemini responded status=${res.status} elapsed=${elapsed}ms`);
+
+  console.info(`[wardrobe-ai] status=${res.status} elapsed=${elapsed}ms`);
 
   const json = await res.json() as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    usageMetadata?: {
+      promptTokenCount?:    number;
+      candidatesTokenCount?: number;
+      thoughtsTokenCount?:  number;
+      totalTokenCount?:     number;
+    };
   };
+
+  // Extract usage metadata for telemetry — purely numeric, no content
+  const usage          = json.usageMetadata ?? {};
+  const inputTokens    = usage.promptTokenCount     ?? 0;
+  const outputTokens   = usage.candidatesTokenCount ?? 0;
+  const thinkingTokens = usage.thoughtsTokenCount   ?? 0;
+  const totalTokens    = usage.totalTokenCount       ?? (inputTokens + outputTokens + thinkingTokens);
 
   const text = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   if (!text) {
-    console.error("[wardrobe-ai] Gemini returned empty text in candidates");
+    console.error("[wardrobe-ai] Gemini returned empty text");
     throw new ApiError(502, "AI returned an empty response. Please try again.");
   }
 
-  // Log output length only — never the content (could contain user clothing details)
+  // Log output length only — never the content
   console.info(`[wardrobe-ai] validating response length=${text.length}`);
-  const result = validateAnalysis(text);
-  console.info(`[wardrobe-ai] validation ok category=${result.category}`);
-  return result;
+  const analysis = validateAnalysis(text);
+  console.info(`[wardrobe-ai] validation ok category=${analysis.category}`);
+
+  return {
+    analysis,
+    telemetry: {
+      model,
+      inputTokens,
+      outputTokens,
+      thinkingTokens,
+      totalTokens,
+      timestampMs: Date.now(),
+    },
+  };
 }
 
-// ── Retry wrapper ────────────────────────────────────────────────────────────
+// ── Retry wrapper ─────────────────────────────────────────────────────────────
 
-/** Thrown by callGemini on a Gemini HTTP error so the retry wrapper can inspect the status. */
-class GeminiHttpError extends Error {
-  constructor(public readonly geminiStatus: number, message: string) {
-    super(message);
-    this.name = "GeminiHttpError";
-  }
-}
+/** Gemini implementation of WardrobeScanProvider. */
+const geminiProvider: WardrobeScanProvider = {
+  name: "gemini",
+  async analyze(base64Image, mimeType) {
+    return callGeminiWithRetry(base64Image, mimeType);
+  },
+};
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
- * Retries callGemini up to GEMINI_MAX_ATTEMPTS for transient errors.
- *
- * RETRY POLICY:
- *   Retryable: 429, 500, 502, 503, 504 (transient Gemini failures)
- *   Non-retryable: 400, 401, 403, and any ApiError from our validation
- *   Attempts: 2 total (1 initial + 1 retry)
- *   Total deadline: GEMINI_TOTAL_DEADLINE_MS (50 s)
- *   Backoff: 1 000 ms + 0–500 ms jitter between attempts
- *
- * Quota is reserved ONCE before this call. Refund happens in the caller
- * only after ALL attempts are exhausted — never between retry attempts.
- */
 async function callGeminiWithRetry(
   base64Image: string,
-  mimeType: string,
-): Promise<ClothingAnalysis> {
+  mimeType:    string,
+): Promise<{ analysis: ClothingAnalysis; retryOccurred: boolean }> {
   const overallDeadline = Date.now() + GEMINI_TOTAL_DEADLINE_MS;
+  let retryOccurred     = false;
+  let lastTelemetry: Omit<GeminiTelemetry, "retryOccurred" | "success"> | null = null;
 
   for (let attempt = 1; attempt <= GEMINI_MAX_ATTEMPTS; attempt++) {
     const isLast = attempt === GEMINI_MAX_ATTEMPTS;
     try {
-      return await callGemini(base64Image, mimeType, attempt);
+      const { analysis, telemetry } = await callGemini(base64Image, mimeType, attempt);
+      lastTelemetry = telemetry;
+      emitTelemetry({ ...telemetry, retryOccurred, success: true });
+      return { analysis, retryOccurred };
+
     } catch (err) {
-      // ApiError = permanent (our auth/validation errors) — never retry
-      if (err instanceof ApiError) throw err;
+      if (err instanceof ApiError) {
+        emitTelemetry({
+          model: getGeminiModel(), inputTokens: 0, outputTokens: 0,
+          thinkingTokens: 0, totalTokens: 0, timestampMs: Date.now(),
+          retryOccurred, success: false,
+        });
+        throw err;
+      }
 
       if (err instanceof GeminiHttpError) {
         const retryable = GEMINI_RETRYABLE.has(err.geminiStatus);
-        console.warn(
-          `[wardrobe-ai] attempt=${attempt} geminiStatus=${err.geminiStatus}` +
-          ` retryable=${retryable} isLast=${isLast}`
-        );
+        console.warn(`[wardrobe-ai] attempt=${attempt} geminiStatus=${err.geminiStatus} retryable=${retryable} isLast=${isLast}`);
+
         if (!retryable || isLast) {
-          if (err.geminiStatus === 429)
-            throw new ApiError(503, "AI service is busy. Please try again shortly.");
+          emitTelemetry({
+            model: getGeminiModel(), inputTokens: 0, outputTokens: 0,
+            thinkingTokens: 0, totalTokens: 0, timestampMs: Date.now(),
+            retryOccurred, success: false,
+          });
+          if (err.geminiStatus === 429) throw new ApiError(503, "AI service is busy. Please try again shortly.");
           throw new ApiError(502, "AI analysis failed. Please try another photo.");
         }
+
         const backoffMs = 1_000 + Math.floor(Math.random() * 500);
         if (Date.now() + backoffMs >= overallDeadline) {
+          emitTelemetry({
+            model: getGeminiModel(), inputTokens: 0, outputTokens: 0,
+            thinkingTokens: 0, totalTokens: 0, timestampMs: Date.now(),
+            retryOccurred, success: false,
+          });
           throw new ApiError(504, "AI analysis timed out. Please try again.");
         }
         console.info(`[wardrobe-ai] retrying in ${backoffMs}ms (attempt ${attempt}/${GEMINI_MAX_ATTEMPTS})`);
-        await sleep(backoffMs);
+        retryOccurred = true;
+        await new Promise(r => setTimeout(r, backoffMs));
         continue;
       }
 
-      // Unexpected non-Gemini error (network failure) — not retryable
       throw err;
     }
   }
-  // Unreachable — loop always returns or throws
   throw new ApiError(502, "AI analysis failed. Please try another photo.");
 }
 
@@ -436,12 +776,10 @@ function clamp(n: unknown, lo: number, hi: number): number {
   if (isNaN(v)) return lo;
   return Math.max(lo, Math.min(hi, v));
 }
-
 function arrStr(v: unknown): string[] {
   if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string").slice(0, 8);
   return [];
 }
-
 function str(v: unknown, fallback: string): string {
   return typeof v === "string" && v.trim() ? v.trim().slice(0, 120) : fallback;
 }
@@ -449,51 +787,35 @@ function str(v: unknown, fallback: string): string {
 function validateAnalysis(raw: string): ClothingAnalysis {
   let parsed: Record<string, unknown>;
   try {
-    // Strip any accidental markdown fences
     const clean = raw.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
     parsed = JSON.parse(clean);
   } catch {
     throw new ApiError(502, "AI returned an unreadable response. Please try another photo.");
   }
 
-  const category  = VALID_CATEGORIES.has(String(parsed.category))  ? String(parsed.category) as ClothingAnalysis["category"]  : "other";
-  const pattern   = VALID_PATTERNS.has(String(parsed.pattern))      ? String(parsed.pattern)  as ClothingAnalysis["pattern"]   : "solid";
-  const layerRole = VALID_LAYER_ROLES.has(String(parsed.layerRole)) ? String(parsed.layerRole) as ClothingAnalysis["layerRole"] : "standalone";
+  const category  = VALID_CATEGORIES.has(String(parsed.category))   ? String(parsed.category)  as ClothingAnalysis["category"]  : "other";
+  const pattern   = VALID_PATTERNS.has(String(parsed.pattern))       ? String(parsed.pattern)   as ClothingAnalysis["pattern"]   : "solid";
+  const layerRole = VALID_LAYER_ROLES.has(String(parsed.layerRole))  ? String(parsed.layerRole) as ClothingAnalysis["layerRole"] : "standalone";
   const waterRes  = VALID_WATER_RES.has(String(parsed.waterResistance)) ? String(parsed.waterResistance) as ClothingAnalysis["waterResistance"] : "unknown";
   const windProt  = VALID_WIND_PROT.has(String(parsed.windProtection))  ? String(parsed.windProtection)  as ClothingAnalysis["windProtection"]  : "unknown";
-  const fitEst    = VALID_FIT.has(String(parsed.fitEstimate))            ? String(parsed.fitEstimate)      as ClothingAnalysis["fitEstimate"]      : "unknown";
-
+  const fitEst    = VALID_FIT.has(String(parsed.fitEstimate))           ? String(parsed.fitEstimate)      as ClothingAnalysis["fitEstimate"]      : "unknown";
   const rawWarmth = (parsed.warmth ?? {}) as Record<string, unknown>;
   const warmthScore = clamp(rawWarmth.score, 1, 5);
-  const warmthLabel = VALID_WARMTH_LBLS.has(String(rawWarmth.label))
-    ? String(rawWarmth.label) as ClothingAnalysis["warmth"]["label"]
-    : "medium";
-
+  const warmthLabel = VALID_WARMTH_LBLS.has(String(rawWarmth.label)) ? String(rawWarmth.label) as ClothingAnalysis["warmth"]["label"] : "medium";
   const rawConf = (parsed.confidence ?? {}) as Record<string, unknown>;
 
   return {
-    name:             str(parsed.name, "Clothing item"),
-    category,
-    subcategory:      str(parsed.subcategory, ""),
-    primaryColor:     str(parsed.primaryColor, "Unknown"),
-    secondaryColors:  arrStr(parsed.secondaryColors),
-    pattern,
-    materialEstimate: arrStr(parsed.materialEstimate),
-    layerRole,
+    name: str(parsed.name, "Clothing item"), category, subcategory: str(parsed.subcategory, ""),
+    primaryColor: str(parsed.primaryColor, "Unknown"), secondaryColors: arrStr(parsed.secondaryColors),
+    pattern, materialEstimate: arrStr(parsed.materialEstimate), layerRole,
     warmth: { score: warmthScore, label: warmthLabel },
-    waterResistance: waterRes,
-    windProtection:  windProt,
-    weatherFit:      arrStr(parsed.weatherFit),
-    styles:          arrStr(parsed.styles),
-    seasons:         arrStr(parsed.seasons),
-    fitEstimate:     fitEst,
+    waterResistance: waterRes, windProtection: windProt,
+    weatherFit: arrStr(parsed.weatherFit), styles: arrStr(parsed.styles), seasons: arrStr(parsed.seasons),
+    fitEstimate: fitEst,
     confidence: {
-      category:        clamp(rawConf.category,        0, 1),
-      color:           clamp(rawConf.color,           0, 1),
-      material:        clamp(rawConf.material,        0, 1),
-      warmth:          clamp(rawConf.warmth,          0, 1),
-      waterResistance: clamp(rawConf.waterResistance, 0, 1),
-      style:           clamp(rawConf.style,           0, 1),
+      category: clamp(rawConf.category, 0, 1), color: clamp(rawConf.color, 0, 1),
+      material: clamp(rawConf.material, 0, 1), warmth: clamp(rawConf.warmth, 0, 1),
+      waterResistance: clamp(rawConf.waterResistance, 0, 1), style: clamp(rawConf.style, 0, 1),
     },
     evidence: typeof parsed.evidence === "string" ? parsed.evidence.slice(0, 120) : undefined,
   };
@@ -503,55 +825,61 @@ function validateAnalysis(raw: string): ClothingAnalysis {
 
 export async function handleWardrobeScan(request: Request): Promise<Response> {
   try {
+    // 0a. Feature flag: scanning must be explicitly enabled in production
+    assertScanningEnabled();
+    // 0b. Fail-closed: Gemini project tier check (only runs when scanning is enabled)
+    assertPaidServiceConfigured();
+    assertQuotaMatchesPolicy();
+
     // 1. Verify Firebase Auth — uid is ALWAYS from the verified token
     const uid = await verifyFirebaseToken(request);
 
     // 2. Read raw body with size guard
     const contentLength = parseInt(request.headers.get("content-length") ?? "0", 10);
-    if (contentLength > MAX_IMAGE_BYTES) {
-      throw new ApiError(413, "Image too large. Please use a smaller photo.");
-    }
+    if (contentLength > MAX_IMAGE_BYTES) throw new ApiError(413, "Image too large. Please use a smaller photo.");
 
     let bodyBuffer: ArrayBuffer;
-    try {
-      bodyBuffer = await request.arrayBuffer();
-    } catch {
-      throw new ApiError(400, "Could not read request body.");
-    }
-    if (bodyBuffer.byteLength > MAX_IMAGE_BYTES) {
-      throw new ApiError(413, "Image too large. Please use a smaller photo.");
-    }
+    try { bodyBuffer = await request.arrayBuffer(); }
+    catch { throw new ApiError(400, "Could not read request body."); }
+    if (bodyBuffer.byteLength > MAX_IMAGE_BYTES) throw new ApiError(413, "Image too large. Please use a smaller photo.");
 
     // 3. Validate content type
     const contentType = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-    if (!ACCEPTED_MIME.has(contentType)) {
-      throw new ApiError(415, "Unsupported image type. Please use JPEG, PNG, or WebP.");
-    }
+    if (!ACCEPTED_MIME.has(contentType)) throw new ApiError(415, "Unsupported image type. Please use JPEG, PNG, or WebP.");
 
-    // 4. Check entitlement + atomically reserve quota
-    //    Increment BEFORE Gemini so parallel requests cannot bypass the limit.
-    //    On Gemini failure, refundQuota() reverses the increment.
+    // 4. Check entitlement + atomically reserve quota (both daily and rolling for premium)
     const entitlement = await verifyEntitlementServer(uid);
     const isPremium   = entitlement.active;
     const reservation = await reserveQuota(uid, isPremium);
 
-    // 5. Convert to base64 (no logging of image bytes)
+    // 5. Convert to base64 (never logged)
     const base64 = Buffer.from(bodyBuffer).toString("base64");
 
-    // 6. Call Gemini — refund quota on any provider/validation failure
-    let analysis: import("./wardrobe-types").ClothingAnalysis;
+    // 6. Call the scan provider — refund reservation on total provider failure
+    const provider = geminiProvider; // swap here to use a different provider
+    let analysis: ClothingAnalysis;
     try {
-      analysis = await callGeminiWithRetry(base64, contentType);
+      const result = await provider.analyze(base64, contentType);
+      analysis = result.analysis;
+      // Finalize reservation as succeeded (idempotent)
+      await finalizeQuotaSuccess(uid, reservation.reservationId);
     } catch (aiErr) {
-      await refundQuota(uid, isPremium);
+      await refundQuota(uid, reservation.reservationId);
       throw aiErr;
     }
 
-    // 7. Return sanitized result — never includes raw AI response
+    // 7. Return sanitized result
     const response: ScanResponse = {
       ok: true,
       analysis,
       remainingFreeScans: reservation.remainingFreeScans,
+      // Pass quota info for the UI to display
+      quota: {
+        isPremium,
+        remainingDaily:   reservation.remainingDaily,
+        remaining30Day:   reservation.remaining30Day,
+        rolling30ResetMs: reservation.rolling30ResetMs,
+      },
     };
 
     return new Response(JSON.stringify(response), {
@@ -561,12 +889,12 @@ export async function handleWardrobeScan(request: Request): Promise<Response> {
 
   } catch (err) {
     const response: ScanResponse = {
-      ok: false,
+      ok:    false,
       error: err instanceof ApiError ? err.message : "Something went wrong. Please try again.",
       code:  err instanceof ApiError ? mapStatusToCode(err.status) : "server",
     };
     return new Response(JSON.stringify(response), {
-      status: err instanceof ApiError ? err.status : 500,
+      status:  err instanceof ApiError ? err.status : 500,
       headers: { "Content-Type": "application/json" },
     });
   }

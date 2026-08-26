@@ -113,11 +113,20 @@ export type ClothingAnalysis = {
 
 // ── Scan API request/response ─────────────────────────────────────────────────
 
+export type ScanQuotaInfo = {
+  isPremium:        boolean;
+  remainingDaily:   number | null;   // null for free users
+  remaining30Day:   number | null;   // null for free users
+  rolling30ResetMs: number | null;   // epoch ms; null for free users
+};
+
 export type ScanSuccessResponse = {
   ok: true;
   analysis: ClothingAnalysis;
   /** Remaining free scans (null = unlimited / premium) */
   remainingFreeScans: number | null;
+  /** Quota information for display */
+  quota?: ScanQuotaInfo;
 };
 
 export type ScanErrorResponse = {
@@ -132,9 +141,11 @@ export type ScanResponse = ScanSuccessResponse | ScanErrorResponse;
 // ── Scan state machine (client) ───────────────────────────────────────────────
 
 export type ScanStep =
-  | "pick"        // initial: no image chosen
-  | "preview"     // image selected, waiting for user to confirm
-  | "compressing" // client-side compression in progress
-  | "analyzing"   // server AI call in flight
-  | "confirm"     // analysis complete, confirmation form
-  | "error";      // any unrecoverable error
+  | "status-check"    // checking /api/wardrobe/status on sheet open
+  | "scan-unavailable"// status returned false — show friendly message
+  | "pick"            // initial: no image chosen
+  | "preview"         // image selected, waiting for user to confirm
+  | "compressing"     // client-side compression in progress
+  | "analyzing"       // server AI call in flight
+  | "confirm"         // analysis complete, confirmation form
+  | "error";          // any unrecoverable error

@@ -37,3 +37,15 @@ export const SUBSCRIPTION_CURRENCY = "CAD" as const;
 
 /** Trial duration in days (server-authoritative). */
 export const SUBSCRIPTION_TRIAL_DAYS = 7 as const;
+
+
+/**
+ * Policy-enforced quota limits. These values are the customer-facing promises
+ * in the Terms of Service and must match exactly what the server enforces.
+ * Do not override these in production — Terms must not silently disagree.
+ */
+export const POLICY_FREE_LIFETIME_SCANS    = 3   as const;
+export const POLICY_PREMIUM_DAILY_SCANS    = 15  as const;
+export const POLICY_PREMIUM_ROLLING_SCANS  = 100 as const;
+export const POLICY_ROLLING_WINDOW_DAYS    = 30  as const;
+

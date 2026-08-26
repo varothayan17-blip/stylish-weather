@@ -357,6 +357,16 @@ service cloud.firestore {
         allow write: if false;  // Admin SDK only
       }
 
+
+      // ── users/{uid}/quotaReservations/{reservationId} ────────────────
+      // Server-generated scan quota reservation records.
+      // Admin SDK only. Contains: reservation metadata and status.
+      // Never contains image bytes, prompts, garment results or API keys.
+      match /quotaReservations/{reservationId} {
+        allow read:  if false;  // Admin SDK only
+        allow write: if false;  // Admin SDK only
+      }
+
       // ── users/{uid}/notificationEvents/{eventId} ─────────────────────
       // Deduplication + audit log for sent rain reminders.
       // Written exclusively by the Cloud Function via Admin SDK (which

@@ -80,8 +80,9 @@ function Privacy() {
           </Section>
 
           <Section title="Minimum age">
-            Aeruvo is not intended for users under 14 years of age. We do not knowingly collect
-            personal information from users under 14. If you believe a child under 14 has
+            Aeruvo is intended for users aged 13 and older, subject to applicable local consent
+            requirements. We do not knowingly collect personal information from children
+            under 13. If you believe a person under 13 has
             submitted data, contact us at{" "}
             <a href={`mailto:${APP_CONFIG.privacyEmail}`}
                className="text-primary underline underline-offset-2">
@@ -165,16 +166,24 @@ function Privacy() {
               confirming this from your specific tier's current terms.
             */}
             <p className="mt-2">
-              Images submitted for analysis are sent to Google and handled in accordance
-              with the{" "}
+              Aeruvo uses the Google Gemini API under a <strong>Paid Services</strong> account.
+              Under Google's Paid Services terms:
+            </p>
+            <ul className="mt-2 list-inside list-disc space-y-1 pl-2">
+              <li>Clothing images and the analysis prompt are sent to Google Gemini for processing.</li>
+              <li>Aeruvo does not retain the uploaded image after analysis is complete.</li>
+              <li>Google states that, under Paid Services, prompts, uploaded files and responses are not used to improve Google products.</li>
+              <li>Google may log prompts and responses for a limited period for abuse prevention, safety, and required legal or regulatory disclosures.</li>
+              <li>Data may be processed in countries where Google or its agents maintain infrastructure.</li>
+              <li>Numeric usage metadata (token counts, model name, success/failure) may be retained by Aeruvo for cost, quota, security and operational monitoring.</li>
+            </ul>
+            <p className="mt-2">
+              For the authoritative terms applicable to this service, refer to the{" "}
               <a href="https://ai.google.dev/gemini-api/terms"
                  target="_blank" rel="noopener noreferrer"
                  className="text-primary underline underline-offset-2">
-                Google Gemini API Terms of Service
-              </a>
-              {" "}applicable to your account type. Aeruvo does not retain images after the
-              analysis is complete. For information about how Google handles submitted data,
-              including retention and use for product improvement, refer to Google's terms.
+                Gemini API Additional Terms of Service
+              </a>.
             </p>
           </Section>
 

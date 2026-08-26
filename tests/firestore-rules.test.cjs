@@ -224,6 +224,7 @@ async function run() {
   const consentRef   = dbA.collection("users").doc("uid-alice").collection("consentRecords").doc("cs_test");
   const pendingRef   = dbA.collection("users").doc("uid-alice").collection("pendingDeletion").doc("request");
   const deletionJob  = dbA.collection("deletionJobs").doc("job-test");
+  const reservRef    = dbA.collection("users").doc("uid-alice").collection("quotaReservations").doc("res-1");
 
   await deny("Client cannot read checkout/pending",    checkoutRef.get());
   await deny("Client cannot write checkout/pending",   checkoutRef.set({
@@ -242,7 +243,20 @@ async function run() {
   await deny("Bob cannot read Alice's pendingDeletion",
     dbB.collection("users").doc("uid-alice").collection("pendingDeletion").doc("request").get());
 
+  // ── 5. Quota reservation paths ────────────────────────────────────────────
+  console.log("\n── 5. Quota reservations ─────────────────────────────────");
+  await deny("Client cannot read quotaReservations", reservRef.get());
+  await deny("Client cannot write quotaReservations", reservRef.set({
+    reservationId: "res-1", uid: "uid-alice", isPremium: false,
+    reservedDate: "2026-08-26", reservedRolling30StartMs: null,
+    reservedFree: true, reservedDaily: false, reservedRolling: false,
+    status: "reserved", createdAt: Date.now(), finalizedAt: null,
+  }));
+  await deny("Bob cannot read Alice's quotaReservations",
+    dbB.collection("users").doc("uid-alice").collection("quotaReservations").doc("res-1").get());
+
   await env.cleanup();
+
 
   console.log(`\n${pass + fail} tests: ${pass} passed, ${fail} failed`);
   process.exit(fail > 0 ? 1 : 0);

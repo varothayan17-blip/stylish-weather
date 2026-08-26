@@ -78,6 +78,24 @@ async function compressImage(file: File): Promise<{ blob: Blob; objectUrl: strin
   });
 }
 
+// ── Wardrobe scanning status ─────────────────────────────────────────────────
+
+/**
+ * Check whether AI wardrobe scanning is currently enabled.
+ * Returns false on any error (fail-closed — avoids camera prompt when uncertain).
+ * Result is cached per sheet session via the ref in the component.
+ */
+async function fetchScanningStatus(): Promise<boolean> {
+  try {
+    const res  = await fetch("/api/wardrobe/status");
+    if (!res.ok) return false;
+    const data = await res.json() as { scanningEnabled?: boolean };
+    return data.scanningEnabled === true;
+  } catch {
+    return false; // network failure → treat as unavailable
+  }
+}
+
 // ── AI scan API call ───────────────────────────────────────────────────────
 
 async function scanWithAI(blob: Blob): Promise<ClothingAnalysis> {
@@ -101,8 +119,9 @@ async function scanWithAI(blob: Blob): Promise<ClothingAnalysis> {
 
   if (!data.ok) {
     const msg = data.error ?? "Analysis failed. Please try another photo.";
-    // Surface quota errors clearly
     if (data.code === "quota") throw Object.assign(new Error(msg), { code: "quota" });
+    if (data.code === "wardrobe_scanning_temporarily_unavailable")
+      throw Object.assign(new Error(msg), { code: "wardrobe_scanning_temporarily_unavailable" });
     throw new Error(msg);
   }
 
@@ -195,7 +214,12 @@ export function AddClothingSheet({
   const [analysis, setAnalysis]     = useState<ClothingAnalysis | null>(null);
   const [draft, setDraft]           = useState<Omit<WardrobeItem, "id"> | null>(null);
   const [error, setError]           = useState<string | null>(null);
-  const [isQuotaError, setIsQuotaError] = useState(false);
+  const [isQuotaError, setIsQuotaError]               = useState(false);
+
+  // Scanning availability — checked once per sheet session on open.
+  // null = not checked yet, true/false = result.
+  // Cached so repeated open/close cycles do not re-fetch in the same session.
+  const scanEnabledRef = useRef<boolean | null>(null);
 
   // Hidden file inputs — one for camera, one for library
   const cameraInputRef  = useRef<HTMLInputElement>(null);
@@ -217,8 +241,32 @@ export function AddClothingSheet({
       setError(null);
       setIsQuotaError(false);
       setImageBlob(null);
+      scanEnabledRef.current = null; // reset per-session cache
       if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Check scanning availability when the sheet opens.
+  // Shows a status-check step briefly, then either pick (enabled) or
+  // scan-unavailable (disabled/error). Camera inputs are never opened
+  // during the check. Result is cached for the session.
+  useEffect(() => {
+    if (!open) return;
+    if (scanEnabledRef.current !== null) {
+      // Already checked this session — jump straight to the right step
+      if (step === "status-check")
+        setStep(scanEnabledRef.current ? "pick" : "scan-unavailable");
+      return;
+    }
+    setStep("status-check");
+    let cancelled = false;
+    fetchScanningStatus().then((enabled) => {
+      if (cancelled) return;
+      scanEnabledRef.current = enabled;
+      setStep(enabled ? "pick" : "scan-unavailable");
+    });
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -276,8 +324,12 @@ export function AddClothingSheet({
       setDraft(analysisToItem(result));
       setStep("confirm");
     } catch (err) {
+      const errCode = err instanceof Error && "code" in err ? (err as { code?: string }).code : undefined;
       const msg = err instanceof Error ? err.message : "Analysis failed.";
-      const isQuota = err instanceof Error && "code" in err && (err as { code?: string }).code === "quota";
+      const isQuota = errCode === "quota";
+      // wardrobe_scanning_temporarily_unavailable: show the friendly message;
+      // no mention of 18+, adult content, or feature specifics.
+      // isQuota stays false so the UI shows the error text rather than an upgrade prompt.
       setError(msg);
       setIsQuotaError(isQuota);
       setStep("error");
@@ -297,6 +349,8 @@ export function AddClothingSheet({
 
   // ── Title by step ─────────────────────────────────────────────────────
   const title =
+    step === "status-check"     ? "Add clothing" :
+    step === "scan-unavailable" ? "Add clothing" :
     step === "confirm"    ? "Confirm item" :
     step === "analyzing" || step === "compressing" ? "Analyzing…" :
     step === "error"      ? "Try another photo" :
@@ -347,6 +401,44 @@ export function AddClothingSheet({
         </div>
 
         {/* ── PICK ─────────────────────────────────────────────────── */}
+        {/* ── STATUS CHECK ───────────────────────────────────────── */}
+        {step === "status-check" && (
+          <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-foreground" />
+            <p className="text-sm">Checking availability…</p>
+          </div>
+        )}
+
+        {/* ── SCAN UNAVAILABLE ────────────────────────────────────── */}
+        {step === "scan-unavailable" && (
+          <div className="flex flex-col gap-4">
+            <div className="glass-card rounded-[1.75rem] px-6 py-8 text-center">
+              <AlertCircle className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+              <p className="font-semibold">Scanning temporarily unavailable</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Wardrobe scanning is temporarily unavailable while we improve it.
+                You can still add clothing manually.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                // Skip to the confirm form with an empty draft for manual entry
+                setDraft({
+                  name: "", category: "Tops" as const, type: "",
+                  color: "", warmth: "Medium" as const, style: "Casual" as const,
+                  weatherFit: "", waterResistance: "Low" as const,
+                  season: "", tint: "", labels: [],
+                });
+                setAnalysis(null);
+                setStep("confirm");
+              }}
+              className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background"
+            >
+              Add manually
+            </button>
+          </div>
+        )}
+
         {step === "pick" && (
           <div>
             <div className="glass-card flex flex-col items-center gap-3 rounded-[1.75rem] px-6 py-10 text-center">

@@ -61,10 +61,20 @@ export default {
         "/api/create-portal-session",
         "/api/stripe-webhook",
         "/api/wardrobe/scan",
+        "/api/wardrobe/status",
         "/api/delete-account",
         "/api/reconcile-deletion",
       ]);
       if (apiPaths.has(pathname)) {
+        // GET /api/wardrobe/status — read-only scanning availability flag
+        // Must be handled before the POST-only guard below.
+        if (pathname === "/api/wardrobe/status" && request.method === "GET") {
+          const enabled = process.env.WARDROBE_AI_SCANNING_ENABLED === "true";
+          return new Response(JSON.stringify({ scanningEnabled: enabled }), {
+            status:  200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         // Reject all non-POST methods explicitly — prevents information disclosure
         // via falling through to TanStack Start router for wrong-method requests.
         if (request.method !== "POST") {

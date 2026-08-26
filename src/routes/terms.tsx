@@ -61,9 +61,14 @@ function Terms() {
               By using Aeruvo you agree to these Terms. If you do not agree, do not use the app.
             </p>
             <p className="mt-2">
-              <strong>Minimum age:</strong> You must be at least 14 years old to create an account.
-              If you are under the age of majority in your jurisdiction, you must have a parent or
-              guardian review these Terms and authorize any paid subscription on your behalf.
+              <strong>Minimum age:</strong> You must be at least 13 years old to create an account, subject
+              to applicable local consent requirements in your jurisdiction.
+            </p>
+            <p className="mt-2">
+              <strong>Paid subscriptions:</strong> If you are under the age of majority where you live,
+              your parent or legal guardian must review these Terms and authorize any paid subscription
+              on your behalf. This requirement applies to recurring Stripe purchases; it does not restrict
+              access to free weather features.
             </p>
           </Section>
 
@@ -123,7 +128,8 @@ function Terms() {
             <ul className="mt-2 list-inside list-disc space-y-1 pl-2">
               <li>Personalized wardrobe-matched outfit recommendations</li>
               <li>
-                AI wardrobe scan feature: <strong>up to 20 successful scans per calendar day</strong>,
+                AI wardrobe scan feature: <strong>up to 15 successful scans per calendar day</strong>
+                and <strong>up to 100 successful scans every 30 days</strong>,
                 subject to service availability and fair use.
               </li>
               <li>Daily rain and outfit push notifications</li>
