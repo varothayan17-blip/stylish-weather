@@ -143,6 +143,8 @@ export type ScanResponse = ScanSuccessResponse | ScanErrorResponse;
 export type ScanStep =
   | "status-check"    // checking /api/wardrobe/status on sheet open
   | "scan-unavailable"// status returned false — show friendly message
+  | "manual"          // manual entry form (no photo, no AI)
+  | "manual-success"  // manual item saved successfully
   | "pick"            // initial: no image chosen
   | "preview"         // image selected, waiting for user to confirm
   | "compressing"     // client-side compression in progress

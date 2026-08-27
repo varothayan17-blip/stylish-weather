@@ -40,6 +40,13 @@
  *   a T-shirt because the compat rule blocks it AND "shirt" is generic.
  * - COMPAT_RULES are narrow and explicit. Only clear physical incompatibilities
  *   are blocked (long-sleeve requires long-sleeve coverage).
+ * - Cross-category guard (name-bleed + type-ambiguity): when the slot's guessed
+ *   category differs from item.category AND the slot has no keyword for item.category,
+ *   both name-token and type-token matches are rejected. Compound slots (e.g.
+ *   "Fleece hoodie", "Light jacket or hoodie") pass because they contain keywords
+ *   for both categories. Uses item.category (server-controlled) only.
+ * - "sweater" COMPAT_RULE: belt-and-suspenders for sweater slots — ensures even
+ *   direct Outerwear items cannot satisfy sweater-specific slots.
  * - No style-based filtering (casual/formal) at v1.
  * - Slot deduplication: the same item will not be returned for two slots.
  * - Only the first matching item per slot is returned.
@@ -145,13 +152,24 @@ const COMPAT_RULES: CompatRule[] = [
     itemMustBeCategory: "Shoes",
     reason: "footwear slot must match Shoes category items only",
   },
+  {
+    // "Sweater" slots (Fleece sweater, Heavy sweater, Turtleneck or sweater)
+    // are Tops slots. An Outerwear fleece jacket is not a sweater substitute.
+    // The token "fleece" appears in both CATEGORY_KEYWORDS.Tops and .Outerwear,
+    // which otherwise produces a false type-hit for Outerwear on sweater slots.
+    slotRequires: ["sweater"],
+    itemExcludes: [],
+    slotCategory: "Tops",
+    itemMustBeCategory: "Tops",
+    reason: "sweater slot requires Tops category items",
+  },
 ];
 
 // Maps WardrobeCategory → slot keywords that imply that category
 const CATEGORY_KEYWORDS: Record<string, string[]> = {
   Tops:        ["shirt", "tee", "t-shirt", "polo", "blouse", "top", "sweater",
                  "hoodie", "jersey", "turtleneck", "crewneck", "pullover",
-                 "long-sleeve", "henley", "tank", "vest"],
+                 "long-sleeve", "henley", "tank", "vest", "cardigan"],
   Bottoms:     ["jeans", "pants", "chinos", "shorts", "trousers", "leggings",
                  "skirt", "denim"],
   Outerwear:   ["jacket", "coat", "parka", "puffer", "blazer", "windbreaker",
@@ -231,6 +249,29 @@ function guessCategory(slot: string): string | null {
   return bestCount > 0 ? best : null;
 }
 
+// ── Category-keyword helper ───────────────────────────────────────────────────
+
+/**
+ * Return true if the slot string contains at least one keyword from
+ * CATEGORY_KEYWORDS[category].
+ *
+ * Used by the cross-category name-bleed guard: if a slot has no keyword
+ * for the item's stored category, a pure name-token match is rejected.
+ * This uses item.category (server-controlled) — never the user-supplied name.
+ *
+ * Examples:
+ *   slotContainsCategoryKeyword("Waterproof jacket", "Shoes")     → false
+ *   slotContainsCategoryKeyword("Boots or sneakers",  "Shoes")    → true
+ *   slotContainsCategoryKeyword("Light jacket or hoodie", "Tops") → true  (hoodie)
+ *   slotContainsCategoryKeyword("Waterproof jacket", "Tops")      → false
+ */
+function slotContainsCategoryKeyword(slot: string, category: string): boolean {
+  const kws = CATEGORY_KEYWORDS[category];
+  if (!kws) return true; // unknown category → do not block
+  const lower = slot.toLowerCase();
+  return kws.some((kw) => lower.includes(kw));
+}
+
 // ── Scoring ───────────────────────────────────────────────────────────────────
 
 /**
@@ -292,6 +333,44 @@ export function scoreItem(
   if (specificTypeTokens.length === 0 && specificNameTokens.length === 0) {
     // No textual evidence of compatibility → skip this item entirely
     return 0;
+  }
+
+  // ── Cross-category guard (name-bleed and type-token ambiguity) ──────────
+  //
+  // NAME-BLEED: a user can name their item with words from a different-category
+  // slot (e.g. Shoes item named "My waterproof boots" → "waterproof" matches
+  // "Waterproof jacket" slot, scoring +35 name + +15 warmth = 50).
+  // Fix: if the ONLY evidence is a name token and the slot has no keyword for
+  // item.category, reject the match.
+  //
+  // TYPE-AMBIGUITY: some type tokens appear in CATEGORY_KEYWORDS for multiple
+  // categories (e.g. "fleece" is an Outerwear keyword). A Tops/Fleece item
+  // (type="Fleece") gets a type-token hit on "Fleece jacket" slots even though
+  // a Tops fleece pullover is not a jacket substitute.
+  // Fix: if ALL type-token hits come from tokens that carry no keyword for
+  // item.category in this slot, AND the slot's guessed category is known and
+  // different from item.category, reject. Compound slots pass because they
+  // contain keywords for both categories (e.g. "Fleece hoodie" has "hoodie"
+  // which IS a Tops keyword).
+  //
+  // Both checks use item.category (server-controlled), never item.name.
+  if (specificTypeTokens.length === 0 && specificNameTokens.length > 0) {
+    // Pure name-driven match
+    if (!slotContainsCategoryKeyword(slot, item.category)) {
+      return 0;
+    }
+  }
+
+  if (specificTypeTokens.length > 0) {
+    // Type-token hit: check whether the slot is actually for this item's category.
+    const slotGuessedCat = guessCategory(slot);
+    if (slotGuessedCat && slotGuessedCat !== item.category) {
+      // The slot guesses a different category. Only allow if the slot ALSO contains
+      // a keyword for the item's category (legitimate compound slot).
+      if (!slotContainsCategoryKeyword(slot, item.category)) {
+        return 0;
+      }
+    }
   }
 
   // ── Subcategory/type hit (+40) ────────────────────────────────────────────
