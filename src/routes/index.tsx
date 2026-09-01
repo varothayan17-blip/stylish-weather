@@ -34,6 +34,7 @@ import { getErrorMessage } from "@/lib/utils";
 import { recommend } from "@/lib/recommend";
 import { computeRegretRisk } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
+import { isGuestSetupPending } from "@/lib/introState";
 import { UMBRELLA_LABEL, UMBRELLA_LABEL_NOW, UMBRELLA_ICON, isRainNow } from "@/lib/precipAdvice";
 import { OutfitSlotList } from "@/components/OutfitSlotList";
 import {
@@ -162,7 +163,13 @@ function Home() {
     const p = loadPrefs();
     if (!p.onboarded) {
       setRedirecting(true);
-      navigate({ to: "/welcome" });
+      // Guest mid-setup: has seen intro but needs to pick a city.
+      // Send to /preferences, not /welcome, so they don't repeat the tour.
+      if (isGuestSetupPending()) {
+        navigate({ to: "/preferences" });
+      } else {
+        navigate({ to: "/welcome" });
+      }
       return;
     }
     setPrefs(p);

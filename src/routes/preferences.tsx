@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { CANADIAN_CITIES, getBrowserLocation, reverseGeocode, searchCity } from "@/lib/weather";
@@ -23,9 +23,14 @@ import {
   Check,
   Locate,
   Search,
+  ArrowRight,
   type LucideIcon,
 } from "lucide-react";
 import { Section, Grid, Choice } from "@/components/FormControls";
+import {
+  isGuestSetupPending,
+  clearGuestSetupPending,
+} from "@/lib/introState";
 
 export const Route = createFileRoute("/preferences")({
   head: () => ({
@@ -41,6 +46,7 @@ export const Route = createFileRoute("/preferences")({
 });
 
 function Preferences() {
+  const navigate = useNavigate();
   const [p, setP] = useState<Prefs>(defaultPrefs);
   const [saved, setSaved] = useState(false);
   const [q, setQ] = useState("");
@@ -49,8 +55,29 @@ function Preferences() {
   >([]);
   const [locating, setLocating] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
+
+  /**
+   * isFirstSetup: true only when a guest is mid-setup (has not yet been
+   * marked onboarded). Computed once on mount from localStorage.
+   *
+   * When true: show "Save and continue" button at the bottom.
+   *            Completing it sets onboarded=true and clears pending state.
+   * When false: existing user editing preferences — show normal behaviour
+   *             with the floating "Saved" toast only.
+   *
+   * This distinction is intentional: every visit to /preferences by an
+   * already-onboarded user must behave as normal editing, not first-time
+   * setup, to satisfy requirement 4.
+   */
+  const [isFirstSetup, setIsFirstSetup] = useState(false);
+  const [completeCityError, setCompleteCityError] = useState(false);
+
   useEffect(() => {
-    setP(loadPrefs());
+    const prefs = loadPrefs();
+    setP(prefs);
+    // Read pending state exactly once on mount.
+    // isGuestSetupPending() checks localStorage; it is safe to call here.
+    setIsFirstSetup(isGuestSetupPending());
   }, []);
 
   useEffect(() => {
@@ -59,10 +86,6 @@ function Preferences() {
       return;
     }
     const t = setTimeout(() => {
-      // Pass the saved city's country code and coordinates so the ranking
-      // algorithm can apply a same-country boost and proximity boost.
-      // countryCode comes only from a previously saved search result —
-      // never inferred from coordinates.
       searchCity(q, p.city?.countryCode, p.city?.lat, p.city?.lon)
         .then(setResults)
         .catch(() => setResults([]));
@@ -74,8 +97,14 @@ function Preferences() {
     const next = { ...p, [k]: v };
     setP(next);
     saveAndSyncPrefs(next);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1200);
+    if (!isFirstSetup) {
+      // Only show the floating toast for existing users editing preferences.
+      // First-setup users see the "Save and continue" button instead.
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1200);
+    }
+    // Clear the city error whenever the city changes
+    if (k === "city") setCompleteCityError(false);
   }
 
   async function useGps() {
@@ -92,15 +121,38 @@ function Preferences() {
     }
   }
 
+  /**
+   * Complete first-time setup.
+   *
+   * Called only when isFirstSetup === true (guest mid-setup).
+   * Requires a valid city. Sets onboarded=true, clears the pending flag,
+   * then navigates to home. No default city is silently substituted.
+   */
+  function completeSetup() {
+    if (!p.city) {
+      setCompleteCityError(true);
+      // Scroll city section into view
+      document.getElementById("city-section")?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    // Set onboarded=true now that the guest has a real city
+    const completed: Prefs = { ...p, onboarded: true };
+    savePrefs(completed);
+    clearGuestSetupPending();
+    navigate({ to: "/" });
+  }
+
   return (
     <AppShell>
       <header className="mb-6 animate-fade-up">
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-          Profile
+          {isFirstSetup ? "Almost there" : "Profile"}
         </p>
         <h1 className="mt-1 text-3xl font-semibold tracking-tight">Make it yours</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          We use this to fine-tune every recommendation.
+          {isFirstSetup
+            ? "Choose your city to get started. The other settings can be changed any time."
+            : "We use this to fine-tune every recommendation."}
         </p>
       </header>
 
@@ -168,11 +220,22 @@ function Preferences() {
         </Grid>
       </Section>
 
+      <div id="city-section">
       <Section
         delay={250}
         title="Your city"
-        subtitle="Search any city, or use GPS for pinpoint accuracy."
+        subtitle={
+          isFirstSetup
+            ? "Required — choose a city so Aeruvo can fetch your local weather."
+            : "Search any city, or use GPS for pinpoint accuracy."
+        }
       >
+        {completeCityError && (
+          <p className="mb-3 rounded-2xl bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">
+            Please choose a city before continuing.
+          </p>
+        )}
+
         <button
           onClick={useGps}
           disabled={locating}
@@ -203,8 +266,6 @@ function Preferences() {
                     name: r.name,
                     lat: r.lat,
                     lon: r.lon,
-                    // Persist the country code so future searches can apply
-                    // the same-country boost without any coordinate inference.
                     ...(r.country ? { countryCode: r.country } : {}),
                   });
                   setQ("");
@@ -243,13 +304,39 @@ function Preferences() {
         </div>
       </Section>
 
-      <div
-        className={`fixed bottom-24 left-1/2 -translate-x-1/2 transition-all ${saved ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"}`}
-      >
-        <div className="glass-card flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-primary">
-          <Check className="h-4 w-4" /> Saved
-        </div>
       </div>
+
+      {/* ── First-setup completion button ── */}
+      {isFirstSetup && (
+        <div className="mb-8 mt-6 animate-fade-up">
+          <button
+            type="button"
+            onClick={completeSetup}
+            disabled={!p.city}
+            aria-disabled={!p.city}
+            className="press flex w-full items-center justify-center gap-2 rounded-2xl bg-foreground py-4 text-sm font-semibold text-background shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50"
+          >
+            Save and continue
+            <ArrowRight aria-hidden className="h-4 w-4" />
+          </button>
+          {!p.city && (
+            <p className="mt-2 text-center text-xs text-muted-foreground">
+              Choose a city above to continue.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Floating "Saved" toast — only for existing users editing preferences */}
+      {!isFirstSetup && (
+        <div
+          className={`fixed bottom-24 left-1/2 -translate-x-1/2 transition-all ${saved ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"}`}
+        >
+          <div className="glass-card flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-primary">
+            <Check className="h-4 w-4" /> Saved
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }
