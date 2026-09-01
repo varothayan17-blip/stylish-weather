@@ -158,6 +158,64 @@ export const auth: AuthProvider = isFirebaseConfigured() ? firebaseEmailAuth : l
  * Used by billing.ts, index.tsx, and recommendation.tsx when syncing favorites
  * without going through a full sign-in call.
  */
+/**
+ * Sign in with Google via Firebase redirect flow.
+ *
+ * ARCHITECTURE NOTE — same-origin authDomain is required:
+ *   signInWithRedirect stores pending state and recovers it via the
+ *   /__/auth/handler endpoint. In Safari 16.1+, Firefox 109+, and Chrome
+ *   with third-party storage partitioning, the result can only be read back
+ *   when that endpoint is same-origin with the app.
+ *
+ *   Production (www.aeruvo.app) requires:
+ *     1. vercel.json rewrite: /__/auth/** → wethra-1aa65.firebaseapp.com/__/auth/**
+ *     2. VITE_FIREBASE_AUTH_DOMAIN=www.aeruvo.app
+ *   Local dev: VITE_FIREBASE_AUTH_DOMAIN=wethra-1aa65.firebaseapp.com
+ *
+ *   See: https://firebase.google.com/docs/auth/web/redirect-best-practices
+ *
+ * iOS PWA NOTE:
+ *   Installed-PWA redirect behaviour on iOS requires real-device verification
+ *   by the owner before this method can be declared production-ready for that
+ *   platform. Firebase does not guarantee redirect reliability in standalone mode.
+ *
+ * Call from a direct user gesture. getGoogleRedirectResult() must be called
+ * on every subsequent mount to consume the pending credential.
+ */
+export async function signInWithGoogleRedirect(): Promise<void> {
+  const fbAuth = await getFirebaseAuth();
+  if (!fbAuth) throw new Error("Firebase is not configured.");
+  const { GoogleAuthProvider, signInWithRedirect } = await import("firebase/auth");
+  const provider = new GoogleAuthProvider();
+  // Request profile and email scopes (granted by default, explicit for clarity).
+  provider.addScope("profile");
+  provider.addScope("email");
+  await signInWithRedirect(fbAuth, provider);
+  // Execution continues on the next page load after the redirect returns.
+}
+
+/**
+ * Process the result of a Google redirect sign-in.
+ * Must be called on every page mount (including after redirects) to consume
+ * the pending credential. Returns null if no redirect result is pending.
+ * Returns the uid on success, null if no result, throws on error.
+ */
+export async function getGoogleRedirectResult(): Promise<string | null> {
+  const fbAuth = await getFirebaseAuth();
+  if (!fbAuth) return null;
+  const { getRedirectResult } = await import("firebase/auth");
+  const result = await getRedirectResult(fbAuth);
+  if (!result) return null;
+
+  const user = result.user;
+  const name = user.displayName ?? "";
+  const email = user.email ?? "";
+
+  console.info("[google-auth] redirect result uid:", user.uid.slice(0, 4) + "***");
+  await afterSignIn(user.uid, name, email);
+  return user.uid;
+}
+
 export async function getUid(): Promise<string | null> {
   const fbAuth = await getFirebaseAuth();
   return fbAuth?.currentUser?.uid ?? null;
