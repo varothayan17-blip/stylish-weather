@@ -61,13 +61,33 @@ export function umbrellaLevel(
   return 0;
 }
 
-/** Text labels for each umbrella level. */
+/** Text labels for each umbrella level (future/general rain). */
 export const UMBRELLA_LABEL: Record<UmbrellaLevel, string | null> = {
   0: null,
   1: "Consider carrying a compact umbrella.",
   2: "Umbrella recommended.",
   3: "Strongly recommend carrying an umbrella.",
 };
+
+/**
+ * When rainTiming indicates rain is happening NOW, use this stronger action label.
+ * The secondary text (rainTiming phrase) provides the exact context, e.g.:
+ * "Rain happening now." or "Rain expected soon."
+ */
+export const UMBRELLA_LABEL_NOW = "Bring an umbrella now.";
+
+/**
+ * Returns true when rainTiming indicates precipitation is active right now
+ * or imminent (within the current hour). Used by the UI to select the
+ * stronger "now" label instead of the general future label.
+ */
+export function isRainNow(rainTiming: string | null): boolean {
+  if (!rainTiming) return false;
+  return (
+    rainTiming.includes("happening now") ||
+    rainTiming.includes("expected soon")
+  );
+}
 
 /** Umbrella icon glyph — ☂ for levels 1–2, ☔ for level 3. */
 export const UMBRELLA_ICON: Record<UmbrellaLevel, string> = {

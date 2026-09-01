@@ -135,15 +135,19 @@ export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
   // no rain WMO code is active now. This is a conservative guard — if any
   // doubt exists, the existing near-term level stands.
   if (today0?.hourlyPrecip?.length && !rainCodeActive) {
+    // Check current hour AND future hours. The current hour (>= currentHour)
+    // is included so that active now-precipitation at e.g. 23:38 is not
+    // treated as "past rain" — the rain is happening THIS hour.
+    // Only hours that have definitively PASSED (< currentHour) are excluded.
     const futureQualify = today0.hourlyPrecip.some(
-      (h) => h.hour > currentHour && (h.prob >= 30 || RAIN_CODES.has(h.code) || THUNDER_CODES.has(h.code)),
+      (h) => h.hour >= currentHour && (h.prob >= 30 || RAIN_CODES.has(h.code) || THUNDER_CODES.has(h.code)),
     );
     const shortQualify = hourlyForAdvice.some(
-      (h) => h.hour > currentHour && (h.prob >= 30 || RAIN_CODES.has(h.code) || THUNDER_CODES.has(h.code)),
+      (h) => h.hour >= currentHour && (h.prob >= 30 || RAIN_CODES.has(h.code) || THUNDER_CODES.has(h.code)),
     );
     if (!futureQualify && !shortQualify) {
-      // No meaningful future precipitation: reset to 0 so stale w.precipProb
-      // cannot produce a false umbrella recommendation.
+      // No meaningful current or future precipitation: reset to 0 so stale
+      // w.precipProb cannot produce a false umbrella recommendation.
       effectiveLevel = 0;
     }
   }
