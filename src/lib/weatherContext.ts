@@ -26,6 +26,7 @@ import {
   lookAheadUmbrellaAdvice,
   type UmbrellaLevel,
 } from "./precipAdvice";
+import { rainNowDecision } from "./rainNowDecision";
 
 /**
  * Named temperature bands.
@@ -153,9 +154,18 @@ export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
   }
 
   const umbrella = effectiveLevel >= 1;
+
+  // ── Shared precipitation-now decision ────────────────────────────────────
+  // Must be computed BEFORE rainTimingPhrase so "happening now" wording
+  // is driven by active measurements and WMO codes, never by probability alone.
+  // Both the hero card and the recommendation consume this shared decision
+  // so they always agree about whether rain is active now.
+  const rainNow = rainNowDecision(w);
+
   // Rain timing derived from hourly data — null when no rain expected.
-  // Pass nowFrac so "happening now" / "expected soon" are detected.
-  const rainTiming = umbrella ? rainTimingPhrase(hourlyForAdvice, 30, nowFrac) : null;
+  // Pass nowFrac and rainNow.isPrecipitatingNow to prevent probability-only
+  // "happening now" wording. Only active measurement/code evidence enables it.
+  const rainTiming = umbrella ? rainTimingPhrase(hourlyForAdvice, 30, nowFrac, rainNow.isPrecipitatingNow) : null;
 
   // ── Full-day look-ahead umbrella promotion ───────────────────────────────
   // w.hourly covers only ~12 hours from now. w.daily[0].hourlyPrecip covers

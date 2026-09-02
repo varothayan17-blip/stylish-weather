@@ -36,6 +36,7 @@ import { computeRegretRisk } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
 import { isFirstSetupPending } from "@/lib/introState";
 import { UMBRELLA_LABEL, UMBRELLA_LABEL_NOW, UMBRELLA_ICON, isRainNow } from "@/lib/precipAdvice";
+import { rainNowDecision, type RainNowDecision } from "@/lib/rainNowDecision";
 import { OutfitSlotList } from "@/components/OutfitSlotList";
 import {
   Wind,
@@ -148,6 +149,10 @@ function Home() {
   const [locating, setLocating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  // Timestamp of the last successful weather fetch — used for freshness label.
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
+  // Freshness label — updated once per minute by the display effect below.
+  const [freshnessLabel, setFreshnessLabel] = useState<string | null>(null);
 
   // ── Notification discovery card ─────────────────────────────────────
   const [notifDismissed, setNotifDismissed] = useState<boolean>(() => {
@@ -225,7 +230,10 @@ function Home() {
         setError(null);
         const city = prefs!.city ?? CANADIAN_CITIES[0];
         const w = await fetchWeather(city.lat, city.lon, city.name);
-        if (!cancelled) setWeather(w);
+        if (!cancelled) {
+          setWeather(w);
+          setFetchedAt(Date.now());
+        }
       } catch (e) {
         if (!cancelled) setError(getErrorMessage(e, "Couldn't load weather"));
       } finally {
@@ -242,6 +250,80 @@ function Home() {
     setRefreshing(true);
     setRefreshTick((t) => t + 1);
   }
+
+  // ── Visibility / focus refresh with deduplication ────────────────────────
+  //
+  // Fetch fresh conditions when:
+  //   • The user returns to the browser tab (visibilitychange)
+  //   • The window regains focus after being in the background
+  //   • Network connectivity is restored
+  //
+  // Deduplication: only refresh when the last fetch was > STALE_MS ago.
+  // This prevents a double-fetch when both visibilitychange and focus
+  // fire simultaneously, or when the user quickly switches tabs.
+  //
+  // STALE_THRESHOLD_MS: 5 minutes. Current-condition data from Open-Meteo
+  // updates at 15-minute model boundaries. Refreshing more often than 5 min
+  // yields stale responses; less often risks showing very outdated conditions.
+  const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+  const fetchedAtRef = useRef<number | null>(null);
+  useEffect(() => { fetchedAtRef.current = fetchedAt; }, [fetchedAt]);
+
+  useEffect(() => {
+    if (!prefs) return;
+    function maybeRefresh() {
+      const last = fetchedAtRef.current;
+      if (!last || Date.now() - last > STALE_THRESHOLD_MS) {
+        setRefreshTick((t) => t + 1);
+      }
+    }
+    function onVisibility() {
+      if (document.visibilityState === "visible") maybeRefresh();
+    }
+    function onFocus() { maybeRefresh(); }
+    function onOnline() { maybeRefresh(); }
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [prefs]);
+
+  // ── Freshness label — updated once per minute ──────────────────────────
+  // Shows BOTH the provider's current-block timestamp (c.time) AND the
+  // client fetch age. This prevents concealing old model data behind a
+  // "checked just now" label.
+  //
+  // Format: "Conditions for 3:15 PM · checked just now"
+  //         "Conditions for 3:15 PM · checked 4 min ago"
+  //
+  // providerTimeIso comes from weather.currentTimeIso (c.time from Open-Meteo).
+  // fetchedAt is the client's successful-fetch timestamp.
+  useEffect(() => {
+    if (!fetchedAt) { setFreshnessLabel(null); return; }
+    function update() {
+      const fetchMins = Math.round((Date.now() - fetchedAt!) / 60000);
+      const checkPart = fetchMins < 1 ? "checked just now" : `checked ${fetchMins} min ago`;
+      // Provider time: format "3:15 PM" from ISO "2026-08-31T15:15"
+      const provIso = weather?.currentTimeIso;
+      if (provIso) {
+        const timePart = provIso.slice(11, 16); // "15:15"
+        const [hh, mm] = timePart.split(":").map(Number);
+        const suffix = hh < 12 ? "AM" : "PM";
+        const h12 = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh;
+        const provDisplay = `${h12}:${String(mm).padStart(2, "0")} ${suffix}`;
+        setFreshnessLabel(`Conditions for ${provDisplay} · ${checkPart}`);
+      } else {
+        setFreshnessLabel(checkPart.charAt(0).toUpperCase() + checkPart.slice(1));
+      }
+    }
+    update();
+    const id = setInterval(update, 60_000);
+    return () => clearInterval(id);
+  }, [fetchedAt, weather?.currentTimeIso]);
 
   async function locateMe() {
     if (!prefs) return;
@@ -276,6 +358,12 @@ function Home() {
     // Only run when onboarded status changes — intentionally not including locateMe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs?.onboarded]);
+
+  // Shared precipitation-now decision — hero icon, recommendation and umbrella all consume this.
+  const rainDecision: RainNowDecision | null = useMemo(
+    () => (weather ? rainNowDecision(weather) : null),
+    [weather],
+  );
 
   const rec = useMemo(
     () => (weather && prefs ? recommend(weather, prefs) : null),
@@ -364,6 +452,9 @@ function Home() {
               <div>
                 <div className="flex items-center gap-1.5">
                   <p className="text-sm font-medium text-muted-foreground">{weather.condition}</p>
+                  {freshnessLabel && (
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5">{freshnessLabel}</p>
+                  )}
                   <button
                     onClick={refresh}
                     disabled={refreshing}
@@ -388,7 +479,7 @@ function Home() {
               </div>
               <div className="text-primary animate-breathe">
                 <WeatherIcon
-                  code={weather.code}
+                  code={rainDecision?.effectiveCurrentCode ?? weather.code}
                   isDay={computeIsDay(weather.isDay, weather.sunrise, weather.sunset)}
                   className="h-24 w-24"
                 />

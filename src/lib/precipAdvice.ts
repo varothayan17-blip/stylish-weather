@@ -111,14 +111,25 @@ export const UMBRELLA_ICON: Record<UmbrellaLevel, string> = {
  * @param nowFrac  Optional fractional hour (0-23.983) = getHours()+getMinutes()/60.
  *   When supplied, wording is time-aware:
  *   - current fractional hour is inside the best window -> "happening now"
+ *     BUT ONLY when precipitationIsActiveNow is true (or not supplied).
  *   - window starts within 60 min                      -> "expected soon"
  *   - otherwise -> existing daypart / time-range wording
  *   Omit for future forecast days.
+ *
+ * @param precipitationIsActiveNow
+ *   Optional. When supplied:
+ *     true  — "happening now" wording is allowed (caller confirmed active precipitation).
+ *     false — "happening now" is suppressed; probability alone cannot claim rain is active.
+ *             "expected soon" is also suppressed when the window started up to 60 min ago.
+ *   When omitted (undefined) — original behavior: window timing decides.
+ *   This prevents probability (e.g. 57%) from producing "Rain happening now"
+ *   when the WMO code and measured precipitation fields indicate no active rain.
  */
 export function rainTimingPhrase(
   hourlyPrecip: HourlyPrecipSlot[],
   threshold = 30,
   nowFrac?: number,
+  precipitationIsActiveNow?: boolean,
 ): string | null {
   if (hourlyPrecip.length === 0) return null;
 
@@ -162,9 +173,26 @@ export function rainTimingPhrase(
     const minutesToStart = (startHour - nowFrac) * 60;
 
     if (windowIsActive) {
-      // Rain is occurring right now — current fractional hour is inside the
-      // best window. Prioritise this over any daypart label.
-      return `${condition} happening now.`;
+      // The probability window is active, but we must ALSO have confirmed
+      // active precipitation via the shared rainNowDecision() result.
+      // When precipitationIsActiveNow is explicitly false, probability alone
+      // cannot produce "happening now" — downgrade to "expected soon" if the
+      // rain is truly imminent, otherwise use future wording.
+      if (precipitationIsActiveNow !== false) {
+        // Rain is occurring right now — current fractional hour is inside the
+        // best window AND caller confirms active precipitation evidence.
+        return `${condition} happening now.`;
+      }
+      // precipitationIsActiveNow === false: suppress "happening now".
+      // The window started but provider says no active precipitation.
+      // This is "Rain possible/expected right now" territory — use "expected soon"
+      // only if the window started very recently (within last 15 min).
+      if (nowFrac - startHour <= 0.25) {
+        return `${condition} expected soon.`;
+      }
+      // Window well underway but no provider evidence — fall to future wording
+      // with the end of the window as the reference.
+      // Falls through to regular future wording below.
     }
     if (minutesToStart > 0 && minutesToStart <= 60) {
       // Rain window starts within the next 60 minutes.
