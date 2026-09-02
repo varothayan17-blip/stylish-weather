@@ -60,6 +60,8 @@ type Step = 0 | 1 | 2 | 3 | 4;
 function WelcomeRoute() {
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>(0);
+  // direction: 1 = forward (enter from right), -1 = back (enter from left)
+  const [direction, setDirection] = useState<1 | -1>(1);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -103,8 +105,9 @@ function WelcomeRoute() {
     return () => { cancelled = true; };
   }, [navigate]);
 
-  function goToStep(s: Step) {
+  function goToStep(s: Step, dir: 1 | -1 = 1) {
     markInProgress(s);
+    setDirection(dir);
     setStep(s);
   }
 
@@ -129,10 +132,10 @@ function WelcomeRoute() {
   // Rendered inside OnboardingShell with scroll; questions component handles layout.
   if (step === 4) {
     return (
-      <OnboardingShell>
+      <OnboardingShell transitionKey={step} direction={direction === 1 ? "forward" : "back"}>
         <PreAuthQuestions
           onContinue={goToSignup}
-          onBack={() => goToStep(3)}
+          onBack={() => goToStep(3, -1)}
         />
       </OnboardingShell>
     );
@@ -141,7 +144,7 @@ function WelcomeRoute() {
   // ── Step 0: Landing ────────────────────────────────────────────────────────
   if (step === 0) {
     return (
-      <OnboardingShell>
+      <OnboardingShell transitionKey={step} direction={direction === 1 ? "forward" : "back"}>
         <div className="animate-fade-up">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-primary">
             <Sparkles aria-hidden className="h-3 w-3" />
@@ -187,7 +190,7 @@ function WelcomeRoute() {
   // ── Step 1: Plan for the whole day ─────────────────────────────────────────
   if (step === 1) {
     return (
-      <OnboardingShell>
+      <OnboardingShell transitionKey={step} direction={direction === 1 ? "forward" : "back"}>
         <div className="animate-fade-up">
           <IntroProgress step={1} total={4} />
           <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-foreground">
@@ -211,7 +214,7 @@ function WelcomeRoute() {
   // ── Step 2: Make your wardrobe useful ─────────────────────────────────────
   if (step === 2) {
     return (
-      <OnboardingShell>
+      <OnboardingShell transitionKey={step} direction={direction === 1 ? "forward" : "back"}>
         <div className="animate-fade-up">
           <IntroProgress step={2} total={4} />
           <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-foreground">
@@ -234,7 +237,7 @@ function WelcomeRoute() {
 
   // ── Step 3: Add clothing in seconds ───────────────────────────────────────
   return (
-    <OnboardingShell>
+    <OnboardingShell transitionKey={step} direction={direction === 1 ? "forward" : "back"}>
       <div className="animate-fade-up">
         <IntroProgress step={3} total={4} />
         <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-foreground">

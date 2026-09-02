@@ -307,10 +307,10 @@ ok("T14-1. WardrobeDemoCard: has SVG paths (garment shapes)", wdc.includes("<pat
 ok("T14-2. WardrobeDemoCard: has crewneck SVG", wdc.includes("CrewneckSVG") || wdc.includes("crewneck"));
 ok("T14-3. WardrobeDemoCard: has sweatpants SVG", wdc.includes("SweatpantsSVG") || wdc.includes("sweatpants"));
 ok("T14-4. WardrobeDemoCard: has sneaker SVG", wdc.includes("SneakerSVG") || wdc.includes("sneaker"));
-ok("T14-5. WardrobeDemoCard: mini garment thumbnails (not colored dots)", wdc.includes("MiniCrewneck") || wdc.includes("mini"));
-ok("T14-6. ScanDemoCard: has large detailed SVG garment", sdc.includes("LargeSweaterSVG") || (sdc.includes("<path") && sdc.includes("60a5fa")));
+ok("T14-5. WardrobeDemoCard: mini garment thumbnails in recommendation", wdc.includes("CrewneckSVG") && wdc.includes("SweatpantsSVG") && wdc.includes("ob-sweep"));
+ok("T14-6. ScanDemoCard: has detailed front-facing garment SVG", sdc.includes("FrontCrewneck") || (sdc.includes("<path") && sdc.includes("sdc-body")));
 ok("T14-7. ScanDemoCard: no Lucide Shirt icon as main garment", !sdc.includes("import { Camera, FileText, Check, Shirt }"));
-ok("T14-8. WeatherDemoCard: has garment icons not abstract swatches", wdc2.includes("GarmentIcon"));
+ok("T14-8. WeatherDemoCard: has outfit silhouettes (not abstract swatches)", wdc2.includes("OutfitSilhouette") || wdc2.includes("ob-draw"));
 ok("T14-9. No emoji in any onboarding component",
   !wdc.includes("👕") && !wdc.includes("👖") && !wdc.includes("👟") &&
   !sdc.includes("🧥") && !wdc2.includes("👕"));

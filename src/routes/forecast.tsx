@@ -46,8 +46,7 @@ function dayLabel(dateStr: string, index: number) {
 }
 
 function Forecast() {
-    const { authLoading } = useAuthGuard();
-  if (authLoading) return null;
+  const { authLoading } = useAuthGuard();
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -153,6 +152,8 @@ function Forecast() {
       return { day: effectiveDay, rec, displayHeadline, risk, alerts, isTonightCard };
     });
   }, [weather, prefs]);
+
+  if (authLoading) return null;
 
   return (
     <AppShell>

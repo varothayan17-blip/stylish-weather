@@ -56,7 +56,6 @@ function fmt(ms: number) {
 
 function Premium() {
   const { authLoading } = useAuthGuard();
-  if (authLoading) return null;
 
   const entitlement = useEntitlement();
   const [activating, setActivating]           = useState(false);
@@ -112,6 +111,8 @@ function Premium() {
   }
 
   const checkoutButtonLabel = activating ? "Loading…" : "Start free trial";
+
+  if (authLoading) return null;
 
   return (
     <AppShell>

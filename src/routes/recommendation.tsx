@@ -28,8 +28,7 @@ export const Route = createFileRoute("/recommendation")({
 });
 
 function Recommendation() {
-    const { authLoading } = useAuthGuard();
-  if (authLoading) return null;
+  const { authLoading } = useAuthGuard();
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +64,8 @@ function Recommendation() {
     [weather, prefs, rec],
   );
   const alerts = useMemo(() => (weather ? getWeatherAlerts(weather) : []), [weather]);
+
+  if (authLoading) return null;
 
   return (
     <AppShell>

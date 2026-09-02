@@ -1,181 +1,176 @@
 /**
- * WardrobeDemoCard — polished wardrobe preview for intro screen 3.
- * All garments are detailed inline SVG illustrations.
- * No emoji, no remote images, no external dependencies.
+ * WardrobeDemoCard — static wardrobe preview for intro screen 3.
+ *
+ * Built entirely with CSS + Tailwind + layered SVG garment illustrations.
+ * Motion is CSS-only (./onboarding-motion.css): the three garments stagger in,
+ * then the recommendation row reveals with a single blue highlight sweep.
+ * No emoji, no remote images, no AI calls, no timers.
  */
+import "./onboarding-motion.css";
 
-/** Blue crewneck sweater with collar, sleeves, cuffs and rib details */
-function CrewneckSVG() {
+/** Layered crewneck/sweatshirt with seams and edge highlights. */
+function CrewneckSVG({ className = "" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 120 110" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden className="h-full w-full">
+    <svg viewBox="0 0 80 76" fill="none" className={className} aria-hidden>
+      <ellipse cx="40" cy="72" rx="24" ry="3" className="fill-foreground/10" />
       {/* Body */}
-      <path d="M30 38 L28 100 L92 100 L90 38 Z" fill="#60a5fa" />
-      {/* Left sleeve */}
-      <path d="M30 38 L10 52 L14 72 L32 60 L30 38 Z" fill="#60a5fa" />
-      {/* Right sleeve */}
-      <path d="M90 38 L110 52 L106 72 L88 60 L90 38 Z" fill="#60a5fa" />
-      {/* Shoulder shaping */}
-      <path d="M30 38 Q60 30 90 38 L88 44 Q60 36 32 44 Z" fill="#3b82f6" />
-      {/* Crewneck collar */}
-      <path d="M42 30 Q60 20 78 30 L76 38 Q60 28 44 38 Z" fill="#3b82f6" />
-      {/* Collar rib band */}
-      <path d="M44 36 Q60 26 76 36 Q60 30 44 36 Z" fill="#2563eb" />
-      {/* Left cuff rib */}
-      <rect x="10" y="68" width="8" height="6" rx="2" fill="#3b82f6" />
-      {/* Right cuff rib */}
-      <rect x="102" y="68" width="8" height="6" rx="2" fill="#3b82f6" />
-      {/* Hem rib */}
-      <rect x="28" y="96" width="64" height="6" rx="2" fill="#3b82f6" />
-      {/* Centre seam highlight */}
-      <path d="M60 44 L60 98" stroke="#93c5fd" strokeWidth="0.8" opacity="0.5" />
-      {/* Subtle body shadow */}
-      <path d="M30 38 L28 100 L36 100 L37 38 Z" fill="#3b82f6" opacity="0.3" />
+      <path
+        d="M20 22 L8 36 L16 41 L18 44 V68 H62 V44 L64 41 L72 36 L60 22 Z"
+        fill="currentColor"
+        opacity="0.92"
+      />
+      {/* Sleeves (darker) */}
+      <path d="M20 22 L8 36 L16 41 L24 29 Z" fill="currentColor" opacity="0.7" />
+      <path d="M60 22 L72 36 L64 41 L56 29 Z" fill="currentColor" opacity="0.7" />
+      {/* Collar */}
+      <path d="M30 18 Q40 12 50 18 L52 22 Q40 28 28 22 Z" fill="currentColor" />
+      <path d="M30 18 Q40 13 50 18" stroke="currentColor" strokeWidth="1.4" opacity="0.45" />
+      {/* Shoulder seams */}
+      <path d="M25 24 L22 30 M55 24 L58 30" stroke="currentColor" strokeWidth="1" opacity="0.4" />
+      {/* Hem ribbing */}
+      <path d="M18 63 H62" stroke="currentColor" strokeWidth="2" opacity="0.5" />
+      {/* Fabric highlight */}
+      <path d="M27 30 V60" stroke="white" strokeWidth="1.6" opacity="0.18" strokeLinecap="round" />
     </svg>
   );
 }
 
-/** Grey sweatpants with waistband, drawstring, shaped legs and ankle cuffs */
-function SweatpantsSVG() {
+/** Sweatpants with waistband, drawcord and leg seams. */
+function SweatpantsSVG({ className = "" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 110 130" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden className="h-full w-full">
-      {/* Waistband */}
-      <rect x="14" y="6" width="82" height="18" rx="5" fill="#9ca3af" />
-      {/* Waistband rib lines */}
-      <line x1="14" y1="11" x2="96" y2="11" stroke="#6b7280" strokeWidth="0.8" opacity="0.6" />
-      <line x1="14" y1="15" x2="96" y2="15" stroke="#6b7280" strokeWidth="0.8" opacity="0.6" />
-      {/* Drawstring */}
-      <path d="M42 6 Q55 2 68 6" stroke="#d1d5db" strokeWidth="2" strokeLinecap="round" fill="none" />
-      <circle cx="42" cy="6" r="2.5" fill="#d1d5db" />
-      <circle cx="68" cy="6" r="2.5" fill="#d1d5db" />
-      {/* Left leg */}
-      <path d="M14 24 L10 110 L48 110 L55 24 Z" fill="#9ca3af" />
-      {/* Right leg */}
-      <path d="M55 24 L62 110 L100 110 L96 24 Z" fill="#9ca3af" />
-      {/* Left leg inner shadow */}
-      <path d="M50 24 L55 110 L48 110 L42 24 Z" fill="#6b7280" opacity="0.4" />
-      {/* Centre crotch seam */}
-      <path d="M55 24 L55 50" stroke="#6b7280" strokeWidth="1" opacity="0.5" />
-      {/* Left ankle cuff */}
-      <rect x="10" y="106" width="38" height="8" rx="3" fill="#6b7280" />
-      {/* Right ankle cuff */}
-      <rect x="62" y="106" width="38" height="8" rx="3" fill="#6b7280" />
-      {/* Pocket line left */}
-      <path d="M22 32 Q28 44 26 52" stroke="#6b7280" strokeWidth="1" opacity="0.4" fill="none" strokeLinecap="round" />
+    <svg viewBox="0 0 80 94" fill="none" className={className} aria-hidden>
+      <ellipse cx="40" cy="90" rx="26" ry="3" className="fill-foreground/10" />
+      <rect x="12" y="4" width="56" height="12" rx="4" fill="currentColor" opacity="0.7" />
+      <path d="M36 10 h8" stroke="currentColor" strokeWidth="1.6" opacity="0.5" strokeLinecap="round" />
+      <path d="M12 16 L16 84 H38 L40 16 Z" fill="currentColor" opacity="0.9" />
+      <path d="M40 16 L42 84 H64 L68 16 Z" fill="currentColor" opacity="0.9" />
+      {/* Cuffs */}
+      <path d="M16 80 H38 M42 80 H64" stroke="currentColor" strokeWidth="2.4" opacity="0.55" />
+      {/* Highlight + inner seam */}
+      <path d="M22 22 V78" stroke="white" strokeWidth="1.6" opacity="0.16" strokeLinecap="round" />
+      <path d="M40 18 V82" stroke="currentColor" strokeWidth="0.8" opacity="0.35" />
     </svg>
   );
 }
 
-/** White sneakers with sole, upper, tongue, laces and subtle depth */
-function SneakerSVG() {
+/**
+ * Sneaker with a cool-grey outline, darker sole, tongue, eyelets and laces so
+ * a white shoe stays clearly visible on a light card.
+ */
+function SneakerSVG({ className = "" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 130 72" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden className="h-full w-full">
-      {/* Thick outer sole */}
-      <path d="M6 56 Q6 66 18 66 L116 66 Q126 66 126 58 L126 52 Q110 56 6 56 Z" fill="#e5e7eb" />
-      {/* Midsole */}
-      <path d="M6 50 Q8 58 18 58 L116 58 Q124 58 126 52 L126 48 Q106 52 6 50 Z" fill="#f9fafb" />
-      {/* Upper body */}
-      <path d="M18 50 L18 30 Q18 18 28 16 L62 14 Q78 12 92 22 L124 42 L126 50 Z" fill="#f9fafb" />
-      {/* Toe cap */}
-      <path d="M18 50 L18 36 Q18 26 26 24 L44 22 Q38 30 20 50 Z" fill="#f3f4f6" />
+    <svg viewBox="0 0 92 54" fill="none" className={className} aria-hidden>
+      <ellipse cx="46" cy="50" rx="34" ry="2.6" className="fill-foreground/10" />
+      {/* Sole (darker) */}
+      <path
+        d="M4 36 Q4 46 15 46 H80 Q88 46 88 39 V34 L4 34 Z"
+        className="fill-slate-400 dark:fill-slate-500"
+      />
+      <path d="M4 40 H88" className="stroke-slate-500/50" strokeWidth="1" />
+      {/* Upper */}
+      <path
+        d="M14 34 V22 Q14 13 23 11 H46 Q54 9 62 15 L86 29 V34 Z"
+        fill="currentColor"
+        className="stroke-slate-500"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
       {/* Tongue */}
-      <path d="M38 16 L42 50 L54 50 L54 14 Z" fill="#f9fafb" />
-      <path d="M39 16 L43 48 L43 16 Z" fill="#e5e7eb" opacity="0.5" />
-      {/* Lace eyelets row 1 */}
-      <circle cx="47" cy="22" r="2" fill="#d1d5db" />
-      <circle cx="64" cy="24" r="2" fill="#d1d5db" />
-      <circle cx="80" cy="28" r="2" fill="#d1d5db" />
-      <circle cx="96" cy="34" r="2" fill="#d1d5db" />
-      {/* Lace eyelets row 2 */}
-      <circle cx="47" cy="30" r="2" fill="#d1d5db" />
-      <circle cx="64" cy="32" r="2" fill="#d1d5db" />
-      <circle cx="80" cy="36" r="2" fill="#d1d5db" />
-      <circle cx="96" cy="42" r="2" fill="#d1d5db" />
-      {/* Lace straps */}
-      <path d="M47 22 Q55 20 64 24" stroke="#e5e7eb" strokeWidth="1.2" fill="none" />
-      <path d="M47 30 Q55 28 64 32" stroke="#e5e7eb" strokeWidth="1.2" fill="none" />
-      <path d="M64 24 Q72 26 80 28" stroke="#e5e7eb" strokeWidth="1.2" fill="none" />
-      <path d="M64 32 Q72 34 80 36" stroke="#e5e7eb" strokeWidth="1.2" fill="none" />
-      <path d="M80 28 Q88 30 96 34" stroke="#e5e7eb" strokeWidth="1.2" fill="none" />
-      <path d="M80 36 Q88 38 96 42" stroke="#e5e7eb" strokeWidth="1.2" fill="none" />
-      {/* Side stripe */}
-      <path d="M20 44 Q60 36 110 44 L112 48 Q64 40 20 48 Z" fill="#e5e7eb" opacity="0.6" />
-      {/* Heel counter */}
-      <path d="M116 42 Q126 44 126 50 L120 52 Q122 46 116 44 Z" fill="#f3f4f6" />
+      <path
+        d="M24 12 Q22 20 24 30"
+        className="stroke-slate-500"
+        strokeWidth="1.4"
+        fill="none"
+        strokeLinecap="round"
+      />
+      {/* Laces */}
+      <path
+        d="M27 16 L40 20 M27 22 L45 26 M27 28 L50 31"
+        className="stroke-slate-500"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+      {/* Eyelets */}
+      <circle cx="28" cy="16" r="1.1" className="fill-slate-500" />
+      <circle cx="28" cy="22" r="1.1" className="fill-slate-500" />
+      <circle cx="28" cy="28" r="1.1" className="fill-slate-500" />
+      {/* Heel + toe detail */}
+      <path d="M72 24 Q78 30 80 34" className="stroke-slate-400" strokeWidth="1.2" fill="none" />
     </svg>
   );
 }
 
-/** Mini crewneck thumbnail for recommendation preview */
-function MiniCrewneck() {
-  return (
-    <svg viewBox="0 0 24 22" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden className="h-full w-full">
-      <path d="M7 8 L6 20 L18 20 L17 8 Z" fill="#60a5fa" />
-      <path d="M7 8 L3 11 L4 15 L8 13 Z" fill="#60a5fa" />
-      <path d="M17 8 L21 11 L20 15 L16 13 Z" fill="#60a5fa" />
-      <path d="M9 6 Q12 4 15 6 L15 8 Q12 6 9 8 Z" fill="#3b82f6" />
-    </svg>
-  );
+interface GarmentProps {
+  label: string;
+  children: React.ReactNode;
+  color: string;
+  bg: string;
 }
 
-/** Mini sweatpants thumbnail */
-function MiniSweatpants() {
+function GarmentCard({ label, children, color, bg }: GarmentProps) {
   return (
-    <svg viewBox="0 0 20 26" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden className="h-full w-full">
-      <rect x="2" y="1" width="16" height="5" rx="1.5" fill="#9ca3af" />
-      <path d="M2 6 L1 22 L9 22 L10 6 Z" fill="#9ca3af" />
-      <path d="M10 6 L11 22 L19 22 L18 6 Z" fill="#9ca3af" />
-    </svg>
-  );
-}
-
-/** Mini sneaker thumbnail */
-function MiniSneaker() {
-  return (
-    <svg viewBox="0 0 26 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden className="h-full w-full">
-      <path d="M2 10 Q2 14 5 14 L22 14 Q25 14 25 12 L25 10 Z" fill="#e5e7eb" />
-      <path d="M4 10 L4 6 Q4 3 7 3 L14 2 Q18 2 22 6 L25 10 Z" fill="#f9fafb" />
-      <path d="M8 3 L9 10 L12 10 L12 2 Z" fill="#e5e7eb" />
-    </svg>
+    <div className="flex flex-col items-center gap-1.5">
+      <div
+        className={`${bg} flex h-24 w-full items-center justify-center rounded-2xl shadow-sm ring-1 ring-inset ring-foreground/5`}
+      >
+        <div className={`${color} h-[68px] w-[76px]`}>{children}</div>
+      </div>
+      <p className="text-center text-[10px] font-medium leading-tight text-muted-foreground">
+        {label}
+      </p>
+    </div>
   );
 }
 
 export function WardrobeDemoCard() {
   return (
     <div className="glass-card rounded-3xl p-4">
-      <p className="mb-4 text-sm font-semibold text-foreground/80">My wardrobe</p>
+      <p className="ob-anim ob-rise mb-4 text-sm font-semibold text-foreground/80">My wardrobe</p>
 
+      {/* 3-column grid of garment cards, staggered in */}
       <div className="grid grid-cols-3 gap-3">
-        {/* Blue crewneck */}
-        <div className="flex flex-col items-center gap-1.5">
-          <div className="flex h-24 w-full items-center justify-center rounded-2xl bg-blue-50 p-2 dark:bg-blue-950/30">
-            <CrewneckSVG />
-          </div>
-          <p className="text-center text-[10px] font-medium text-muted-foreground leading-tight">Blue crewneck</p>
+        <div className="ob-anim ob-pop ob-d2">
+          <GarmentCard label="Blue crewneck" color="text-blue-400" bg="bg-blue-50 dark:bg-blue-950/30">
+            <CrewneckSVG className="h-full w-full" />
+          </GarmentCard>
         </div>
-
-        {/* Grey sweatpants */}
-        <div className="flex flex-col items-center gap-1.5">
-          <div className="flex h-24 w-full items-center justify-center rounded-2xl bg-slate-50 p-2 dark:bg-slate-800/40">
-            <SweatpantsSVG />
-          </div>
-          <p className="text-center text-[10px] font-medium text-muted-foreground leading-tight">Grey sweatpants</p>
+        <div className="ob-anim ob-pop ob-d4">
+          <GarmentCard
+            label="Grey sweatpants"
+            color="text-slate-400"
+            bg="bg-slate-50 dark:bg-slate-800/40"
+          >
+            <SweatpantsSVG className="h-full w-full" />
+          </GarmentCard>
         </div>
-
-        {/* White sneakers */}
-        <div className="flex flex-col items-center gap-1.5">
-          <div className="flex h-24 w-full items-center justify-center rounded-2xl bg-gray-50 p-3 dark:bg-gray-800/40">
-            <SneakerSVG />
-          </div>
-          <p className="text-center text-[10px] font-medium text-muted-foreground leading-tight">White sneakers</p>
+        <div className="ob-anim ob-pop ob-d6">
+          <GarmentCard
+            label="White sneakers"
+            color="text-gray-100 dark:text-gray-300"
+            bg="bg-gray-50 dark:bg-gray-800/40"
+          >
+            <SneakerSVG className="h-full w-full" />
+          </GarmentCard>
         </div>
       </div>
 
-      {/* Today's recommendation — mini garment thumbnails, not coloured dots */}
-      <div className="mt-4 flex items-center gap-3 rounded-2xl bg-primary/8 px-3 py-2.5">
-        <div className="flex shrink-0 items-end gap-1" aria-label="Outfit preview">
-          <div className="h-7 w-6"><MiniCrewneck /></div>
-          <div className="h-6 w-5"><MiniSweatpants /></div>
-          <div className="h-4 w-6"><MiniSneaker /></div>
+      {/* Today's recommendation — revealed after the garments, with one sweep */}
+      <div className="ob-anim ob-slide-up ob-d8 relative mt-4 flex items-center gap-3 overflow-hidden rounded-2xl bg-primary/10 px-3 py-2.5 ring-1 ring-inset ring-primary/15">
+        <span
+          aria-hidden
+          className="ob-anim ob-sweep ob-d9 pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-primary/25 to-transparent"
+        />
+        {/* Miniature versions of the items above */}
+        <div className="flex shrink-0 items-end gap-1" aria-hidden>
+          <div className="ob-anim ob-pop ob-d9 h-6 w-5 text-blue-400">
+            <CrewneckSVG className="h-full w-full" />
+          </div>
+          <div className="ob-anim ob-pop ob-d10 h-6 w-4 text-slate-400">
+            <SweatpantsSVG className="h-full w-full" />
+          </div>
+          <div className="ob-anim ob-pop ob-d11 h-4 w-6 text-gray-100 dark:text-gray-300">
+            <SneakerSVG className="h-full w-full" />
+          </div>
         </div>
         <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">

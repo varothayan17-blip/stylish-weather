@@ -70,7 +70,6 @@ const COMMUTE_LABEL: Record<Prefs["commute"], string> = {
 
 function Settings() {
   const { authLoading, uid: authUid } = useAuthGuard();
-  if (authLoading) return null;
 
   const [p, setP] = useState<Prefs>(defaultPrefs);
   const [saved, setSaved] = useState(false);
@@ -209,6 +208,8 @@ function Settings() {
     localStorage.removeItem(FAV_KEY);
     window.location.href = "/welcome";
   }
+
+  if (authLoading) return null;
 
   return (
     <AppShell>

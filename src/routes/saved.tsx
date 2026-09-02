@@ -16,8 +16,7 @@ export const Route = createFileRoute("/saved")({
 });
 
 function Saved() {
-    const { authLoading } = useAuthGuard();
-  if (authLoading) return null;
+  const { authLoading } = useAuthGuard();
   const [favs, setFavs] = useState<Favorite[]>([]);
 
   function refresh() {
@@ -52,6 +51,8 @@ function Saved() {
       document.removeEventListener("visibilitychange", refresh);
     };
   }, []);
+
+  if (authLoading) return null;
 
   return (
     <AppShell>

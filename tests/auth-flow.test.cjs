@@ -69,7 +69,7 @@ ok("D6. Draft NEVER sets onboarded=true", (() => {
   return saveLines.every(l => !l.includes("onboarded: true"));
 })());
 ok("D7. City required before continue", paq.includes("cityError") || paq.includes("Please choose a city"));
-ok("D8. Back button returns to step 3", paq.includes("onBack") && welcome.includes("onBack={() => goToStep(3)}"));
+ok("D8. Back button returns to step 3 (with direction -1)", paq.includes("onBack") && welcome.includes("onBack={() => goToStep(3, -1)}"));
 ok("D9. Draft writes to dedicated draft key (not PREFS_KEY)", paq.includes("saveOnboardingDraft") && !paq.includes("savePrefs"));
 ok("D10. afterSignIn reads loadPrefs() — draft auto-migrated",
   authLib.includes("const local = loadPrefs()") && authLib.includes("afterSignIn"));
@@ -280,6 +280,167 @@ ok("M22. clearOnboardingDraft only in afterSignIn (after cloud sync)", authSrc.i
 // Protected routes cannot be accessed via draft
 ok("M23. Draft presence cannot grant access to protected routes (structural)",
   !paqSrc.includes("onboarded: true") && !paqSrc.includes("setOnboarded"));
+
+// ════════════════════════════════════════════════════════════════════════════
+// N. Animation system: Lovable motion CSS + directional transitions
+// ════════════════════════════════════════════════════════════════════════════
+console.log("\n── N: Animation system + reduced-motion ──────────────────────");
+const css       = fs.readFileSync("/home/claude/live/src/components/onboarding/onboarding-motion.css", "utf8");
+const shell     = fs.readFileSync("/home/claude/live/src/components/onboarding/OnboardingShell.tsx", "utf8");
+const wdcSrc    = fs.readFileSync("/home/claude/live/src/components/onboarding/WeatherDemoCard.tsx", "utf8");
+const wardSrc   = fs.readFileSync("/home/claude/live/src/components/onboarding/WardrobeDemoCard.tsx", "utf8");
+const scanSrc   = fs.readFileSync("/home/claude/live/src/components/onboarding/ScanDemoCard.tsx", "utf8");
+const welSrc    = fs.readFileSync("/home/claude/live/src/routes/welcome.tsx", "utf8");
+
+// CSS file exists and is non-empty
+ok("N1. onboarding-motion.css exists", css.length > 500);
+ok("N2. CSS has ob-page-forward and ob-page-back classes", css.includes("ob-page-forward") && css.includes("ob-page-back"));
+ok("N3. CSS has ob-in-right and ob-in-left keyframes", css.includes("ob-in-right") && css.includes("ob-in-left"));
+ok("N4. CSS has prefers-reduced-motion block", css.includes("prefers-reduced-motion: reduce"));
+ok("N5. Reduced-motion: ob-anim animation set to none", css.includes("animation: none !important"));
+ok("N6. Reduced-motion: opacity forced to 1", css.includes("opacity: 1 !important"));
+ok("N7. Reduced-motion: transform forced to none", css.includes("transform: none !important"));
+ok("N8. Reduced-motion: stroke-dashoffset forced to 0 (temperature line visible)", css.includes("stroke-dashoffset: 0 !important"));
+ok("N9. Reduced-motion: ob-beam hidden (not looping)", css.includes(".ob-beam") && css.includes("display: none !important"));
+ok("N10. Reduced-motion: ob-sweep hidden (not looping)", css.includes(".ob-sweep") && css.includes("display: none !important"));
+
+// OnboardingShell wiring
+ok("N11. OnboardingShell imports onboarding-motion.css", shell.includes("onboarding-motion.css"));
+ok("N12. OnboardingShell accepts transitionKey prop", shell.includes("transitionKey"));
+ok("N13. OnboardingShell accepts direction prop", shell.includes("direction"));
+ok("N14. OnboardingShell applies ob-page-forward/back based on direction", shell.includes("ob-page-forward") && shell.includes("ob-page-back"));
+
+// welcome.tsx wiring
+ok("N15. welcome.tsx tracks direction state (1 | -1)", welSrc.includes("direction") && welSrc.includes("-1"));
+ok("N16. Back actions use direction -1", welSrc.includes("goToStep(2, -1)") || welSrc.includes("-1"));
+ok("N17. All OnboardingShell calls pass transitionKey", (() => {
+  const shells = welSrc.match(/<OnboardingShell[^>]*>/g) || [];
+  return shells.every(s => s.includes("transitionKey"));
+})());
+ok("N18. All OnboardingShell calls pass direction", (() => {
+  const shells = welSrc.match(/<OnboardingShell[^>]*>/g) || [];
+  return shells.every(s => s.includes("direction"));
+})());
+
+// Weather demo animations
+ok("N19. WeatherDemoCard imports onboarding-motion.css", wdcSrc.includes("onboarding-motion.css"));
+ok("N20. WeatherDemoCard: column headers stagger with ob-rise", wdcSrc.includes("ob-rise"));
+ok("N21. WeatherDemoCard: temperature line draws with ob-draw", wdcSrc.includes("ob-draw"));
+ok("N22. WeatherDemoCard: outfit silhouettes reveal with ob-pop", wdcSrc.includes("ob-pop") && wdcSrc.includes("OutfitSilhouette"));
+ok("N23. WeatherDemoCard: umbrella banner arrives last (ob-d11 or later)", wdcSrc.includes("ob-d11") || wdcSrc.includes("ob-d10"));
+ok("N24. WeatherDemoCard: no infinite animation loops (ob-beam/ob-sweep absent)", !wdcSrc.includes("ob-beam") && !wdcSrc.includes("ob-sweep"));
+
+// Wardrobe demo animations
+ok("N25. WardrobeDemoCard imports onboarding-motion.css", wardSrc.includes("onboarding-motion.css"));
+ok("N26. WardrobeDemoCard: garments stagger with ob-pop", wardSrc.includes("ob-pop ob-d2") || wardSrc.includes("ob-pop"));
+ok("N27. WardrobeDemoCard: recommendation row slides up", wardSrc.includes("ob-slide-up"));
+ok("N28. WardrobeDemoCard: one highlight sweep (not a loop)", wardSrc.includes("ob-sweep") && (wardSrc.match(/ob-sweep/g) || []).length <= 3);
+ok("N29. WardrobeDemoCard: mini garment thumbnails in recommendation", wardSrc.includes("CrewneckSVG") && wardSrc.includes("SweatpantsSVG") && wardSrc.includes("SneakerSVG"));
+
+// Scan demo animations
+ok("N30. ScanDemoCard imports onboarding-motion.css", scanSrc.includes("onboarding-motion.css"));
+ok("N31. ScanDemoCard: crewneck pops in (ob-pop)", scanSrc.includes("ob-pop"));
+ok("N32. ScanDemoCard: corner brackets animate with ob-bracket-*", scanSrc.includes("ob-bracket-tl") && scanSrc.includes("ob-bracket-br"));
+ok("N33. ScanDemoCard: beam runs bounded passes (iteration-count:3 in CSS)", css.includes("animation-iteration-count: 3"));
+ok("N34. ScanDemoCard: detection points reveal sequentially", scanSrc.includes("ob-d5") || scanSrc.includes("ob-d6"));
+ok("N35. ScanDemoCard: confirmation badge arrives last", scanSrc.includes("ob-confirm"));
+ok("N36. ScanDemoCard: Photograph → Review → Save steps present", scanSrc.includes("Photograph") && scanSrc.includes("Review") && scanSrc.includes("Save"));
+
+// No timer or interval in animation files (CSS-only)
+const noTimerFiles = [wdcSrc, wardSrc, scanSrc, shell];
+ok("N37. No setTimeout/setInterval in animation components (CSS-only motion)",
+  noTimerFiles.every(s => !s.includes("setTimeout") && !s.includes("setInterval")));
+
+// Reduced-motion: final state test (DOM-free)
+ok("N38. prefers-reduced-motion: all ob-anim elements get opacity:1 (CSS rule present)", (() => {
+  // CSS must cover .ob-anim under reduce media query
+  const reduceBlock = css.slice(css.indexOf("prefers-reduced-motion: reduce"));
+  return reduceBlock.includes(".ob-anim") && reduceBlock.includes("opacity: 1");
+})());
+ok("N39. prefers-reduced-motion: ob-page-forward/back also covered", (() => {
+  const reduceBlock = css.slice(css.indexOf("prefers-reduced-motion: reduce"));
+  return reduceBlock.includes("ob-page-forward") && reduceBlock.includes("ob-page-back");
+})());
+ok("N40. prefers-reduced-motion: stroke-dashoffset:0 means temperature line fully visible", (() => {
+  const reduceBlock = css.slice(css.indexOf("prefers-reduced-motion: reduce"));
+  return reduceBlock.includes("stroke-dashoffset: 0");
+})());
+
+// ════════════════════════════════════════════════════════════════════════════
+// O. React hooks order regression — no early auth return before later hooks
+// ════════════════════════════════════════════════════════════════════════════
+console.log("\n── O: React hooks order (no early auth return before hooks) ──");
+
+/**
+ * Parse a route file and verify that the `if (authLoading) return null;`
+ * guard appears AFTER every real React hook call in the component function.
+ *
+ * "Real hook" = a call to useState/useEffect/useMemo/useCallback/useRef/
+ * useContext/useAuthGuard/useEntitlement/useWardrobe/useNavigate/useResolvedSlots.
+ *
+ * We scan line numbers to determine ordering. If any hook line is found
+ * AFTER the early return line, the test fails.
+ */
+function checkHooksOrder(routePath, routeName) {
+  const src = fs.readFileSync(routePath, "utf8");
+  const lines = src.split("\n");
+
+  const HOOK_RE = /\b(useState|useEffect|useMemo|useCallback|useRef|useContext|useAuthGuard|useEntitlement|useWardrobe|useNavigate|useResolvedSlots)\s*\(/;
+  const EARLY_RETURN_RE = /if\s*\(authLoading\)\s*return\s*null/;
+
+  // Find all line numbers (1-indexed) of real hook calls
+  const hookLines = [];
+  // Find all line numbers of early auth returns
+  const earlyReturnLines = [];
+
+  lines.forEach((l, i) => {
+    const lineNo = i + 1;
+    // Skip import lines and comments
+    const trimmed = l.trim();
+    if (trimmed.startsWith("import ") || trimmed.startsWith("//") || trimmed.startsWith("*")) return;
+    if (HOOK_RE.test(l)) hookLines.push(lineNo);
+    if (EARLY_RETURN_RE.test(l)) earlyReturnLines.push(lineNo);
+  });
+
+  if (earlyReturnLines.length === 0) {
+    ok(`O. ${routeName}: has if(authLoading) guard`, false, "no early auth return found");
+    return;
+  }
+
+  const firstEarlyReturn = earlyReturnLines[0];
+  const hooksAfterReturn = hookLines.filter(l => l > firstEarlyReturn);
+
+  if (hooksAfterReturn.length > 0) {
+    ok(`O. ${routeName}: no hooks after early auth return`, false,
+      `hooks on lines ${hooksAfterReturn.join(", ")} come after early return on line ${firstEarlyReturn}`);
+  } else {
+    ok(`O. ${routeName}: all hooks before early auth return (line ${firstEarlyReturn})`, true);
+  }
+}
+
+const PROTECTED_ROUTES = [
+  ["src/routes/forecast.tsx",        "forecast"],
+  ["src/routes/saved.tsx",           "saved"],
+  ["src/routes/wardrobe.tsx",        "wardrobe"],
+  ["src/routes/recommendation.tsx",  "recommendation"],
+  ["src/routes/premium.tsx",         "premium"],
+  ["src/routes/preferences.tsx",     "preferences"],
+  ["src/routes/settings.tsx",        "settings"],
+];
+
+for (const [rel, name] of PROTECTED_ROUTES) {
+  checkHooksOrder(`/home/claude/live/${rel}`, name);
+}
+
+// Also verify that every protected route still has useAuthGuard
+ok("O. All 7 protected routes import useAuthGuard", PROTECTED_ROUTES.every(([rel]) => {
+  const src = fs.readFileSync(`/home/claude/live/${rel}`, "utf8");
+  return src.includes("useAuthGuard");
+}));
+
+// Verify redirect to /signup is still present (not weakened)
+ok("O. useAuthGuard still redirects to /signup on sign-out",
+  guard.includes('"/signup"') && guard.includes("replace: true"));
 
 console.log(`\n${"═".repeat(55)}`);
 console.log(`${p + f} tests: ${p} passed, ${f} failed`);

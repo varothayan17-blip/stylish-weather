@@ -38,8 +38,7 @@ export const Route = createFileRoute("/wardrobe")({
 const FILTERS = ["All", ...CATEGORIES] as const;
 
 function Wardrobe() {
-    const { authLoading } = useAuthGuard();
-  if (authLoading) return null;
+  const { authLoading } = useAuthGuard();
   const items = useWardrobe();
 
   // Open item detail when navigating from the "From your wardrobe" section
@@ -93,6 +92,8 @@ function Wardrobe() {
       .filter((item): item is WardrobeItem => item !== null);
   }, [isPremium, resolvedOutfit, items]);
   const current = items.find((i) => i.id === selected) ?? null;
+
+  if (authLoading) return null;
 
   return (
     <>
