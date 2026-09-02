@@ -107,22 +107,57 @@ export const firebaseEmailAuth: AuthProvider = {
 
 /**
  * Called after a successful Firebase sign-in.
- * Migrates local prefs+favorites to Firestore under the real uid,
- * then pulls and merges cloud data back.
+ *
+ * Draft handling:
+ *   Reads the dedicated onboarding draft key (aeruvo:onboarding-draft:v1) —
+ *   never weatherwear:prefs — so User A's persisted prefs cannot contaminate
+ *   User B's new account. The draft is only applied when it was explicitly
+ *   completed by the user in the current new-user journey (draft.completed===true).
+ *
+ *   For NEW users (no Firestore document): draft fields fill the base payload.
+ *   For RETURNING users (cloud doc exists): cloud wins for all existing fields;
+ *   draft is not applied to avoid overwriting the user's stored preferences.
+ *   (pullAndMergePrefs already implements cloud-wins logic.)
+ *
+ *   Draft is cleared after successful persistence.
  */
 async function afterSignIn(uid: string, name: string, email: string): Promise<void> {
-  const local = loadPrefs();
-  const withIdentity = { ...local, name: name || local.name, email, onboarded: true };
+  // Import draft functions without circular deps — introState has no auth dep.
+  const { loadOnboardingDraft, clearOnboardingDraft } = await import("./introState");
+  const draft = loadOnboardingDraft();
 
-  // Pull cloud prefs and merge — cloud settings win.
-  const merged = await cloudSync.pullAndMergePrefs(uid, withIdentity);
+  // Base payload: authenticated identity + onboarded flag.
+  // We deliberately do NOT spread weatherwear:prefs here to avoid User A
+  // contaminating User B on a shared browser.
+  const base: import("./preferences").Prefs = {
+    coldSensitivity: "normal",
+    commute: "walk",
+    theme: "system",
+    name: name,
+    email,
+    onboarded: true,
+    ...(draft.completed === true
+      ? {
+          // Apply draft fields only when the user completed the question flow.
+          ...(draft.coldSensitivity ? { coldSensitivity: draft.coldSensitivity } : {}),
+          ...(draft.commute ? { commute: draft.commute as import("./preferences").Commute } : {}),
+          ...(draft.clothingProfile
+            ? { clothingProfile: draft.clothingProfile as import("./clothingProfiles").ClothingProfileId }
+            : {}),
+          ...(draft.city ? { city: draft.city } : {}),
+        }
+      : {}),
+  };
+
+  // Pull cloud prefs and merge — cloud settings win for returning users.
+  // For new users (no doc), base values are written as-is.
+  const merged = await cloudSync.pullAndMergePrefs(uid, base);
   savePrefs(merged);
-
-  // Push merged prefs back (covers both new user and returning user).
   await cloudSync.syncPrefs(uid, merged);
-
-  // Migrate/restore favorites.
   await migrateFavorites(uid).catch(() => {});
+
+  // Clear draft only after successful persistence.
+  clearOnboardingDraft();
 }
 
 async function migrateFavorites(uid: string): Promise<void> {
@@ -182,16 +217,66 @@ export const auth: AuthProvider = isFirebaseConfigured() ? firebaseEmailAuth : l
  * Call from a direct user gesture. getGoogleRedirectResult() must be called
  * on every subsequent mount to consume the pending credential.
  */
+/**
+ * Returns true when the app is running on localhost/127.0.0.1.
+ * On localhost, signInWithRedirect fails because the auth redirect handler
+ * (/__/auth/handler) is served cross-origin from firebaseapp.com — browsers
+ * block the third-party storage access needed to recover the result.
+ * signInWithPopup works correctly on localhost and is used instead.
+ */
+function isLocalhost(): boolean {
+  if (typeof window === "undefined") return false;
+  return (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  );
+}
+
+/**
+ * Google sign-in — popup on localhost, redirect on production.
+ *
+ * Localhost: signInWithPopup — avoids cross-origin storage issue with redirect.
+ * Production: signInWithRedirect — works with the /__/auth/** Vercel proxy
+ *   and VITE_FIREBASE_AUTH_DOMAIN=www.aeruvo.app (same-origin authDomain).
+ *   iOS PWA note: redirect must be verified on a real device.
+ *
+ * Both paths call afterSignIn exactly once and return the uid.
+ * Popup path returns the uid directly. Redirect path returns void — the uid
+ * is returned after the redirect by getGoogleRedirectResult().
+ */
+export async function signInWithGoogle(): Promise<string | null> {
+  const fbAuth = await getFirebaseAuth();
+  if (!fbAuth) throw new Error("Firebase is not configured.");
+  const { GoogleAuthProvider, signInWithPopup, signInWithRedirect } = await import("firebase/auth");
+  const provider = new GoogleAuthProvider();
+  provider.addScope("profile");
+  provider.addScope("email");
+
+  if (isLocalhost()) {
+    // Popup: completes in this tab, no page reload needed.
+    const result = await signInWithPopup(fbAuth, provider);
+    const user = result.user;
+    const name = user.displayName ?? "";
+    const email = user.email ?? "";
+    console.info("[google-auth] popup uid:", user.uid.slice(0, 4) + "***");
+    await afterSignIn(user.uid, name, email);
+    return user.uid;
+  } else {
+    // Redirect: navigates away; result recovered by getGoogleRedirectResult().
+    await signInWithRedirect(fbAuth, provider);
+    return null; // execution resumes on next page load
+  }
+}
+
+/** @deprecated Use signInWithGoogle() — kept for backward compat if referenced elsewhere. */
 export async function signInWithGoogleRedirect(): Promise<void> {
   const fbAuth = await getFirebaseAuth();
   if (!fbAuth) throw new Error("Firebase is not configured.");
   const { GoogleAuthProvider, signInWithRedirect } = await import("firebase/auth");
   const provider = new GoogleAuthProvider();
-  // Request profile and email scopes (granted by default, explicit for clarity).
   provider.addScope("profile");
   provider.addScope("email");
   await signInWithRedirect(fbAuth, provider);
-  // Execution continues on the next page load after the redirect returns.
 }
 
 /**

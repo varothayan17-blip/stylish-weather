@@ -34,7 +34,7 @@ import { getErrorMessage } from "@/lib/utils";
 import { recommend } from "@/lib/recommend";
 import { computeRegretRisk } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
-import { isGuestSetupPending } from "@/lib/introState";
+import { isFirstSetupPending } from "@/lib/introState";
 import { UMBRELLA_LABEL, UMBRELLA_LABEL_NOW, UMBRELLA_ICON, isRainNow } from "@/lib/precipAdvice";
 import { OutfitSlotList } from "@/components/OutfitSlotList";
 import {
@@ -136,7 +136,7 @@ function computeIsDay(apiIsDay: boolean, sunrise?: string, sunset?: string): boo
 
 function Home() {
   const navigate = useNavigate();
-  const [redirecting, setRedirecting] = useState(false);
+  const [redirecting] = useState(false); // kept for legacy weather-load gating
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -159,26 +159,51 @@ function Home() {
   const [notifSuccess, setNotifSuccess] = useState(false);
   const [notifError, setNotifError] = useState<string | null>(null);
 
+  // Home route: uses Firebase auth as authority.
+  // Signed-out → /welcome (new visitor journey).
+  // Authenticated but no city → /preferences (first-time setup).
+  // Authenticated and ready → render home.
+  // prefs.onboarded is NOT used as an auth gate.
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authUid, setAuthUid] = useState<string | null>(null);
+
   useEffect(() => {
-    const p = loadPrefs();
-    if (!p.onboarded) {
-      setRedirecting(true);
-      // Guest mid-setup: has seen intro but needs to pick a city.
-      // Send to /preferences, not /welcome, so they don't repeat the tour.
-      if (isGuestSetupPending()) {
-        navigate({ to: "/preferences" });
-      } else {
-        navigate({ to: "/welcome" });
+    if (typeof window === "undefined") return;
+    let cancelled = false;
+    let unsub: (() => void) | undefined;
+    (async () => {
+      const { isFirebaseConfigured, getFirebaseAuth } = await import("@/lib/firebase");
+      if (!isFirebaseConfigured()) {
+        if (!cancelled) { setAuthLoading(false); navigate({ to: "/welcome" }); }
+        return;
       }
-      return;
-    }
-    setPrefs(p);
-    setGreeting(computeGreeting());
+      const fbAuth = await getFirebaseAuth();
+      if (!fbAuth || cancelled) { if (!cancelled) setAuthLoading(false); return; }
+      const { onAuthStateChanged } = await import("firebase/auth");
+      unsub = onAuthStateChanged(fbAuth, (user) => {
+        if (cancelled) return;
+        setAuthLoading(false);
+        if (!user) {
+          // Signed out → welcome (new-visitor journey)
+          navigate({ to: "/welcome" });
+          return;
+        }
+        setAuthUid(user.uid);
+        if (isFirstSetupPending(user.uid)) {
+          navigate({ to: "/preferences" });
+          return;
+        }
+        const p = loadPrefs();
+        setPrefs(p);
+        setGreeting(computeGreeting());
+      });
+    })().catch(() => { if (!cancelled) { setAuthLoading(false); navigate({ to: "/welcome" }); } });
+    return () => { cancelled = true; unsub?.(); };
   }, [navigate]);
 
   // Load notification prefs once after sign-in is confirmed
   useEffect(() => {
-    if (!prefs?.onboarded) return;
+    if (!authUid) return;
     let cancelled = false;
     getUid().then(async (uid) => {
       if (!uid || cancelled) return;
@@ -190,7 +215,7 @@ function Home() {
       }
     });
     return () => { cancelled = true; };
-  }, [prefs?.onboarded]);
+  }, [authUid]);
 
   useEffect(() => {
     if (!prefs) return;
@@ -267,7 +292,7 @@ function Home() {
   );
   const alerts = useMemo(() => (weather ? getWeatherAlerts(weather) : []), [weather]);
 
-  if (redirecting) return null;
+  if (authLoading || redirecting) return null;
 
   return (
     <AppShell>

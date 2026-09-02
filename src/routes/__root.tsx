@@ -18,6 +18,7 @@ import { initRegistrationSync } from "../lib/notifications";
 import { getUid } from "../lib/auth";
 import { cloudSync } from "../lib/cloudSync";
 import { subscribeToAuthState } from "../lib/auth";
+import { clearObsoleteGuestMarker } from "../lib/introState";
 
 function NotFoundComponent() {
   return (
@@ -133,6 +134,7 @@ function RootComponent() {
 
   useEffect(() => {
     registerServiceWorker();
+    clearObsoleteGuestMarker(); // remove legacy "aeruvo:guest-setup" marker safely
 
     // Persistent FID synchronisation: when notifications are enabled and the
     // user is authenticated, establish the onRegistered listener so Aeruvo

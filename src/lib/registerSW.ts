@@ -41,6 +41,19 @@ export function registerServiceWorker(): void {
   if (typeof window === "undefined") return;
   if (!("serviceWorker" in navigator)) return;
 
+  // Do not register the production service worker during local development.
+  // On localhost the SW intercepts requests that are served by the Vite dev
+  // server (hot-module replacement, etc.) and can throw:
+  //   TypeError: Failed to execute 'clone' on 'Response': Response body is already used
+  // This guard ensures the error is not hidden — production behaviour is intact.
+  if (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  ) {
+    console.info("[swreg] skipping registration on localhost (dev mode)");
+    return;
+  }
+
   const doRegister = () => {
     console.log("[swreg] start");
     console.log("[swreg] supported:yes");

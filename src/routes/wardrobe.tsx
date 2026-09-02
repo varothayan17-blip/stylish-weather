@@ -12,6 +12,7 @@ import { useEntitlement } from "@/lib/entitlement";
 import { WardrobeEntrance } from "@/components/wardrobe/WardrobeEntrance";
 import { CATEGORIES, type WardrobeItem } from "@/components/wardrobe/wardrobeData";
 import { WARDROBE_OPEN_ITEM_KEY } from "@/lib/wardrobeMatch";
+import { useAuthGuard } from "@/lib/useAuthGuard";
 
 export const Route = createFileRoute("/wardrobe")({
   head: () => ({
@@ -37,6 +38,8 @@ export const Route = createFileRoute("/wardrobe")({
 const FILTERS = ["All", ...CATEGORIES] as const;
 
 function Wardrobe() {
+    const { authLoading } = useAuthGuard();
+  if (authLoading) return null;
   const items = useWardrobe();
 
   // Open item detail when navigating from the "From your wardrobe" section

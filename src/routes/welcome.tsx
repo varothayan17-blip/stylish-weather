@@ -1,37 +1,35 @@
 /**
- * /welcome — Aeruvo introductory onboarding experience
+ * /welcome — Aeruvo onboarding state machine
  *
- * Four screens driven by a single step state (0–3):
- *   0 = Welcome         (brand hero + benefits)
- *   1 = Plan for the whole day  (weather timeline demo)
- *   2 = Make your wardrobe useful  (wardrobe preview)
- *   3 = Add clothing in seconds    (scan feature preview)
+ * Step sequence (no skip, no guest, no bypass):
+ *   0 = Landing      "Never guess what to wear again."
+ *   1 = Plan for the whole day       (WeatherDemoCard)
+ *   2 = Make your wardrobe useful    (WardrobeDemoCard)
+ *   3 = Add clothing in seconds      (ScanDemoCard)
+ *   4 = Personalization questions    (PreAuthQuestions)
+ *   → /signup?mode=create
  *
- * ── Navigation rules ─────────────────────────────────────────────────────────
- * • Existing onboarded users are redirected to "/" immediately on mount.
- * • Users who skipped/done intro but not yet onboarded go to "/signup".
- * • Step state (status + step) is persisted in localStorage so refresh
- *   mid-tour resumes at the exact screen the user left.
- * • "Continue as guest": sets onboarded=true FIRST, then navigates using the
- *   same city-presence logic as the auth sign-in flow:
- *     city set   → "/"
- *     no city    → "/preferences"
- *   This prevents a redirect loop when preferences sets the city and the
- *   user taps the Today tab (BottomNav → "/" → onboarded=true → renders).
- * • "Skip introduction" marks skipped and goes to "/signup".
- * • Google redirect result is processed on every mount via getGoogleRedirectResult.
+ * Returning users:
+ *   "Already have an account? Sign in" → /signup?mode=signin  (on step 0)
  *
- * ── SSR safety ───────────────────────────────────────────────────────────────
- * All localStorage/window access is inside useEffect or SSR-guarded.
- * No browser globals are accessed at module scope.
+ * Authenticated Firebase users are detected via onAuthStateChanged and
+ * redirected to "/" immediately (no prefs.onboarded check).
+ *
+ * Step state persists in localStorage so refresh resumes correctly.
+ * The personalization draft (city, preferences) is written to the shared
+ * PREFS_KEY (without onboarded:true). afterSignIn() reads it automatically.
+ *
+ * SSR safe: all Firebase and localStorage access is inside useEffect.
  */
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Sparkles, CloudSun, Shirt, MapPin } from "lucide-react";
 
-import { loadPrefs, savePrefs } from "@/lib/preferences";
-import { loadIntro, markInProgress, markSkipped, markDone, guestDestination, markGuestSetupPending } from "@/lib/introState";
-import { getGoogleRedirectResult } from "@/lib/auth";
+import {
+  loadIntro,
+  markInProgress,
+  clearObsoleteGuestMarker,
+} from "@/lib/introState";
 
 import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
 import { IntroProgress } from "@/components/onboarding/IntroProgress";
@@ -39,6 +37,7 @@ import { IntroButtons } from "@/components/onboarding/IntroButtons";
 import { WeatherDemoCard } from "@/components/onboarding/WeatherDemoCard";
 import { WardrobeDemoCard } from "@/components/onboarding/WardrobeDemoCard";
 import { ScanDemoCard } from "@/components/onboarding/ScanDemoCard";
+import { PreAuthQuestions } from "@/components/onboarding/PreAuthQuestions";
 
 export const Route = createFileRoute("/welcome")({
   head: () => ({
@@ -51,120 +50,95 @@ export const Route = createFileRoute("/welcome")({
 });
 
 const BENEFIT_ITEMS = [
-  {
-    icon: CloudSun,
-    title: "Live local weather",
-    desc: "Real wind chill, not just temperature.",
-  },
-  {
-    icon: Shirt,
-    title: "Personalized outfit picks",
-    desc: "Tuned to your commute and cold tolerance.",
-  },
-  {
-    icon: MapPin,
-    title: "Made for your city",
-    desc: "From Vancouver fog to Winnipeg windchill.",
-  },
+  { icon: CloudSun, title: "Live local weather", desc: "Real wind chill, not just temperature." },
+  { icon: Shirt, title: "Personalized outfit picks", desc: "Tuned to your commute and cold tolerance." },
+  { icon: MapPin, title: "Made for your city", desc: "From Vancouver fog to Winnipeg windchill." },
 ];
+
+type Step = 0 | 1 | 2 | 3 | 4;
 
 function WelcomeRoute() {
   const navigate = useNavigate();
-  const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
+  const [step, setStep] = useState<Step>(0);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    let cancelled = false;
 
-    // 1. Existing onboarded users → home immediately, skip intro entirely.
-    const prefs = loadPrefs();
-    if (prefs.onboarded) {
-      navigate({ to: "/" });
-      return;
-    }
+    // Clear any obsolete guest routing marker (safe: never deletes user data)
+    clearObsoleteGuestMarker();
 
-    // 2. Process any pending Google OAuth redirect result (fires when returning
-    //    from the Google sign-in page). Errors are handled inside auth.ts.
-    getGoogleRedirectResult().catch(() => {});
+    // Use Firebase auth as authority — not localStorage.
+    // If a Firebase user is already signed in, skip the onboarding entirely.
+    import("@/lib/firebase").then(async ({ isFirebaseConfigured, getFirebaseAuth }) => {
+      if (!isFirebaseConfigured() || cancelled) return;
+      const fbAuth = await getFirebaseAuth();
+      if (!fbAuth || cancelled) return;
+      const { onAuthStateChanged } = await import("firebase/auth");
+      let resolved = false;
+      const timer = setTimeout(() => { resolved = true; }, 1500);
+      const unsub = onAuthStateChanged(fbAuth, (user) => {
+        if (resolved || cancelled) { unsub(); return; }
+        resolved = true;
+        clearTimeout(timer);
+        unsub();
+        if (user && !cancelled) navigate({ to: "/", replace: true });
+      });
+    }).catch(() => {});
 
-    // 3. Check intro state. Skipped/done (but not yet onboarded) → signup.
+    // Resume from saved step when in-progress.
     const intro = loadIntro();
-    if (intro.status === "skipped" || intro.status === "done") {
-      navigate({ to: "/signup" });
-      return;
+    if (intro.status === "done") {
+      // All screens completed — go to signup.
+      navigate({ to: "/signup", search: { mode: "create" } });
+      return () => { cancelled = true; };
     }
-
-    // 4. Resume from saved step when in-progress.
     if (intro.status === "in-progress") {
-      const s = Math.min(intro.step, 3) as 0 | 1 | 2 | 3;
-      setStep(s);
+      setStep(Math.min(intro.step, 4) as Step);
     }
-    // status === "new" → stays at step 0 (welcome)
+    // "new" or "skipped" (legacy) → start at step 0
 
     setReady(true);
+    return () => { cancelled = true; };
   }, [navigate]);
 
-  /** Advance to a screen and persist the exact step to localStorage. */
-  function goToStep(s: 0 | 1 | 2 | 3) {
+  function goToStep(s: Step) {
     markInProgress(s);
     setStep(s);
   }
 
-  /** Skip introduction → /signup without creating an account. */
-  function skipToSignup() {
-    markSkipped();
-    navigate({ to: "/signup" });
-  }
-
-  /** Final Continue on screen 3 → mark done and go to signup. */
-  function finishToSignup() {
-    markDone();
-    navigate({ to: "/signup" });
+  /** Navigates to /signup in sign-in mode — bypasses new-user questions. */
+  function goToSignIn() {
+    navigate({ to: "/signup", search: { mode: "signin" } });
   }
 
   /**
-   * "Continue as guest" — enter the app without creating an account.
-   *
-   * Two paths depending on whether the guest already has a city:
-   *
-   * Path A — city already saved (e.g. returning guest, GPS already used):
-   *   • Mark intro done.
-   *   • Set onboarded=true (home renders immediately without redirect).
-   *   • Navigate to "/".
-   *
-   * Path B — no city yet (brand-new guest):
-   *   • Mark intro done.
-   *   • Do NOT set onboarded=true yet (guest hasn't completed required setup).
-   *   • Mark guest setup as pending (persisted to localStorage).
-   *   • Navigate to "/preferences".
-   *   • /preferences will show "Save and continue" and set onboarded=true
-   *     only after the guest picks a city.
-   *   • The home route checks for pending guest setup and redirects to
-   *     /preferences (not /welcome) so a refresh doesn't loop.
-   *
-   * All existing local wardrobe items, favourites, saved outfits and other
-   * preferences are preserved — we only add/change what's necessary.
+   * After questions are answered (draft completed), navigate to signup.
+   * markDone() is NOT called here — it is called in signup.tsx AFTER
+   * successful Firebase authentication, so cancelled auth doesn't mark
+   * the intro as done.
    */
-  function continueAsGuest() {
-    markDone();
-    const prefs = loadPrefs();
-
-    if (prefs.city) {
-      // Path A: city exists — full onboarding complete
-      savePrefs({ ...prefs, onboarded: true as const });
-      navigate({ to: "/" });
-    } else {
-      // Path B: no city — preferences required before onboarding is complete
-      markGuestSetupPending();
-      // Do NOT set onboarded=true here. /preferences will do it on completion.
-      navigate({ to: "/preferences" });
-    }
+  function goToSignup() {
+    navigate({ to: "/signup", search: { mode: "create" } });
   }
 
-  // Render nothing while determining the correct screen (avoids flash).
   if (!ready) return null;
 
-  // ── Screen 0: Welcome ──────────────────────────────────────────────────────
+  // ── Step 4: Personalization questions (pre-auth) ───────────────────────────
+  // Rendered inside OnboardingShell with scroll; questions component handles layout.
+  if (step === 4) {
+    return (
+      <OnboardingShell>
+        <PreAuthQuestions
+          onContinue={goToSignup}
+          onBack={() => goToStep(3)}
+        />
+      </OnboardingShell>
+    );
+  }
+
+  // ── Step 0: Landing ────────────────────────────────────────────────────────
   if (step === 0) {
     return (
       <OnboardingShell>
@@ -174,8 +148,7 @@ function WelcomeRoute() {
             Aeruvo
           </span>
           <h1 className="mt-5 text-[2.75rem] font-semibold leading-[1.05] tracking-tight text-foreground">
-            Never guess <br />
-            what to wear <br />
+            Never guess <br />what to wear <br />
             <span className="text-gradient">again.</span>
           </h1>
           <p className="mt-4 text-base leading-relaxed text-muted-foreground">
@@ -186,10 +159,7 @@ function WelcomeRoute() {
         <ul className="mt-8 space-y-3 animate-fade-up delay-100" role="list">
           {BENEFIT_ITEMS.map(({ icon: Icon, title, desc }) => (
             <li key={title} className="glass-card flex items-start gap-4 rounded-3xl p-4">
-              <div
-                className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary"
-                aria-hidden
-              >
+              <div className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary" aria-hidden>
                 <Icon className="h-5 w-5" strokeWidth={1.5} />
               </div>
               <div>
@@ -201,60 +171,49 @@ function WelcomeRoute() {
         </ul>
 
         <div className="mt-auto pt-8 space-y-3 animate-fade-up delay-200">
-          <button
-            type="button"
-            onClick={() => goToStep(1)}
-            className="press block w-full rounded-2xl bg-foreground py-4 text-center text-sm font-semibold text-background shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          >
+          <button type="button" onClick={() => goToStep(1)}
+            className="press block w-full rounded-2xl bg-foreground py-4 text-center text-sm font-semibold text-background shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
             Get started — it's free
           </button>
-          <button
-            type="button"
-            onClick={continueAsGuest}
-            className="block w-full rounded-2xl py-3 text-center text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          >
-            Continue as guest
+          <button type="button" onClick={goToSignIn}
+            className="block w-full rounded-2xl py-3 text-center text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
+            Already have an account? Sign in
           </button>
         </div>
       </OnboardingShell>
     );
   }
 
-  // ── Screen 1: Plan for the whole day ──────────────────────────────────────
+  // ── Step 1: Plan for the whole day ─────────────────────────────────────────
   if (step === 1) {
     return (
       <OnboardingShell>
         <div className="animate-fade-up">
-          <IntroProgress step={1} />
+          <IntroProgress step={1} total={4} />
           <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-foreground">
             Plan for the whole day
           </h1>
           <p className="mt-3 text-base leading-relaxed text-muted-foreground">
-            See what to wear as conditions change — including rain, wind and how the
-            temperature feels to you.
+            See what to wear as conditions change — including rain, wind and how the temperature feels to you.
           </p>
         </div>
-
-        <div className="mt-8 animate-fade-up delay-100">
-          <WeatherDemoCard />
-        </div>
-
+        <div className="mt-8 animate-fade-up delay-100"><WeatherDemoCard /></div>
         <IntroButtons
           primaryLabel="Continue"
           onPrimary={() => goToStep(2)}
-          secondaryLabel="Skip introduction"
-          onSecondary={skipToSignup}
+          secondaryLabel="Already have an account? Sign in"
+          onSecondary={goToSignIn}
         />
       </OnboardingShell>
     );
   }
 
-  // ── Screen 2: Make your wardrobe useful ───────────────────────────────────
+  // ── Step 2: Make your wardrobe useful ─────────────────────────────────────
   if (step === 2) {
     return (
       <OnboardingShell>
         <div className="animate-fade-up">
-          <IntroProgress step={2} />
+          <IntroProgress step={2} total={4} />
           <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-foreground">
             Make your wardrobe useful
           </h1>
@@ -262,52 +221,37 @@ function WelcomeRoute() {
             Add clothing you already own and get recommendations using your own items.
           </p>
         </div>
-
-        <div className="mt-8 animate-fade-up delay-100">
-          <WardrobeDemoCard />
-        </div>
-
+        <div className="mt-8 animate-fade-up delay-100"><WardrobeDemoCard /></div>
         <IntroButtons
           primaryLabel="Continue"
           onPrimary={() => goToStep(3)}
-          secondaryLabel="Skip introduction"
-          onSecondary={skipToSignup}
+          secondaryLabel="Already have an account? Sign in"
+          onSecondary={goToSignIn}
         />
       </OnboardingShell>
     );
   }
 
-  // ── Screen 3: Add clothing in seconds ─────────────────────────────────────
+  // ── Step 3: Add clothing in seconds ───────────────────────────────────────
   return (
     <OnboardingShell>
       <div className="animate-fade-up">
-        <IntroProgress step={3} />
+        <IntroProgress step={3} total={4} />
         <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-foreground">
           Add clothing in seconds
         </h1>
         <p className="mt-3 text-base leading-relaxed text-muted-foreground">
-          Photograph one clothing item, review the suggested details and save it to
-          your wardrobe.
+          Photograph one clothing item, review the suggested details and save it to your wardrobe.
         </p>
       </div>
-
-      <div className="mt-8 animate-fade-up delay-100">
-        <ScanDemoCard />
-      </div>
-
+      <div className="mt-8 animate-fade-up delay-100"><ScanDemoCard /></div>
       <div className="mt-auto pt-8 space-y-3">
-        <button
-          type="button"
-          onClick={finishToSignup}
-          className="press block w-full rounded-2xl bg-foreground py-4 text-center text-sm font-semibold text-background shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        >
+        <button type="button" onClick={() => goToStep(4)}
+          className="press block w-full rounded-2xl bg-foreground py-4 text-center text-sm font-semibold text-background shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
           Continue
         </button>
-        <button
-          type="button"
-          onClick={() => goToStep(2)}
-          className="block w-full rounded-2xl py-3 text-center text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        >
+        <button type="button" onClick={() => goToStep(2)}
+          className="block w-full rounded-2xl py-3 text-center text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
           Back
         </button>
       </div>

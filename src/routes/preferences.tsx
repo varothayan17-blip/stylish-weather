@@ -27,10 +27,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Section, Grid, Choice } from "@/components/FormControls";
-import {
-  isGuestSetupPending,
-  clearGuestSetupPending,
-} from "@/lib/introState";
+import { isFirstSetupPending, clearFirstSetupPending } from "@/lib/introState";
+import { useAuthGuard } from "@/lib/useAuthGuard";
 
 export const Route = createFileRoute("/preferences")({
   head: () => ({
@@ -69,6 +67,7 @@ function Preferences() {
    * already-onboarded user must behave as normal editing, not first-time
    * setup, to satisfy requirement 4.
    */
+  const { authLoading, uid: authUid } = useAuthGuard();
   const [isFirstSetup, setIsFirstSetup] = useState(false);
   const [completeCityError, setCompleteCityError] = useState(false);
 
@@ -77,7 +76,7 @@ function Preferences() {
     setP(prefs);
     // Read pending state exactly once on mount.
     // isGuestSetupPending() checks localStorage; it is safe to call here.
-    setIsFirstSetup(isGuestSetupPending());
+    setIsFirstSetup(!!authUid && isFirstSetupPending(authUid));
   }, []);
 
   useEffect(() => {
@@ -138,9 +137,11 @@ function Preferences() {
     // Set onboarded=true now that the guest has a real city
     const completed: Prefs = { ...p, onboarded: true };
     savePrefs(completed);
-    clearGuestSetupPending();
+    if (authUid) clearFirstSetupPending(authUid);
     navigate({ to: "/" });
   }
+
+  if (authLoading) return null;
 
   return (
     <AppShell>

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { loadFavorites, removeFavorite, FAV_KEY, favSlotDisplayName, type Favorite } from "@/lib/preferences";
 import { Heart, Trash2 } from "lucide-react";
+import { useAuthGuard } from "@/lib/useAuthGuard";
 
 export const Route = createFileRoute("/saved")({
   head: () => ({
@@ -15,6 +16,8 @@ export const Route = createFileRoute("/saved")({
 });
 
 function Saved() {
+    const { authLoading } = useAuthGuard();
+  if (authLoading) return null;
   const [favs, setFavs] = useState<Favorite[]>([]);
 
   function refresh() {

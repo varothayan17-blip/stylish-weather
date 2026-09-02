@@ -22,6 +22,7 @@ import { useEntitlement, type EntitlementResult } from "@/lib/entitlement";
 import { getUid } from "@/lib/auth";
 import { orchestrateEnable, orchestrateDisable, isIosSafariNonInstalled } from "@/lib/notifications";
 import { applyTheme, type Theme } from "@/lib/theme";
+import { useAuthGuard } from "@/lib/useAuthGuard";
 import {
   Sun,
   Moon,
@@ -68,6 +69,9 @@ const COMMUTE_LABEL: Record<Prefs["commute"], string> = {
 };
 
 function Settings() {
+  const { authLoading, uid: authUid } = useAuthGuard();
+  if (authLoading) return null;
+
   const [p, setP] = useState<Prefs>(defaultPrefs);
   const [saved, setSaved] = useState(false);
 
@@ -281,7 +285,7 @@ function Settings() {
           </div>
         ) : (
           <Link
-            to="/signup"
+            to="/signup" search={{ mode: "signin" }}
             className="glass-card flex items-center justify-between rounded-3xl p-4"
           >
             <span className="text-sm font-medium">Create a free account</span>
@@ -504,7 +508,7 @@ function Settings() {
         )}
         {!p.onboarded && (
           <p className="mt-2 px-1 text-xs text-muted-foreground">
-            <Link to="/signup" className="underline">Create a free account</Link> to enable reminders.
+            <Link to="/signup" search={{ mode: "signin" }} className="underline">Create a free account</Link> to enable reminders.
           </p>
         )}
       </Section>}
