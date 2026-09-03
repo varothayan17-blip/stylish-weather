@@ -129,28 +129,115 @@ function setCached(lat: number, lon: number, time: string, r: RadarPrecipObserva
  * If GetCapabilities fails we cannot know what TIME values GeoMet accepts,
  * and a guessed timestamp may yield a 400 error or a stale response.
  */
+/**
+ * Validate that a string is an absolute ISO timestamp (not a duration like PT6M).
+ * Accepts strings that start with 4-digit year and parse to a finite epoch ms.
+ * Rejects ISO duration strings (starting with P) and any non-parseable values.
+ */
+function isAbsoluteIso(s: string): boolean {
+  if (!s || !/^\d{4}-\d{2}-\d{2}T/.test(s)) return false;
+  return isFinite(Date.parse(s));
+}
+
+/**
+ * Extract the most-recent TIME value from the RADAR_1KM_RRAI WMS 1.3.0
+ * GetCapabilities Dimension element.
+ *
+ * Real GeoMet Dimension (confirmed 2026-09-03):
+ *   <Dimension name="time" default="2026-09-03T02:30:00Z" ...>
+ *     2026-09-02T23:30:00Z/2026-09-03T02:30:00Z/PT6M
+ *   </Dimension>
+ *
+ * Parsing strategy (order of preference):
+ *   1. `default` attribute — GeoMet sets this to the most-recent available time.
+ *      This is the most reliable and direct source.
+ *   2. ISO 8601 interval format (start/end/period):
+ *      "2026-09-02T23:30:00Z/2026-09-03T02:30:00Z/PT6M"
+ *      → select the second segment (end), validate it is an absolute ISO timestamp.
+ *      The third segment (PT6M) is a duration and must never be selected.
+ *   3. Comma-separated timestamp list:
+ *      "...T14:00Z,...T14:06Z,...T15:06Z"
+ *      → select the last token that passes isAbsoluteIso().
+ *   4. If none of the above yield a valid absolute ISO timestamp → return null.
+ *      Caller returns "unavailable"; no guessed timestamp is ever used.
+ *
+ * Stage-based logging (temporary, for Vercel preview diagnosis):
+ *   Logs are prefixed [radar-cap] and include each parsing step outcome.
+ *   Safe to remove once production timestamps are confirmed correct.
+ */
 async function getMostRecentRadarTime(signal: AbortSignal): Promise<string | null> {
   try {
     const url = `${GEOMET_BASE}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0&LAYERS=${RAIN_LAYER}`;
+    console.info("[radar-cap] stage=fetch url=" + url.slice(0, 80));
     const resp = await fetch(url, { signal });
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      console.warn("[radar-cap] stage=fetch-error status=" + resp.status);
+      return null;
+    }
     const text = await resp.text();
-    // GeoMet Dimension@name="time" for RADAR_1KM_RRAI.
-    // Format may be: "2026-08-31T14:00Z/2026-08-31T15:06Z/PT6M"  (period)
-    //             or: "2026-08-31T14:00Z,2026-08-31T14:06Z,...,2026-08-31T15:06Z"  (list)
-    // In both cases the last ISO token is the most recent available time.
-    const m = text.match(
-      /RADAR_1KM_RRAI[\s\S]{0,8000}?<Dimension[^>]*name="time"[^>]*>([\s\S]*?)<\/Dimension>/i,
+    console.info("[radar-cap] stage=fetched bytes=" + text.length);
+
+    // Locate the Dimension element for RADAR_1KM_RRAI, capturing both:
+    //   - the opening tag (to extract the `default` attribute)
+    //   - the text content (to parse the interval or list)
+    const dimMatch = text.match(
+      /RADAR_1KM_RRAI[\s\S]{0,8000}?(<Dimension[^>]*name="time"[^>]*>)([\s\S]*?)<\/Dimension>/i,
     );
-    if (!m) return null;
-    const content = m[1].trim();
-    // Split on comma (list) or slash (period); last segment is end-of-range
-    const tokens = content.split(/[,/]/).map(s => s.trim()).filter(Boolean);
-    const last = tokens[tokens.length - 1];
-    // Validate: must look like an ISO UTC timestamp ending with Z
-    if (last && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(last)) return last;
+    if (!dimMatch) {
+      console.warn("[radar-cap] stage=no-dimension");
+      return null;
+    }
+
+    const openTag = dimMatch[1];       // e.g. <Dimension name="time" default="2026-09-03T02:30:00Z" ...>
+    const content = dimMatch[2].trim(); // e.g. "2026-09-02T23:30:00Z/2026-09-03T02:30:00Z/PT6M"
+    console.info("[radar-cap] stage=dimension-found openTag=" + openTag.slice(0, 120));
+    console.info("[radar-cap] stage=dimension-content content=" + content.slice(0, 120));
+
+    // ── Strategy 1: default attribute ──────────────────────────────────────
+    const defaultMatch = openTag.match(/\bdefault="([^"]+)"/i);
+    if (defaultMatch) {
+      const defaultVal = defaultMatch[1].trim();
+      if (isAbsoluteIso(defaultVal)) {
+        console.info("[radar-cap] stage=selected source=default value=" + defaultVal);
+        return defaultVal;
+      }
+      console.warn("[radar-cap] stage=default-invalid value=" + defaultVal);
+    }
+
+    // ── Strategy 2: ISO 8601 interval (start/end/period) ───────────────────
+    // Detected by: contains exactly 2 slashes and third segment looks like a duration
+    const slashParts = content.split("/").map(s => s.trim());
+    if (slashParts.length === 3) {
+      const [, end, period] = slashParts;
+      // Verify it really is an interval: period must start with P (ISO 8601 duration)
+      if (period.startsWith("P") && isAbsoluteIso(end)) {
+        console.info("[radar-cap] stage=selected source=interval-end value=" + end);
+        return end;
+      }
+      console.warn("[radar-cap] stage=interval-parse-fail parts=" + slashParts.join("|"));
+    }
+
+    // ── Strategy 3: comma-separated timestamp list ──────────────────────────
+    if (content.includes(",")) {
+      const candidates = content.split(",").map(s => s.trim()).filter(isAbsoluteIso);
+      if (candidates.length > 0) {
+        const last = candidates[candidates.length - 1];
+        console.info("[radar-cap] stage=selected source=list-last value=" + last);
+        return last;
+      }
+      console.warn("[radar-cap] stage=list-no-valid-timestamps");
+    }
+
+    // ── Strategy 4: single absolute timestamp ───────────────────────────────
+    if (isAbsoluteIso(content)) {
+      console.info("[radar-cap] stage=selected source=single value=" + content);
+      return content;
+    }
+
+    console.warn("[radar-cap] stage=no-valid-timestamp content=" + content.slice(0, 80));
     return null;
-  } catch {
+  } catch (err) {
+    console.error("[radar-cap] stage=exception", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

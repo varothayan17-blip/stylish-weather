@@ -1067,6 +1067,146 @@ console.log("\n── Structural: evidence type and consistency ─────�
     decSrc.includes('radar!.status === "dry"') || decSrc.includes('radar.status === "dry"'));
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// getMostRecentRadarTime REGRESSION FIXTURES
+// Using the exact real GeoMet GetCapabilities Dimension content confirmed 2026-09-03
+// ════════════════════════════════════════════════════════════════════════════
+console.log("\n══ getMostRecentRadarTime regex fixtures ═══════════════════════");
+
+// Port the helper from radar-handler.ts
+function isAbsoluteIso(s) {
+  if (!s || !/^\d{4}-\d{2}-\d{2}T/.test(s)) return false;
+  return isFinite(Date.parse(s));
+}
+
+/**
+ * Port of getMostRecentRadarTime parsing logic (without the network call).
+ * Accepts the raw XML text and returns the selected timestamp or null.
+ */
+function parseRadarTime(xmlText) {
+  const dimMatch = xmlText.match(
+    /RADAR_1KM_RRAI[\s\S]{0,8000}?(<Dimension[^>]*name="time"[^>]*>)([\s\S]*?)<\/Dimension>/i,
+  );
+  if (!dimMatch) return null;
+  const openTag = dimMatch[1];
+  const content  = dimMatch[2].trim();
+
+  // Strategy 1: default attribute
+  const defaultMatch = openTag.match(/\bdefault="([^"]+)"/i);
+  if (defaultMatch) {
+    const v = defaultMatch[1].trim();
+    if (isAbsoluteIso(v)) return v;
+  }
+
+  // Strategy 2: ISO 8601 interval start/end/period
+  const slashParts = content.split("/").map(s => s.trim());
+  if (slashParts.length === 3) {
+    const [, end, period] = slashParts;
+    if (period.startsWith("P") && isAbsoluteIso(end)) return end;
+  }
+
+  // Strategy 3: comma-separated list
+  if (content.includes(",")) {
+    const candidates = content.split(",").map(s => s.trim()).filter(isAbsoluteIso);
+    if (candidates.length > 0) return candidates[candidates.length - 1];
+  }
+
+  // Strategy 4: single timestamp
+  if (isAbsoluteIso(content)) return content;
+  return null;
+}
+
+// ── Fixture 1: Real GeoMet response (confirmed 2026-09-03) ─────────────────
+// Actual Dimension content from geo.weather.gc.ca/geomet GetCapabilities
+const REAL_DIM_TEXT = [
+  "...<Layer>",
+  "  <Name>RADAR_1KM_RRAI</Name>",
+  '  <Dimension name="time" units="ISO8601" default="2026-09-03T02:30:00Z" nearestValue="0">',
+  "    2026-09-02T23:30:00Z/2026-09-03T02:30:00Z/PT6M",
+  "  </Dimension>",
+  "</Layer>...",
+].join("\n");
+
+const real = parseRadarTime(REAL_DIM_TEXT);
+ok("RC-1. Real GeoMet XML: selected time = default attribute",
+  real === "2026-09-03T02:30:00Z", `got: ${real}`);
+ok("RC-2. PT6M never selected", real !== "PT6M");
+ok("RC-3. Start timestamp not selected", real !== "2026-09-02T23:30:00Z");
+
+// ── Fixture 2: Interval without default attribute ───────────────────────────
+const NO_DEFAULT_TEXT = [
+  "...<Layer><Name>RADAR_1KM_RRAI</Name>",
+  '  <Dimension name="time" units="ISO8601">',
+  "    2026-09-02T23:30:00Z/2026-09-03T02:30:00Z/PT6M",
+  "  </Dimension></Layer>...",
+].join("\n");
+
+const noDefault = parseRadarTime(NO_DEFAULT_TEXT);
+ok("RC-4. Interval without default: selects end segment (not PT6M)",
+  noDefault === "2026-09-03T02:30:00Z", `got: ${noDefault}`);
+ok("RC-5. PT6M not selected (no default case)", noDefault !== "PT6M");
+
+// ── Fixture 3: Comma-separated list ────────────────────────────────────────
+const LIST_TEXT = [
+  "...<Layer><Name>RADAR_1KM_RRAI</Name>",
+  '  <Dimension name="time" units="ISO8601">',
+  "    2026-09-02T23:30:00Z,2026-09-02T23:36:00Z,2026-09-02T23:42:00Z,2026-09-03T02:30:00Z",
+  "  </Dimension></Layer>...",
+].join("\n");
+
+const list = parseRadarTime(LIST_TEXT);
+ok("RC-6. Comma list: selects the last valid timestamp",
+  list === "2026-09-03T02:30:00Z", `got: ${list}`);
+
+// ── Fixture 4: isAbsoluteIso rejects PT6M ──────────────────────────────────
+ok("RC-7. isAbsoluteIso('PT6M') = false", !isAbsoluteIso("PT6M"));
+ok("RC-8. isAbsoluteIso('P1D') = false", !isAbsoluteIso("P1D"));
+ok("RC-9. isAbsoluteIso('') = false", !isAbsoluteIso(""));
+ok("RC-10. isAbsoluteIso('not-a-date') = false", !isAbsoluteIso("not-a-date"));
+ok("RC-11. isAbsoluteIso('2026-09-03T02:30:00Z') = true", isAbsoluteIso("2026-09-03T02:30:00Z"));
+ok("RC-12. isAbsoluteIso('2026-09-03T02:30:00') = true (no Z)", isAbsoluteIso("2026-09-03T02:30:00"));
+
+// ── Fixture 5: No RADAR_1KM_RRAI in response ───────────────────────────────
+ok("RC-13. Empty XML → null", parseRadarTime("<WMS_Capabilities></WMS_Capabilities>") === null);
+
+// ── Fixture 6: Default attribute is a duration (invalid) ───────────────────
+const DURATION_DEFAULT = [
+  "...<Layer><Name>RADAR_1KM_RRAI</Name>",
+  '  <Dimension name="time" units="ISO8601" default="PT6M">',
+  "    2026-09-02T23:30:00Z/2026-09-03T02:30:00Z/PT6M",
+  "  </Dimension></Layer>...",
+].join("\n");
+const durationDefault = parseRadarTime(DURATION_DEFAULT);
+ok("RC-14. Default=PT6M (invalid) → falls back to interval end",
+  durationDefault === "2026-09-03T02:30:00Z", `got: ${durationDefault}`);
+
+// ── Fixture 7: All strategies fail → null ──────────────────────────────────
+const GARBAGE = [
+  "...<Layer><Name>RADAR_1KM_RRAI</Name>",
+  '  <Dimension name="time" units="ISO8601">',
+  "    not/valid/data",
+  "  </Dimension></Layer>...",
+].join("\n");
+ok("RC-15. Garbage content → null", parseRadarTime(GARBAGE) === null);
+
+// ── Fixture 8: Single timestamp ─────────────────────────────────────────────
+const SINGLE = [
+  "...<Layer><Name>RADAR_1KM_RRAI</Name>",
+  '  <Dimension name="time">2026-09-03T02:30:00Z</Dimension></Layer>...',
+].join("\n");
+ok("RC-16. Single timestamp → that timestamp", parseRadarTime(SINGLE) === "2026-09-03T02:30:00Z");
+
+console.log("\n── Handler structural check ────────────────────────────────────");
+{
+  const fs = require("fs");
+  const h = fs.readFileSync("/home/claude/live/src/lib/radar-handler.ts", "utf8");
+  ok("HC-1. default attribute parsed first", h.indexOf("default=") < h.indexOf("slashParts"));
+  ok("HC-2. PT6M detected via period.startsWith P", h.includes("period.startsWith(\"P\")") || h.includes("period.startsWith('P')"));
+  ok("HC-3. No computed fallback timestamp", !h.includes("setUTCMinutes") && !h.includes("Math.floor"));
+  ok("HC-4. isAbsoluteIso validates all candidates", h.includes("isAbsoluteIso"));
+  ok("HC-5. Stage logging present", h.includes("[radar-cap]"));
+}
+
 console.log(`\n${"═".repeat(55)}`);
 console.log(`${p+f} tests: ${p} passed, ${f} failed`);
 process.exit(f>0?1:0);
