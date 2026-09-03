@@ -994,6 +994,25 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     };
   });
 
+  // Compute providerDataAgeMs: client fetch time minus provider c.time.
+  // This is always >= 0 because we take Math.max(0, ...) above for staleMinutes.
+  // Re-compute from the raw values to get ms precision, not rounded minutes.
+  const providerDataAgeMs = (() => {
+    const parse = (key: string) => {
+      const [d, t] = key.split("T");
+      const [y, mo, da] = d.split("-").map(Number);
+      const [hh, mi] = t.split(":").map(Number);
+      return Date.UTC(y, mo - 1, da, hh, mi);
+    };
+    return Math.max(0, parse(nowFullKey) - parse(currentTime));
+  })();
+
+  // m15 current slot timestamp string (for UI display + rainNowDecision tolerance check)
+  const m15CurrentTimeIso: string | undefined =
+    m15CurrentIdx >= 0 && m15
+      ? (m15.time as string[])[m15CurrentIdx]
+      : undefined;
+
   return {
     tempC: c.temperature_2m,
     feelsLikeC: c.apparent_temperature,
@@ -1013,6 +1032,22 @@ async function fetchWeather(lat: number, lon: number, city = "Your location"): P
     // the sun times card and accurate isDay computation.
     sunrise: daily[0]?.sunrise,
     sunset: daily[0]?.sunset,
+    // ── Live current-block precipitation amounts ─────────────────────
+    currentPrecipMm,
+    currentRainMm,
+    currentShowersMm,
+    currentTimeIso: currentTime,
+    providerDataAgeMs,
+    // ── Nearest m15 slot (current only) ─────────────────────────────
+    m15CurrentPrecipMm,
+    m15CurrentRainMm,
+    m15CurrentIsRain,
+    m15CurrentTimeIso,
+    // nowLocalMs: the pseudo-epoch at fetch time = Date.now() + utcOffsetSec*1000.
+    // rainNowDecision uses this (not Date.now()) to compare against parseIsoLocal()
+    // which also interprets provider ISO strings as if they were UTC.
+    // This ensures timezone-safe m15 tolerance checks regardless of browser timezone.
+    nowLocalMs: nowLocalMs2,
     // The "Now" slot (i === 0) must always match the hero card exactly.
     // weather.hourly[0].code comes from h.weather_code[startIdx] — the raw
     // hourly WMO code — which bypasses every normalization guard (cloud_cover

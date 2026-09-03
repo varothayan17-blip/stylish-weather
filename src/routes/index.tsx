@@ -34,8 +34,11 @@ import { getErrorMessage } from "@/lib/utils";
 import { recommend } from "@/lib/recommend";
 import { computeRegretRisk } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
-import { isGuestSetupPending } from "@/lib/introState";
+import { isFirstSetupPending } from "@/lib/introState";
 import { UMBRELLA_LABEL, UMBRELLA_LABEL_NOW, UMBRELLA_ICON, isRainNow } from "@/lib/precipAdvice";
+import { rainNowDecision, type RainNowDecision } from "@/lib/rainNowDecision";
+import { fetchRadarNow } from "@/lib/fetchRadarNow";
+import type { RadarPrecipObservation } from "@/lib/radar-types";
 import { OutfitSlotList } from "@/components/OutfitSlotList";
 import {
   Wind,
@@ -136,9 +139,14 @@ function computeIsDay(apiIsDay: boolean, sunrise?: string, sunset?: string): boo
 
 function Home() {
   const navigate = useNavigate();
-  const [redirecting, setRedirecting] = useState(false);
+  const [redirecting] = useState(false); // kept for legacy weather-load gating
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
+  // Radar observation — fetched in parallel with weather, never blocks render.
+  const [radar, setRadar] = useState<RadarPrecipObservation | null>(null);
+  // Request ID for the radar fetch: incremented on each weather refresh so
+  // stale radar responses (from old coordinates) are discarded.
+  const radarRequestIdRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [greeting, setGreeting] = useState<{ label: string; isNight: boolean }>({
@@ -148,6 +156,8 @@ function Home() {
   const [locating, setLocating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  // Timestamp of the last successful weather fetch — used for background refresh deduplication.
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
   // ── Notification discovery card ─────────────────────────────────────
   const [notifDismissed, setNotifDismissed] = useState<boolean>(() => {
@@ -159,26 +169,51 @@ function Home() {
   const [notifSuccess, setNotifSuccess] = useState(false);
   const [notifError, setNotifError] = useState<string | null>(null);
 
+  // Home route: uses Firebase auth as authority.
+  // Signed-out → /welcome (new visitor journey).
+  // Authenticated but no city → /preferences (first-time setup).
+  // Authenticated and ready → render home.
+  // prefs.onboarded is NOT used as an auth gate.
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authUid, setAuthUid] = useState<string | null>(null);
+
   useEffect(() => {
-    const p = loadPrefs();
-    if (!p.onboarded) {
-      setRedirecting(true);
-      // Guest mid-setup: has seen intro but needs to pick a city.
-      // Send to /preferences, not /welcome, so they don't repeat the tour.
-      if (isGuestSetupPending()) {
-        navigate({ to: "/preferences" });
-      } else {
-        navigate({ to: "/welcome" });
+    if (typeof window === "undefined") return;
+    let cancelled = false;
+    let unsub: (() => void) | undefined;
+    (async () => {
+      const { isFirebaseConfigured, getFirebaseAuth } = await import("@/lib/firebase");
+      if (!isFirebaseConfigured()) {
+        if (!cancelled) { setAuthLoading(false); navigate({ to: "/welcome" }); }
+        return;
       }
-      return;
-    }
-    setPrefs(p);
-    setGreeting(computeGreeting());
+      const fbAuth = await getFirebaseAuth();
+      if (!fbAuth || cancelled) { if (!cancelled) setAuthLoading(false); return; }
+      const { onAuthStateChanged } = await import("firebase/auth");
+      unsub = onAuthStateChanged(fbAuth, (user) => {
+        if (cancelled) return;
+        setAuthLoading(false);
+        if (!user) {
+          // Signed out → welcome (new-visitor journey)
+          navigate({ to: "/welcome" });
+          return;
+        }
+        setAuthUid(user.uid);
+        if (isFirstSetupPending(user.uid)) {
+          navigate({ to: "/preferences" });
+          return;
+        }
+        const p = loadPrefs();
+        setPrefs(p);
+        setGreeting(computeGreeting());
+      });
+    })().catch(() => { if (!cancelled) { setAuthLoading(false); navigate({ to: "/welcome" }); } });
+    return () => { cancelled = true; unsub?.(); };
   }, [navigate]);
 
   // Load notification prefs once after sign-in is confirmed
   useEffect(() => {
-    if (!prefs?.onboarded) return;
+    if (!authUid) return;
     let cancelled = false;
     getUid().then(async (uid) => {
       if (!uid || cancelled) return;
@@ -190,7 +225,7 @@ function Home() {
       }
     });
     return () => { cancelled = true; };
-  }, [prefs?.onboarded]);
+  }, [authUid]);
 
   useEffect(() => {
     if (!prefs) return;
@@ -200,7 +235,29 @@ function Home() {
         setError(null);
         const city = prefs!.city ?? CANADIAN_CITIES[0];
         const w = await fetchWeather(city.lat, city.lon, city.name);
-        if (!cancelled) setWeather(w);
+        if (!cancelled) {
+          setWeather(w);
+          setFetchedAt(Date.now());
+          // Radar fetch: runs in parallel with weather, never blocks render.
+          // A request ID is stamped at the start of this fetch cycle.
+          // If coordinates change or a new refresh starts, the ID advances
+          // and stale results are dropped — prevents an old Scarborough
+          // observation overwriting a newer Toronto result.
+          radarRequestIdRef.current += 1;
+          const thisRadarId = radarRequestIdRef.current;
+          // Clear stale radar immediately so P0 is not applied to new location.
+          setRadar(null);
+          if (prefs?.city?.lat !== undefined && prefs?.city?.lon !== undefined) {
+            fetchRadarNow(prefs.city.lat, prefs.city.lon)
+              .then((obs) => {
+                // Only accept if this is still the current request.
+                if (!cancelled && radarRequestIdRef.current === thisRadarId) {
+                  setRadar(obs);
+                }
+              })
+              .catch(() => {});
+          }
+        }
       } catch (e) {
         if (!cancelled) setError(getErrorMessage(e, "Couldn't load weather"));
       } finally {
@@ -217,6 +274,49 @@ function Home() {
     setRefreshing(true);
     setRefreshTick((t) => t + 1);
   }
+
+  // ── Visibility / focus refresh with deduplication ────────────────────────
+  //
+  // Fetch fresh conditions when:
+  //   • The user returns to the browser tab (visibilitychange)
+  //   • The window regains focus after being in the background
+  //   • Network connectivity is restored
+  //
+  // Deduplication: only refresh when the last fetch was > STALE_MS ago.
+  // This prevents a double-fetch when both visibilitychange and focus
+  // fire simultaneously, or when the user quickly switches tabs.
+  //
+  // STALE_THRESHOLD_MS: 5 minutes. Current-condition data from Open-Meteo
+  // updates at 15-minute model boundaries. Refreshing more often than 5 min
+  // yields stale responses; less often risks showing very outdated conditions.
+  const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+  const fetchedAtRef = useRef<number | null>(null);
+  useEffect(() => { fetchedAtRef.current = fetchedAt; }, [fetchedAt]);
+
+  useEffect(() => {
+    if (!prefs) return;
+    function maybeRefresh() {
+      const last = fetchedAtRef.current;
+      if (!last || Date.now() - last > STALE_THRESHOLD_MS) {
+        setRefreshTick((t) => t + 1);
+      }
+    }
+    function onVisibility() {
+      if (document.visibilityState === "visible") maybeRefresh();
+    }
+    function onFocus() { maybeRefresh(); }
+    function onOnline() { maybeRefresh(); }
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [prefs]);
+
+
 
   async function locateMe() {
     if (!prefs) return;
@@ -252,9 +352,15 @@ function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs?.onboarded]);
 
+  // Shared precipitation-now decision — hero icon, recommendation and umbrella all consume this.
+  const rainDecision: RainNowDecision | null = useMemo(
+    () => (weather ? rainNowDecision(weather, radar ?? undefined, Date.now()) : null),
+    [weather, radar],
+  );
+
   const rec = useMemo(
-    () => (weather && prefs ? recommend(weather, prefs) : null),
-    [weather, prefs],
+    () => (weather && prefs ? recommend(weather, prefs, radar ?? undefined) : null),
+    [weather, prefs, radar],
   );
   // useResolvedSlots must be called unconditionally (Rules of Hooks).
   // When rec is null (weather not loaded yet), the hook returns empty slots.
@@ -267,7 +373,7 @@ function Home() {
   );
   const alerts = useMemo(() => (weather ? getWeatherAlerts(weather) : []), [weather]);
 
-  if (redirecting) return null;
+  if (authLoading || redirecting) return null;
 
   return (
     <AppShell>
@@ -363,7 +469,7 @@ function Home() {
               </div>
               <div className="text-primary animate-breathe">
                 <WeatherIcon
-                  code={weather.code}
+                  code={rainDecision?.effectiveCurrentCode ?? weather.code}
                   isDay={computeIsDay(weather.isDay, weather.sunrise, weather.sunset)}
                   className="h-24 w-24"
                 />

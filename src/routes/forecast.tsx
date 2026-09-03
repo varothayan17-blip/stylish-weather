@@ -12,6 +12,7 @@ import { computeRegretRisk, type RegretLevel } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
 import { UMBRELLA_LABEL, UMBRELLA_ICON } from "@/lib/precipAdvice";
 import { ChevronDown, Droplets } from "lucide-react";
+import { useAuthGuard } from "@/lib/useAuthGuard";
 
 export const Route = createFileRoute("/forecast")({
   head: () => ({
@@ -45,6 +46,7 @@ function dayLabel(dateStr: string, index: number) {
 }
 
 function Forecast() {
+  const { authLoading } = useAuthGuard();
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +152,8 @@ function Forecast() {
       return { day: effectiveDay, rec, displayHeadline, risk, alerts, isTonightCard };
     });
   }, [weather, prefs]);
+
+  if (authLoading) return null;
 
   return (
     <AppShell>

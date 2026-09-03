@@ -18,6 +18,7 @@ import type { Weather } from "./weather";
 import type { Prefs } from "./preferences";
 import type { UmbrellaLevel } from "./precipAdvice";
 import { analyzeWeather } from "./weatherContext";
+import type { RadarPrecipObservation } from "./radar-types";
 import { getProfile, selectOutfit } from "./clothingProfiles";
 
 export type Recommendation = {
@@ -50,9 +51,9 @@ export type Recommendation = {
  */
 export const OUTFIT_BAND_EDGES = [-10, 0, 8, 15, 22, 28] as const;
 
-export function recommend(w: Weather, p: Prefs): Recommendation {
+export function recommend(w: Weather, p: Prefs, radar?: RadarPrecipObservation): Recommendation {
   // Layer 1 — weather intelligence (profile-agnostic)
-  const ctx = analyzeWeather(w, p);
+  const ctx = analyzeWeather(w, p, radar);
 
   // Layer 2 — outfit selection (profile-specific)
   const profile = getProfile(p.clothingProfile);

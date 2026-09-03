@@ -15,6 +15,7 @@ import { computeRegretRisk } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
 import { UMBRELLA_LABEL, UMBRELLA_ICON } from "@/lib/precipAdvice";
 import { Sun, Hand, Heart, AlertTriangle, Sparkles, ArrowLeft, Shirt } from "lucide-react";
+import { useAuthGuard } from "@/lib/useAuthGuard";
 
 export const Route = createFileRoute("/recommendation")({
   head: () => ({
@@ -27,6 +28,7 @@ export const Route = createFileRoute("/recommendation")({
 });
 
 function Recommendation() {
+  const { authLoading } = useAuthGuard();
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +64,8 @@ function Recommendation() {
     [weather, prefs, rec],
   );
   const alerts = useMemo(() => (weather ? getWeatherAlerts(weather) : []), [weather]);
+
+  if (authLoading) return null;
 
   return (
     <AppShell>

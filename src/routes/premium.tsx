@@ -11,6 +11,7 @@ import { getErrorMessage } from "@/lib/utils";
 import { useState } from "react";
 import { Sparkles, Check, Shirt, Bell, BarChart3, Settings } from "lucide-react";
 import { loadPrefs } from "@/lib/preferences";
+import { useAuthGuard } from "@/lib/useAuthGuard";
 
 export const Route = createFileRoute("/premium")({
   head: () => ({
@@ -54,6 +55,8 @@ function fmt(ms: number) {
 }
 
 function Premium() {
+  const { authLoading } = useAuthGuard();
+
   const entitlement = useEntitlement();
   const [activating, setActivating]           = useState(false);
   const [portalLoading, setPortalLoading]     = useState(false);
@@ -108,6 +111,8 @@ function Premium() {
   }
 
   const checkoutButtonLabel = activating ? "Loading…" : "Start free trial";
+
+  if (authLoading) return null;
 
   return (
     <AppShell>

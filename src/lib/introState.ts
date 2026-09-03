@@ -2,37 +2,44 @@
  * introState.ts — versioned onboarding introduction state
  *
  * Tracks ONLY the introductory screens (the 4-screen value proposition tour).
- * Separate from prefs.onboarded (which gates the main app experience).
+ * Separate from prefs.onboarded and Firebase Auth state.
  *
  * ── Storage ──────────────────────────────────────────────────────────────────
- * Both status and step are stored together in a single localStorage record:
+ * Both status and step are stored in a single localStorage record:
  *   Key:   "aeruvo:intro-v1"
  *   Value: { status: IntroStatus; step: number }
  *
- * localStorage is used (not sessionStorage) so the exact step survives
- * browser close/reopen. A returning visitor who closed the browser mid-tour
- * resumes at the exact screen they left. Malformed or missing data falls
- * back to { status: "new", step: 0 }.
+ * localStorage persists across browser close/reopen so a visitor who closes
+ * mid-tour resumes at the exact screen they left.
+ * Malformed or missing data falls back to { status: "new", step: 0 }.
  *
  * ── States ───────────────────────────────────────────────────────────────────
- *   "new"         — never seen any intro screen (truly new visitor)
+ *   "new"         — never seen any intro screen
  *   "in-progress" — currently moving through screens 1–3
  *   "skipped"     — pressed "Skip introduction"
- *   "done"        — pressed final "Continue" or "Continue as guest"
+ *   "done"        — reached the final screen and pressed "Create your free account"
  *
  * ── Existing-user protection ──────────────────────────────────────────────────
  * shouldShowIntro(onboarded) returns false whenever onboarded === true.
- * This check is always the outer gate — it is independent of the intro key.
- * Bumping the key version (e.g. "aeruvo:intro-v2") only affects users who
- * are NOT yet onboarded and had previously skipped or completed the OLD tour
- * under the old key. It NEVER forces onboarded users back through the intro.
+ * Bumping the key version only affects non-onboarded users who previously
+ * skipped or completed the OLD tour. It NEVER forces onboarded users back.
  *
- * ── Version ──────────────────────────────────────────────────────────────────
- * Do not bump the key without a product decision. Bumping does NOT affect
- * any user who has prefs.onboarded === true.
+ * ── First-setup marker ───────────────────────────────────────────────────────
+ * A separate key "aeruvo:first-setup" signals that the current authenticated
+ * user needs to complete required preferences before entering the app.
+ * Preferences writes this on detecting a post-auth first-time visit,
+ * and clears it after "Save and continue" succeeds.
+ * Existing authenticated users editing preferences from Settings never
+ * trigger this key.
+ *
+ * ── Legacy guest cleanup ─────────────────────────────────────────────────────
+ * Previous versions allowed guest access and stored "aeruvo:guest-setup".
+ * clearObsoleteGuestMarker() removes ONLY that routing marker. It never
+ * deletes user data (prefs, wardrobe, favorites). Call this on app mount.
  */
 
-const INTRO_KEY = "aeruvo:intro-v1";
+const INTRO_KEY      = "aeruvo:intro-v1";
+export const FIRST_SETUP_KEY = "aeruvo:first-setup";
 
 export type IntroStatus = "new" | "in-progress" | "skipped" | "done";
 
@@ -44,25 +51,28 @@ export interface IntroRecord {
 
 const DEFAULT: IntroRecord = { status: "new", step: 0 };
 
+function lsGet(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function lsSet(key: string, value: string): void {
+  if (typeof window === "undefined") return;
+  try { localStorage.setItem(key, value); } catch {}
+}
+function lsRemove(key: string): void {
+  if (typeof window === "undefined") return;
+  try { localStorage.removeItem(key); } catch {}
+}
+
 export function loadIntro(): IntroRecord {
-  if (typeof window === "undefined") return { ...DEFAULT };
-  try {
-    const raw = localStorage.getItem(INTRO_KEY);
-    if (!raw) return { ...DEFAULT };
-    const parsed = JSON.parse(raw) as Partial<IntroRecord>;
-    return { ...DEFAULT, ...parsed };
-  } catch {
-    return { ...DEFAULT };
-  }
+  const raw = lsGet(INTRO_KEY);
+  if (!raw) return { ...DEFAULT };
+  try { return { ...DEFAULT, ...(JSON.parse(raw) as Partial<IntroRecord>) }; }
+  catch { return { ...DEFAULT }; }
 }
 
 export function saveIntro(record: IntroRecord): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(INTRO_KEY, JSON.stringify(record));
-  } catch {
-    // localStorage unavailable (e.g. private browsing quota) — continue silently
-  }
+  lsSet(INTRO_KEY, JSON.stringify(record));
 }
 
 export function markInProgress(step: number): void {
@@ -78,11 +88,8 @@ export function markDone(): void {
 }
 
 /**
- * Returns true when the intro should be shown to this visitor.
- *
- * ALWAYS returns false when onboarded === true — existing authenticated users
- * and guests who completed setup are never shown the intro regardless of
- * which intro version key is present.
+ * Returns true when the intro tour should be shown.
+ * Always false when the user is already onboarded (auth'd + prefs done).
  */
 export function shouldShowIntro(onboarded: boolean): boolean {
   if (onboarded) return false;
@@ -90,65 +97,112 @@ export function shouldShowIntro(onboarded: boolean): boolean {
   return status === "new" || status === "in-progress";
 }
 
+// ── UID-scoped first-setup marker ────────────────────────────────────────────
 /**
- * Guest-safe post-intro destination.
+ * First-setup state is scoped to the authenticated UID.
+ * This prevents User A's incomplete setup from affecting User B when they
+ * sign in on the same browser.
  *
- * Mirrors signup.tsx postSignInDestination():
- *   prefs.city present → "/" (home has everything it needs)
- *   no city            → "/preferences" (guest must pick a city first)
- *
- * Call this AFTER setting onboarded=true so that the home route will not
- * redirect back to /welcome when the guest eventually navigates to "/".
+ * Key format: "aeruvo:first-setup:<uid>"
+ * The uid suffix means each user gets an independent marker.
+ * Sign-out does not automatically clear the marker, but since the key is
+ * uid-scoped, it cannot interfere with a different user's session.
+ * The marker is cleared on successful "Save and continue" completion.
  */
-export function guestDestination(prefs: { city?: unknown }): "/" | "/preferences" {
-  return prefs.city ? "/" : "/preferences";
+
+function firstSetupKey(uid: string): string {
+  return `${FIRST_SETUP_KEY}:${uid}`;
 }
 
-// ── Guest setup state ─────────────────────────────────────────────────────────
-/**
- * Separate key for tracking a guest who has dismissed the intro tour but
- * has not yet completed the required city preference setup.
- *
- * States:
- *   absent / false  — no pending setup (normal user, or setup complete)
- *   true            — guest is mid-setup in /preferences
- *
- * Lifecycle:
- *   1. continueAsGuest() in welcome.tsx sets this when guest has no city.
- *   2. /preferences reads it and shows the "Save and continue" button.
- *   3. Completing /preferences (with a city) calls markGuestSetupComplete()
- *      which sets prefs.onboarded=true and clears this flag.
- *   4. / (home route) checks this key: if set, redirect to /preferences
- *      instead of /welcome, and do NOT set onboarded=true yet.
- *
- * This prevents a guest from being silently treated as fully onboarded
- * before they have chosen a city, while still preserving all their
- * existing local data across refresh and browser close/reopen.
- */
-const GUEST_SETUP_KEY = "aeruvo:guest-setup";
+/** True when the specified authenticated user still needs to complete setup. */
+export function isFirstSetupPending(uid: string): boolean {
+  return lsGet(firstSetupKey(uid)) === "1";
+}
 
-/** Returns true when a guest has a pending incomplete city-preference setup. */
-export function isGuestSetupPending(): boolean {
-  if (typeof window === "undefined") return false;
+/** Set when routing a post-auth user to /preferences for the first time. */
+export function markFirstSetupPending(uid: string): void {
+  lsSet(firstSetupKey(uid), "1");
+}
+
+/** Clear after "Save and continue" succeeds. Only affects the specified user. */
+export function clearFirstSetupPending(uid: string): void {
+  lsRemove(firstSetupKey(uid));
+}
+
+// ── Legacy guest cleanup ─────────────────────────────────────────────────────
+
+/**
+ * Remove the now-obsolete "aeruvo:guest-setup" routing marker from any
+ * browser that still has it from the previous guest-access architecture.
+ *
+ * SAFE: removes only the routing marker, never prefs, wardrobe or favorites.
+ * The user's local data remains intact for migration after authentication.
+ */
+export function clearObsoleteGuestMarker(): void {
+  lsRemove("aeruvo:guest-setup");
+}
+
+// ── Pre-auth onboarding draft ─────────────────────────────────────────────────
+/**
+ * Dedicated localStorage key for pre-authentication personalization answers.
+ *
+ * WHY a separate key (not weatherwear:prefs):
+ *   weatherwear:prefs can contain a previous authenticated user's data on a shared
+ *   browser. Writing pre-auth answers there would cause User B to inherit or
+ *   overwrite User A's city, sensitivity, commute or clothing profile, and
+ *   afterSignIn() would upload mixed data to User B's cloud account.
+ *
+ *   This key is ONLY for the unauthenticated onboarding journey.
+ *   It is never merged into weatherwear:prefs before Firebase authentication.
+ *   After successful authentication, auth.ts reads the draft, merges it
+ *   deliberately, then clears it.
+ *
+ * Draft fields (subset of Prefs — no name, email, onboarded, theme):
+ *   clothingProfile, coldSensitivity, commute, city
+ *
+ * draft.completed: true when the user has answered all questions and tapped
+ *   "Continue to create your account". This distinguishes a complete draft
+ *   (should be applied for new accounts) from a partially-filled one.
+ *   It does NOT mean the user is authenticated or onboarded.
+ */
+const DRAFT_KEY = "aeruvo:onboarding-draft:v1";
+
+export interface OnboardingDraft {
+  clothingProfile?: string;
+  coldSensitivity?: "cold" | "normal" | "hot";
+  commute?: string;
+  city?: { name: string; lat: number; lon: number; countryCode?: string };
+  /** True only after the user taps "Continue to create your account". */
+  completed?: boolean;
+}
+
+export function loadOnboardingDraft(): OnboardingDraft {
+  if (typeof window === "undefined") return {};
   try {
-    return localStorage.getItem(GUEST_SETUP_KEY) === "1";
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as OnboardingDraft;
   } catch {
-    return false;
+    return {};
   }
 }
 
-/** Call when a cityless guest is sent to /preferences. */
-export function markGuestSetupPending(): void {
+export function saveOnboardingDraft(draft: OnboardingDraft): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(GUEST_SETUP_KEY, "1");
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
   } catch {}
 }
 
-/** Call when the guest completes /preferences (city chosen, onboarded set). */
-export function clearGuestSetupPending(): void {
+export function clearOnboardingDraft(): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.removeItem(GUEST_SETUP_KEY);
+    localStorage.removeItem(DRAFT_KEY);
   } catch {}
+}
+
+/** Mark draft as completed (user tapped "Continue to create your account"). */
+export function markDraftCompleted(): void {
+  const draft = loadOnboardingDraft();
+  saveOnboardingDraft({ ...draft, completed: true });
 }
