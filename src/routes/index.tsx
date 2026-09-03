@@ -37,6 +37,8 @@ import { getWeatherAlerts } from "@/lib/alerts";
 import { isFirstSetupPending } from "@/lib/introState";
 import { UMBRELLA_LABEL, UMBRELLA_LABEL_NOW, UMBRELLA_ICON, isRainNow } from "@/lib/precipAdvice";
 import { rainNowDecision, type RainNowDecision } from "@/lib/rainNowDecision";
+import { fetchRadarNow } from "@/lib/fetchRadarNow";
+import type { RadarPrecipObservation } from "@/lib/radar-types";
 import { OutfitSlotList } from "@/components/OutfitSlotList";
 import {
   Wind,
@@ -140,6 +142,11 @@ function Home() {
   const [redirecting] = useState(false); // kept for legacy weather-load gating
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
+  // Radar observation — fetched in parallel with weather, never blocks render.
+  const [radar, setRadar] = useState<RadarPrecipObservation | null>(null);
+  // Request ID for the radar fetch: incremented on each weather refresh so
+  // stale radar responses (from old coordinates) are discarded.
+  const radarRequestIdRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [greeting, setGreeting] = useState<{ label: string; isNight: boolean }>({
@@ -149,10 +156,8 @@ function Home() {
   const [locating, setLocating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
-  // Timestamp of the last successful weather fetch — used for freshness label.
+  // Timestamp of the last successful weather fetch — used for background refresh deduplication.
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
-  // Freshness label — updated once per minute by the display effect below.
-  const [freshnessLabel, setFreshnessLabel] = useState<string | null>(null);
 
   // ── Notification discovery card ─────────────────────────────────────
   const [notifDismissed, setNotifDismissed] = useState<boolean>(() => {
@@ -233,6 +238,25 @@ function Home() {
         if (!cancelled) {
           setWeather(w);
           setFetchedAt(Date.now());
+          // Radar fetch: runs in parallel with weather, never blocks render.
+          // A request ID is stamped at the start of this fetch cycle.
+          // If coordinates change or a new refresh starts, the ID advances
+          // and stale results are dropped — prevents an old Scarborough
+          // observation overwriting a newer Toronto result.
+          radarRequestIdRef.current += 1;
+          const thisRadarId = radarRequestIdRef.current;
+          // Clear stale radar immediately so P0 is not applied to new location.
+          setRadar(null);
+          if (prefs?.city?.lat !== undefined && prefs?.city?.lon !== undefined) {
+            fetchRadarNow(prefs.city.lat, prefs.city.lon)
+              .then((obs) => {
+                // Only accept if this is still the current request.
+                if (!cancelled && radarRequestIdRef.current === thisRadarId) {
+                  setRadar(obs);
+                }
+              })
+              .catch(() => {});
+          }
         }
       } catch (e) {
         if (!cancelled) setError(getErrorMessage(e, "Couldn't load weather"));
@@ -292,38 +316,7 @@ function Home() {
     };
   }, [prefs]);
 
-  // ── Freshness label — updated once per minute ──────────────────────────
-  // Shows BOTH the provider's current-block timestamp (c.time) AND the
-  // client fetch age. This prevents concealing old model data behind a
-  // "checked just now" label.
-  //
-  // Format: "Conditions for 3:15 PM · checked just now"
-  //         "Conditions for 3:15 PM · checked 4 min ago"
-  //
-  // providerTimeIso comes from weather.currentTimeIso (c.time from Open-Meteo).
-  // fetchedAt is the client's successful-fetch timestamp.
-  useEffect(() => {
-    if (!fetchedAt) { setFreshnessLabel(null); return; }
-    function update() {
-      const fetchMins = Math.round((Date.now() - fetchedAt!) / 60000);
-      const checkPart = fetchMins < 1 ? "checked just now" : `checked ${fetchMins} min ago`;
-      // Provider time: format "3:15 PM" from ISO "2026-08-31T15:15"
-      const provIso = weather?.currentTimeIso;
-      if (provIso) {
-        const timePart = provIso.slice(11, 16); // "15:15"
-        const [hh, mm] = timePart.split(":").map(Number);
-        const suffix = hh < 12 ? "AM" : "PM";
-        const h12 = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh;
-        const provDisplay = `${h12}:${String(mm).padStart(2, "0")} ${suffix}`;
-        setFreshnessLabel(`Conditions for ${provDisplay} · ${checkPart}`);
-      } else {
-        setFreshnessLabel(checkPart.charAt(0).toUpperCase() + checkPart.slice(1));
-      }
-    }
-    update();
-    const id = setInterval(update, 60_000);
-    return () => clearInterval(id);
-  }, [fetchedAt, weather?.currentTimeIso]);
+
 
   async function locateMe() {
     if (!prefs) return;
@@ -361,13 +354,13 @@ function Home() {
 
   // Shared precipitation-now decision — hero icon, recommendation and umbrella all consume this.
   const rainDecision: RainNowDecision | null = useMemo(
-    () => (weather ? rainNowDecision(weather) : null),
-    [weather],
+    () => (weather ? rainNowDecision(weather, radar ?? undefined, Date.now()) : null),
+    [weather, radar],
   );
 
   const rec = useMemo(
-    () => (weather && prefs ? recommend(weather, prefs) : null),
-    [weather, prefs],
+    () => (weather && prefs ? recommend(weather, prefs, radar ?? undefined) : null),
+    [weather, prefs, radar],
   );
   // useResolvedSlots must be called unconditionally (Rules of Hooks).
   // When rec is null (weather not loaded yet), the hook returns empty slots.
@@ -452,9 +445,6 @@ function Home() {
               <div>
                 <div className="flex items-center gap-1.5">
                   <p className="text-sm font-medium text-muted-foreground">{weather.condition}</p>
-                  {freshnessLabel && (
-                    <p className="text-[10px] text-muted-foreground/60 mt-0.5">{freshnessLabel}</p>
-                  )}
                   <button
                     onClick={refresh}
                     disabled={refreshing}

@@ -75,6 +75,8 @@
  */
 
 import type { Weather } from "./weatherProviders/types";
+import type { RadarPrecipObservation } from "./radar-types";
+import { RADAR_RAIN_THRESHOLD_MM_PER_HR } from "./radar-types";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -85,6 +87,22 @@ import type { Weather } from "./weatherProviders/types";
  * the sensor/rounding noise floor but detects genuine drizzle.
  */
 export const AMOUNT_THRESHOLD_MM = 0.05;
+
+/**
+ * Maximum age (ms) of a radar observation for it to be used as P0 evidence.
+ * Radar composites update every ~6 minutes. We allow 3 cycles (18 min)
+ * as a conservative maximum — beyond that, Open-Meteo evidence is fresher.
+ * Validated against radar.observedAt (UTC ISO string) using nowMs.
+ * Observations with future timestamps (beyond RADAR_CLOCK_SKEW_MS) are rejected.
+ */
+export const RADAR_MAX_AGE_MS = 18 * 60 * 1000; // 18 minutes
+
+/**
+ * Maximum allowable clock skew for radar observedAt timestamps.
+ * Observations with observedAt up to 60 seconds in the future are accepted
+ * (NTP drift, server clock variation). Beyond this they are rejected.
+ */
+export const RADAR_CLOCK_SKEW_MS = 60 * 1000; // 60 seconds
 
 /**
  * Maximum age (ms) of the m15 current slot for it to count as "current."
@@ -115,10 +133,12 @@ export type PrecipIntensity =
   | "showers" | "heavy-showers" | "snow" | "thunder" | "none";
 
 export type NowEvidence =
-  | "current-wmo-code"   // weather.code is a rain/thunder code
-  | "current-amount"     // c.precipitation/rain/showers > AMOUNT_THRESHOLD_MM
-  | "m15-wmo-code"       // m15 current slot WMO is active-precip (within tolerance)
-  | "m15-amount"         // m15 current slot amount > AMOUNT_THRESHOLD_MM (within tolerance)
+  | "radar-precipitation"  // fresh covered ECCC radar: precipitation > threshold
+  | "radar-dry"            // fresh covered ECCC radar: confirmed dry; vetoes OMe P1–P3
+  | "current-wmo-code"     // weather.code is a rain/thunder code
+  | "current-amount"       // c.precipitation/rain/showers > AMOUNT_THRESHOLD_MM
+  | "m15-wmo-code"         // m15 current slot WMO is active-precip (within tolerance)
+  | "m15-amount"           // m15 current slot amount > AMOUNT_THRESHOLD_MM (within tolerance)
   | "none";
 
 export interface RainNowDecision {
@@ -220,15 +240,104 @@ function synthCodeForAmounts(
  * Produce the shared precipitation-now decision consumed by ALL UI surfaces.
  *
  * @param weather   The Weather object from the active provider.
- *                  Must include the fields added in the 2026-09 fix:
- *                  currentPrecipMm, currentRainMm, currentShowersMm,
- *                  currentTimeIso, providerDataAgeMs, nowLocalMs,
- *                  m15CurrentPrecipMm, m15CurrentRainMm, m15CurrentIsRain,
- *                  m15CurrentTimeIso.
+ * @param radar     Optional fresh ECCC radar observation for the same coordinates.
+ *
+ *   When status="precipitation" and fresh:
+ *     → isPrecipitatingNow=true, evidence="radar-precipitation".
+ *     → Preserves OMe thunderstorm code (95/96/99) because radar measures rain
+ *       rate not lightning; otherwise uses code 80 (Rain showers, conservative).
+ *
+ *   When status="dry" and fresh (coverage confirmed, numeric rate ≤ threshold):
+ *     → isPrecipitatingNow=false, evidence="radar-dry".
+ *     → VETOES Open-Meteo P1, P2, P3 — stale OMe fields cannot reactivate
+ *       precipitation. This fixes the reverse-lag bug: rain stops, radar reports
+ *       covered+dry, but delayed OMe still shows rain code/amount.
+ *     → effectiveCurrentCode: if OMe code is already dry, keep it.
+ *       If OMe code is a precipitation code, fall back to WMO 3 (Overcast).
+ *
+ *   When status="no-coverage", "unavailable", stale, or invalid:
+ *     → Ignore radar; use Open-Meteo P1–P3 as before.
+ *
+ * Decision order:
+ *   P0-precip — Fresh ECCC radar: precipitation
+ *   P0-dry    — Fresh ECCC radar: covered+dry  (vetoes P1–P3)
+ *   P1        — Open-Meteo current WMO code (only when radar unavailable/stale)
+ *   P2        — Open-Meteo current amounts   (only when radar unavailable/stale)
+ *   P3        — Open-Meteo minutely_15        (only when radar unavailable/stale)
  */
-export function rainNowDecision(weather: Weather): RainNowDecision {
+export function rainNowDecision(
+  weather: Weather,
+  radar?: RadarPrecipObservation,
+  nowMs: number = Date.now(),
+): RainNowDecision {
   const providerDataAgeMs = weather.providerDataAgeMs ?? 0;
   const providerTimeIso   = weather.currentTimeIso;
+
+  // ── P0: Fresh ECCC radar — authoritative in both directions ─────────────
+  //
+  // A fresh covered radar observation is the most reliable current-precipitation
+  // evidence available. It is authoritative in BOTH directions:
+  //   precipitation → isPrecipitatingNow=true  (overrides dry OMe fields)
+  //   dry           → isPrecipitatingNow=false (overrides stale rain OMe fields)
+  //
+  // The radar-dry veto fixes the reverse-lag bug: rain stops, ECCC radar
+  // reports covered+dry within ~6 minutes, but Open-Meteo's NWP model may
+  // not update its current-block fields for 15–30 more minutes. Without the
+  // veto, Aeruvo would keep showing rain for up to 30 minutes after it stops.
+  //
+  // Freshness guard (applied here as a pure boundary, defense-in-depth):
+  //   valid range: -RADAR_CLOCK_SKEW_MS ≤ (nowMs - observedAtMs) ≤ RADAR_MAX_AGE_MS
+  //   Invalid / stale / future → ignore radar, fall through to OMe P1–P3.
+
+  const isActionableRadar = (r: RadarPrecipObservation | undefined): boolean => {
+    if (!r || !r.observedAt) return false;
+    const observedAtMs = Date.parse(r.observedAt);
+    if (isNaN(observedAtMs)) return false;
+    const ageMs = nowMs - observedAtMs;
+    return ageMs >= -RADAR_CLOCK_SKEW_MS && ageMs <= RADAR_MAX_AGE_MS;
+  };
+
+  if (isActionableRadar(radar)) {
+    if (radar!.status === "precipitation") {
+      // P0-precip: confirmed covered + rain rate > threshold.
+      // Thunderstorm preservation: if OMe already has a thunder code, keep it
+      // (radar measures rate, not lightning; thunder is the more severe label).
+      const THUNDER_CODES = new Set([95, 96, 99]);
+      const effectiveCode = THUNDER_CODES.has(weather.code) ? weather.code : 80;
+      return {
+        isPrecipitatingNow: true,
+        effectiveCurrentCode: effectiveCode,
+        intensity: intensityFromCode(effectiveCode),
+        evidence: "radar-precipitation",
+        evidenceTimestamp: radar!.observedAt,
+        providerDataAgeMs,
+        providerTimeIso,
+      };
+    }
+
+    if (radar!.status === "dry") {
+      // P0-dry: confirmed covered + numeric rate ≤ threshold.
+      // Veto Open-Meteo P1–P3: stale OMe rain codes/amounts cannot override
+      // a fresh physical observation that it is not raining here right now.
+      //
+      // effectiveCurrentCode must be a non-precipitation code:
+      //   - If weather.code is already dry (not in ACTIVE_PRECIP_CODES), keep it.
+      //   - If weather.code is a precipitation code (stale OMe), use WMO 3 (Overcast)
+      //     as the safest neutral fallback — honest about cloud cover, not claiming rain.
+      const dryCode = ACTIVE_PRECIP_CODES.has(weather.code) ? 3 : weather.code;
+      return {
+        isPrecipitatingNow: false,
+        effectiveCurrentCode: dryCode,
+        intensity: "none",
+        evidence: "radar-dry",
+        evidenceTimestamp: radar!.observedAt,
+        providerDataAgeMs,
+        providerTimeIso,
+      };
+    }
+  }
+  // Radar is absent, stale, no-coverage, or unavailable → fall through to OMe.
+
 
   // ── P1: Current WMO code is an active precipitation code ────────────────
   if (ACTIVE_PRECIP_CODES.has(weather.code)) {

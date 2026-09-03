@@ -64,8 +64,15 @@ export default {
         "/api/wardrobe/status",
         "/api/delete-account",
         "/api/reconcile-deletion",
+        "/api/radar-now",
       ]);
       if (apiPaths.has(pathname)) {
+        // GET /api/radar-now — ECCC GeoMet radar precipitation overlay
+        if (pathname === "/api/radar-now" && request.method === "GET") {
+          const { handleRadarNow } = await import("./lib/radar-handler");
+          return await handleRadarNow(request);
+        }
+
         // GET /api/wardrobe/status — read-only scanning availability flag
         // Must be handled before the POST-only guard below.
         if (pathname === "/api/wardrobe/status" && request.method === "GET") {

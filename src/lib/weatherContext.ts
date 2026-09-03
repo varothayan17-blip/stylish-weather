@@ -27,6 +27,7 @@ import {
   type UmbrellaLevel,
 } from "./precipAdvice";
 import { rainNowDecision } from "./rainNowDecision";
+import type { RadarPrecipObservation } from "./radar-types";
 
 /**
  * Named temperature bands.
@@ -97,7 +98,7 @@ const RAIN_CODES = new Set([51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99]);
 const SNOW_CODES = new Set([71, 73, 75, 77, 85, 86]);
 const THUNDER_CODES = new Set([95, 96, 99]);
 
-export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
+export function analyzeWeather(w: Weather, p: Prefs, radar?: RadarPrecipObservation): WeatherContext {
   const adj = p.coldSensitivity === "cold" ? -4 : p.coldSensitivity === "hot" ? 4 : 0;
   const feels = w.feelsLikeC + adj;
   const band = bandFor(feels);
@@ -160,7 +161,7 @@ export function analyzeWeather(w: Weather, p: Prefs): WeatherContext {
   // is driven by active measurements and WMO codes, never by probability alone.
   // Both the hero card and the recommendation consume this shared decision
   // so they always agree about whether rain is active now.
-  const rainNow = rainNowDecision(w);
+  const rainNow = rainNowDecision(w, radar);
 
   // Rain timing derived from hourly data — null when no rain expected.
   // Pass nowFrac and rainNow.isPrecipitatingNow to prevent probability-only
