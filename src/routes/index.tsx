@@ -39,6 +39,10 @@ import { UMBRELLA_LABEL, UMBRELLA_LABEL_NOW, UMBRELLA_ICON, isRainNow } from "@/
 import { rainNowDecision, type RainNowDecision } from "@/lib/rainNowDecision";
 import { fetchRadarNow } from "@/lib/fetchRadarNow";
 import type { RadarPrecipObservation } from "@/lib/radar-types";
+import { FeedbackSheet } from "@/components/FeedbackSheet";
+import { WeatherDataSourcesSheet } from "@/components/WeatherDataSourcesSheet";
+import type { FeedbackDiagnostics } from "@/lib/feedback-types";
+import { MoreVertical } from "lucide-react";
 import { OutfitSlotList } from "@/components/OutfitSlotList";
 import {
   Wind,
@@ -55,6 +59,8 @@ import {
   Locate,
   Crown,
   RotateCw,
+  AlertCircle,
+  CloudSun,
   BellRing,
   X,
 } from "lucide-react";
@@ -147,6 +153,11 @@ function Home() {
   // Request ID for the radar fetch: incremented on each weather refresh so
   // stale radar responses (from old coordinates) are discarded.
   const radarRequestIdRef = useRef(0);
+  // Hero overflow menu and feedback/sources sheets
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [sourcesOpen,  setSourcesOpen]  = useState(false);
+  const overflowTriggerRef = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [greeting, setGreeting] = useState<{ label: string; isNight: boolean }>({
@@ -358,6 +369,27 @@ function Home() {
     [weather, radar],
   );
 
+  /** Build the feedback diagnostics snapshot from the current render state.
+   *  Uses the same rainDecision and radar as the hero — single source of truth. */
+  const feedbackDiagnostics = useMemo((): FeedbackDiagnostics | null => {
+    if (!weather) return null;
+    return {
+      displayedLocation:     prefs?.city?.name ?? null,
+      displayedCondition:    weather.condition ?? null,
+      displayedWeatherCode:  rainDecision?.effectiveCurrentCode ?? weather.code ?? null,
+      displayedTemperatureC: typeof weather.tempC === "number" ? Math.round(weather.tempC * 10) / 10 : null,
+      isPrecipitatingNow:    rainDecision?.isPrecipitatingNow ?? null,
+      precipitationEvidence: rainDecision?.evidence ?? null,
+      effectiveCurrentCode:  rainDecision?.effectiveCurrentCode ?? null,
+      radarStatus:           radar?.status ?? null,
+      radarRateMmPerHour:    radar?.rateMmPerHour ?? null,
+      radarObservedAt:       radar?.observedAt ?? null,
+      weatherObservedAt:     weather.currentTimeIso ?? null,
+      clientSubmittedAt:     new Date().toISOString(),
+      appVersion:            null,
+    };
+  }, [weather, prefs, rainDecision, radar]);
+
   const rec = useMemo(
     () => (weather && prefs ? recommend(weather, prefs, radar ?? undefined) : null),
     [weather, prefs, radar],
@@ -376,7 +408,8 @@ function Home() {
   if (authLoading || redirecting) return null;
 
   return (
-    <AppShell>
+    <>
+      <AppShell>
       <header className="mb-6 flex items-center justify-between animate-fade-up">
         <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
@@ -443,16 +476,46 @@ function Home() {
           <div className="relative">
             <div className="flex items-start justify-between">
               <div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1">
                   <p className="text-sm font-medium text-muted-foreground">{weather.condition}</p>
-                  <button
-                    onClick={refresh}
-                    disabled={refreshing}
-                    aria-label="Refresh weather"
-                    className="press -m-2.5 rounded-full p-2.5 text-muted-foreground/70 disabled:opacity-60"
-                  >
-                    <RotateCw className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
-                  </button>
+                  <div className="relative">
+                    <button
+                      ref={overflowTriggerRef}
+                      onClick={() => setOverflowOpen(v => !v)}
+                      aria-haspopup="menu"
+                      aria-expanded={overflowOpen}
+                      aria-label="More weather actions"
+                      className="press -m-2 rounded-full p-2 text-muted-foreground/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <MoreVertical className="h-3.5 w-3.5" aria-hidden />
+                    </button>
+                    {overflowOpen && (
+                      <>
+                        <div className="fixed inset-0 z-30" aria-hidden onClick={() => setOverflowOpen(false)} />
+                        <div
+                          role="menu"
+                          aria-label="Weather actions"
+                          className="absolute left-0 top-full z-40 mt-1 min-w-[200px] rounded-2xl border border-border bg-background shadow-lg py-1"
+                        >
+                          <button role="menuitem" onClick={() => { setOverflowOpen(false); refresh(); }} disabled={refreshing}
+                            className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-foreground hover:bg-muted/60 disabled:opacity-50 focus-visible:bg-muted/60 focus-visible:outline-none">
+                            <RotateCw className={`h-3.5 w-3.5 text-muted-foreground ${refreshing ? "animate-spin" : ""}`} aria-hidden />
+                            Refresh conditions
+                          </button>
+                          <button role="menuitem" onClick={() => { setOverflowOpen(false); setFeedbackOpen(true); }}
+                            className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-foreground hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none">
+                            <AlertCircle className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                            Report weather
+                          </button>
+                          <button role="menuitem" onClick={() => { setOverflowOpen(false); setSourcesOpen(true); }}
+                            className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-foreground hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none">
+                            <CloudSun className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                            Weather data sources
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-1 flex items-baseline">
                   <span className="text-7xl font-extralight tracking-tighter tabular-nums">
@@ -892,7 +955,18 @@ function Home() {
         </section>
       )}
 
-    </AppShell>
+      </AppShell>
+      <FeedbackSheet
+        isOpen={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        initialCategory="weather-incorrect"
+        diagnostics={feedbackDiagnostics}
+      />
+      <WeatherDataSourcesSheet
+        isOpen={sourcesOpen}
+        onClose={() => setSourcesOpen(false)}
+      />
+    </>
   );
 }
 
