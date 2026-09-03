@@ -784,7 +784,7 @@ console.log("\n── R10. Structural checks ───────────�
   ok("R10-3. GetFeatureInfo operation used (not pixel colour)", handler.includes("GetFeatureInfo"));
   ok("R10-4. INFO_FORMAT=application/json", handler.includes("application/json"));
   ok("R10-5. RADAR_RAIN_THRESHOLD_MM_PER_HR used for classification", handler.includes("RADAR_RAIN_THRESHOLD_MM_PER_HR"));
-  ok("R10-6. Coverage checked separately before rain rate (no null=dry)", handler.includes("RADAR_COVERAGE_RRAI") && handler.includes("coverageValue"));
+  ok("R10-6. Coverage checked separately before rain rate (no null=dry)", handler.includes("RADAR_COVERAGE_RRAI") && handler.includes("parseCoverageResponse"));
   ok("R10-7. Request timeout implemented", handler.includes("REQUEST_TIMEOUT"));
   ok("R10-8. Cache by coord + radarTime", handler.includes("cacheKey"));
   ok("R10-9. Canadian bounding box guard", handler.includes("CANADA_LAT_MIN"));
@@ -907,7 +907,7 @@ console.log("\n══ Coverage layer semantics (point 1) ═══════�
   const handlerSrc = fs.readFileSync("/home/claude/live/src/lib/radar-handler.ts","utf8");
 
   ok("Cov-1. RADAR_COVERAGE_RRAI layer queried separately", handlerSrc.includes("RADAR_COVERAGE_RRAI"));
-  ok("Cov-2. Coverage queried before rain rate", handlerSrc.indexOf("COVERAGE_LAYER") < handlerSrc.indexOf("RAIN_LAYER") || handlerSrc.includes("coverageValue"));
+  ok("Cov-2. parseCoverageResponse called before parseRainRateResponse", handlerSrc.indexOf("parseCoverageResponse") < handlerSrc.indexOf("parseRainRateResponse"));
   ok("Cov-3. No 'null means dry' logic (null → unavailable for covered point)", (() => {
     // The handler must NOT convert rain null to 'dry' status when coverage is confirmed.
     // Check that 'dry' only appears for numeric values at or below threshold.
@@ -916,9 +916,9 @@ console.log("\n══ Coverage layer semantics (point 1) ═══════�
     const dryLines = codeLines.filter(l => l.includes('"dry"'));
     return dryLines.every(l => !l.includes("null") && !l.includes("undefined"));
   })());
-  ok("Cov-4. Covered + null rain rate → unavailable", handlerSrc.includes('typeof rainValue !== "number"') && handlerSrc.includes("unavailable"));
+  ok("Cov-4. Covered + null/bad rain → unavailable (if (!rain))", handlerSrc.includes("if (!rain)") && handlerSrc.includes("unavailable"));
   ok("Cov-5. GetCapabilities failure → unavailable (no computed fallback)", handlerSrc.includes("if (!radarTime)") && !handlerSrc.includes("adj.setUTCMinutes"));
-  ok("Cov-6. parseFeatureValue returns null for null value (no dry-from-null)", handlerSrc.includes("if (typeof v === \"number\") return v;") || handlerSrc.includes("typeof v === \"number\""));
+  ok("Cov-6. parseRainRateResponse: value must be finite and >= 0 (no dry-from-null)", handlerSrc.includes("isFinite(v)") && handlerSrc.includes("v < 0"));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1046,8 +1046,7 @@ console.log("\n── Handler: radar-dry emission preconditions ─────�
     handlerSrc.includes("} else {") && handlerSrc.includes('"dry"'));
   ok("Handler-2. dry only reached after coverage confirmed (coverageValue > 0)",
     handlerSrc.indexOf("coverageValue") < handlerSrc.indexOf('"dry"'));
-  ok("Handler-3. null rainValue → unavailable (not dry)",
-    handlerSrc.includes('typeof rainValue !== "number"') && handlerSrc.includes('"unavailable"'));
+  ok("Handler-3. null rain parse → unavailable (not dry)", handlerSrc.includes("if (!rain)") && handlerSrc.includes("\"unavailable\""));
   ok("Handler-4. GetCapabilities failure → unavailable return, no computed TIME",
     handlerSrc.includes("if (!radarTime)") && !handlerSrc.includes("setUTCMinutes"));
 }
@@ -1207,120 +1206,284 @@ console.log("\n── Handler structural check ───────────
   ok("HC-5. Stage logging present", h.includes("[radar-cap]"));
 }
 
+
+const RAIN_LAYER_NAME = "RADAR_1KM_RRAI";
+const BBOX_DELTA_TEST = 0.02;
+const GRID_SNAP_TOLERANCE_TEST = 0.01;
+const MAX_COORD_DELTA = BBOX_DELTA_TEST + GRID_SNAP_TOLERANCE_TEST; // 0.03
+function isAbsoluteIsoTest(s) {
+  if (!s || !/^\d{4}-\d{2}-\d{2}T/.test(s)) return false;
+  return isFinite(Date.parse(s));
+}
+function parseRainRateResponse(json, reqLat, reqLon) {
+  if (typeof json !== "object" || json === null) return null;
+  if (json.type !== "FeatureCollection") return null;
+  if (!Array.isArray(json.features) || json.features.length === 0) return null;
+  if (json.layer !== undefined && json.layer !== RAIN_LAYER_NAME) return null;
+  const f = json.features[0];
+  if (f?.type !== "Feature") return null;
+  if (f.geometry?.type !== "Point") return null;
+  const coords = f.geometry?.coordinates;
+  if (Array.isArray(coords) && coords.length >= 2) {
+    const retLon = coords[0], retLat = coords[1];
+    if (typeof retLon === "number" && typeof retLat === "number") {
+      if (Math.abs(retLat - reqLat) > MAX_COORD_DELTA || Math.abs(retLon - reqLon) > MAX_COORD_DELTA)
+        return null;
+    }
+  }
+  const v = f.properties?.value;
+  if (typeof v !== "number" || !isFinite(v) || v < 0) return null;
+  const t = f.properties?.time;
+  if (typeof t !== "string" || !isAbsoluteIsoTest(t)) return null;
+  return { rateMmPerHour: v, observedAt: t };
+}
+
+// ── Real coverage response (Scarborough, confirmed 2026-09-03) ──────────────
+const REAL_COVERAGE = {
+  "type": "FeatureCollection",
+  "name": "RADAR_COVERAGE_RRAI",
+  "features": [{
+    "type": "Feature",
+    "properties": { "type": "radar_coverage" },
+    "geometry": { "type": "MultiPolygon", "coordinates": [[[[-79.5, 43.5], [-79.0, 43.5], [-79.0, 44.0], [-79.5, 44.0], [-79.5, 43.5]]]] }
+  }]
+};
+
+// ── Real rain-rate response (Scarborough, value=0 "Undetected") ────────────
+const REAL_RAIN_DRY = {
+  "type": "FeatureCollection",
+  "layer": "RADAR_1KM_RRAI",
+  "features": [{
+    "type": "Feature",
+    "id": "RADAR_1KM_RRAI(-79.257915,43.76811)",
+    "geometry": { "type": "Point", "coordinates": [-79.2579, 43.7681] },
+    "properties": {
+      "value": 0,
+      "class": "Undetected",
+      "title_en": "Radar precipitation rate for rain [mm/h]",
+      "time": "2026-09-03T02:42:00Z",
+      "dim_reference_time": "N/A"
+    }
+  }]
+};
+
+// Requested coordinates: Scarborough 43.77, -79.25
+const SCARB_LAT = 43.77, SCARB_LON = -79.25;
+
+// ── GF-1: Real coverage fixture → "covered" ──────────────────────────────
+ok("GF-1. Real coverage response → covered", parseCoverageResponse(REAL_COVERAGE) === "covered");
+
+// ── GF-2: Real rain-rate fixture → dry, observedAt from properties.time ──
+{
+  const r = parseRainRateResponse(REAL_RAIN_DRY, SCARB_LAT, SCARB_LON);
+  ok("GF-2. Real rain response parsed successfully", r !== null);
+  ok("GF-3. rateMmPerHour = 0", r?.rateMmPerHour === 0);
+  ok("GF-4. observedAt = '2026-09-03T02:42:00Z' (from properties.time)", r?.observedAt === "2026-09-03T02:42:00Z");
+  ok("GF-5. 0 <= threshold (0.1) → would classify as dry", r !== null && r.rateMmPerHour <= 0.1);
+}
+
+// ── GF-6: Real coverage + real rain → full classification dry ────────────
+{
+  const cov = parseCoverageResponse(REAL_COVERAGE);
+  const rain = parseRainRateResponse(REAL_RAIN_DRY, SCARB_LAT, SCARB_LON);
+  const status = cov === "covered" && rain !== null
+    ? (rain.rateMmPerHour > 0.1 ? "precipitation" : "dry")
+    : cov === "no-coverage" ? "no-coverage" : "unavailable";
+  ok("GF-6. Real coverage + value=0 → status='dry'", status === "dry");
+}
+
+// ── GF-7: Precipitation scenario (modified value) ─────────────────────────
+{
+  const REAL_RAIN_WET = JSON.parse(JSON.stringify(REAL_RAIN_DRY));
+  REAL_RAIN_WET.features[0].properties.value = 4.8;
+  const r = parseRainRateResponse(REAL_RAIN_WET, SCARB_LAT, SCARB_LON);
+  ok("GF-7. value=4.8 → precipitation", r !== null && r.rateMmPerHour === 4.8 && r.rateMmPerHour > 0.1);
+  ok("GF-8. observedAt still from properties.time", r?.observedAt === "2026-09-03T02:42:00Z");
+}
+
+// ── GF-9: Empty coverage → no-coverage ───────────────────────────────────
+ok("GF-9. Empty coverage features → no-coverage",
+  parseCoverageResponse({ type: "FeatureCollection", features: [] }) === "no-coverage");
+
+// ── GF-10: Coverage feature with wrong properties.type → unavailable ──────
+ok("GF-10. coverage properties.type='other' → unavailable",
+  parseCoverageResponse({
+    type: "FeatureCollection",
+    features: [{ type: "Feature", properties: { type: "other" }, geometry: { type: "MultiPolygon", coordinates: [] } }]
+  }) === "unavailable");
+
+// ── GF-11: Coverage feature with no geometry → unavailable ────────────────
+ok("GF-11. Coverage missing geometry → unavailable",
+  parseCoverageResponse({
+    type: "FeatureCollection",
+    features: [{ type: "Feature", properties: { type: "radar_coverage" }, geometry: null }]
+  }) === "unavailable");
+
+// ── GF-12: Coverage feature with Point geometry (not polygon) → unavailable
+ok("GF-12. Coverage with Point geometry → unavailable",
+  parseCoverageResponse({
+    type: "FeatureCollection",
+    features: [{ type: "Feature", properties: { type: "radar_coverage" }, geometry: { type: "Point", coordinates: [-79.25, 43.77] } }]
+  }) === "unavailable");
+
+// ── GF-13: Covered + null rain value → unavailable ───────────────────────
+{
+  const WITH_NULL = { type: "FeatureCollection", layer: "RADAR_1KM_RRAI", features: [{
+    type: "Feature", geometry: { type: "Point", coordinates: [-79.2579, 43.7681] },
+    properties: { value: null, time: "2026-09-03T02:42:00Z" }
+  }]};
+  ok("GF-13. Covered + null rain value → parseRainRateResponse returns null",
+    parseRainRateResponse(WITH_NULL, SCARB_LAT, SCARB_LON) === null);
+}
+
+// ── GF-14: Covered + missing/malformed time → unavailable ────────────────
+{
+  const NO_TIME = { type: "FeatureCollection", layer: "RADAR_1KM_RRAI", features: [{
+    type: "Feature", geometry: { type: "Point", coordinates: [-79.2579, 43.7681] },
+    properties: { value: 2.4, time: "not-a-date" }
+  }]};
+  ok("GF-14. Covered + malformed time → null (freshness cannot be established)",
+    parseRainRateResponse(NO_TIME, SCARB_LAT, SCARB_LON) === null);
+  const MISSING_TIME = { type: "FeatureCollection", layer: "RADAR_1KM_RRAI", features: [{
+    type: "Feature", geometry: { type: "Point", coordinates: [-79.2579, 43.7681] },
+    properties: { value: 2.4 }
+  }]};
+  ok("GF-15. Covered + missing time → null",
+    parseRainRateResponse(MISSING_TIME, SCARB_LAT, SCARB_LON) === null);
+}
+
+
+
+// ── GF-18: Wrong layer field → rejected ──────────────────────────────────
+{
+  const WRONG_LAYER = { type: "FeatureCollection", layer: "SOME_OTHER_LAYER", features: [{
+    type: "Feature", geometry: { type: "Point", coordinates: [-79.2579, 43.7681] },
+    properties: { value: 2.4, time: "2026-09-03T02:42:00Z" }
+  }]};
+  ok("GF-18. Wrong layer field → rejected",
+    parseRainRateResponse(WRONG_LAYER, SCARB_LAT, SCARB_LON) === null);
+}
+
+// ── Structural: old parseFeatureValue removed, new parsers exported ────────
+{
+  const fs = require("fs");
+  const h = fs.readFileSync("/home/claude/live/src/lib/radar-handler.ts", "utf8");
+  ok("GF-S1. parseCoverageResponse exported", h.includes("export function parseCoverageResponse"));
+  ok("GF-S2. parseRainRateResponse exported", h.includes("export function parseRainRateResponse"));
+  ok("GF-S3. Old parseFeatureValue removed", !h.includes("function parseFeatureValue"));
+  ok("GF-S4. Coverage parser checks properties.type === 'radar_coverage'",
+    h.includes('"radar_coverage"'));
+  ok("GF-S5. Rain parser reads properties.time for observedAt",
+    h.includes("props.time") || h.includes("properties?.time"));
+  ok("GF-S6. No geometry coordinates logged (MultiPolygon too large)",
+    !h.includes("geometry.coordinates") && !h.includes("geom.coordinates.length"));
+  ok("GF-S7. observedAt comes from rain.observedAt (not radarTime) in result",
+    h.includes("rain.observedAt"));
+}
+
+
+// ── GF-16: Real returned grid-cell coordinates accepted ──────────────────
+// Confirmed: Scarborough lat=43.77, lon=-79.25 → GeoMet returned lat=43.7681, lon=-79.2579
+// Delta: lat=0.0019°, lon=0.0079° — both well within MAX_COORD_DELTA=0.03 deg
+{
+  const REAL_NEAR = { type: "FeatureCollection", layer: "RADAR_1KM_RRAI", features: [{
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [-79.2579, 43.7681] }, // real Scarborough grid centre
+    properties: { value: 0, time: "2026-09-03T02:42:00Z" }
+  }]};
+  ok("GF-16. Real Scarborough grid centre accepted (lat delta=0.0019, lon delta=0.0079)", parseRainRateResponse(REAL_NEAR, SCARB_LAT, SCARB_LON) !== null);
+}
+
+// ── GF-17: Point within boundary (0.029°) → accepted ────────────────────
+// MAX_COORD_DELTA = 0.03. A point 0.029° away is clearly inside the limit.
+// (Floating-point arithmetic means 43.77+0.03 > 0.03 by ~1e-15; test with 0.029.)
+{
+  const WITHIN = { type: "FeatureCollection", layer: "RADAR_1KM_RRAI", features: [{
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [SCARB_LON + 0.029, SCARB_LAT + 0.029] },
+    properties: { value: 0, time: "2026-09-03T02:42:00Z" }
+  }]};
+  ok("GF-17. Point 0.029 deg from requested → accepted (inside MAX_COORD_DELTA=0.03)", parseRainRateResponse(WITHIN, SCARB_LAT, SCARB_LON) !== null);
+}
+
+// ── GF-17b: 0.031° away → rejected (just over boundary) ─────────────────
+{
+  const JUST_OVER = { type: "FeatureCollection", layer: "RADAR_1KM_RRAI", features: [{
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [SCARB_LON, SCARB_LAT + 0.031] },
+    properties: { value: 0, time: "2026-09-03T02:42:00Z" }
+  }]};
+  ok("GF-17b. 0.031° lat offset → rejected (just over MAX_COORD_DELTA)", parseRainRateResponse(JUST_OVER, SCARB_LAT, SCARB_LON) === null);
+}
+
+// ── GF-17c: 0.04° away → rejected ────────────────────────────────────────
+{
+  const OVER_40 = { type: "FeatureCollection", layer: "RADAR_1KM_RRAI", features: [{
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [SCARB_LON + 0.04, SCARB_LAT] },
+    properties: { value: 0, time: "2026-09-03T02:42:00Z" }
+  }]};
+  ok("GF-17c. 0.04° lon offset → rejected", parseRainRateResponse(OVER_40, SCARB_LAT, SCARB_LON) === null);
+}
+
+// ── GF-17d: Swapped lat/lon → rejected ───────────────────────────────────
+// GeoJSON is [lon, lat]. If GeoMet returned [lat, lon] by mistake:
+// coords[0]=43.7681 (should be lon≈-79), coords[1]=-79.2579 (should be lat≈43)
+// delta for lat axis: |(-79.2579) - 43.77| ≈ 123° >> 0.03°
+{
+  const SWAPPED = { type: "FeatureCollection", layer: "RADAR_1KM_RRAI", features: [{
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [43.7681, -79.2579] }, // lat and lon swapped
+    properties: { value: 0, time: "2026-09-03T02:42:00Z" }
+  }]};
+  ok("GF-17d. Swapped lat/lon [43.7681,-79.2579] → rejected (delta~123 deg)", parseRainRateResponse(SWAPPED, SCARB_LAT, SCARB_LON) === null);
+}
+
+// ── GF-17e: 1–2 degrees away → rejected ──────────────────────────────────
+{
+  const ONE_DEG = { type: "FeatureCollection", layer: "RADAR_1KM_RRAI", features: [{
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [SCARB_LON + 1.0, SCARB_LAT] },
+    properties: { value: 0, time: "2026-09-03T02:42:00Z" }
+  }]};
+  ok("GF-17e. 1° away → rejected", parseRainRateResponse(ONE_DEG, SCARB_LAT, SCARB_LON) === null);
+  const TWO_DEG = { type: "FeatureCollection", layer: "RADAR_1KM_RRAI", features: [{
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [SCARB_LON, SCARB_LAT + 2.0] },
+    properties: { value: 0, time: "2026-09-03T02:42:00Z" }
+  }]};
+  ok("GF-17f. 2° away → rejected", parseRainRateResponse(TWO_DEG, SCARB_LAT, SCARB_LON) === null);
+}
+ok("GF-S8. MAX_COORD_DELTA exported and equals 0.03", (() => {
+
 console.log(`\n${"═".repeat(55)}`);
 console.log(`${p+f} tests: ${p} passed, ${f} failed`);
+
+    const h = require("fs").readFileSync("/home/claude/live/src/lib/radar-handler.ts","utf8");
+    return h.includes("export const MAX_COORD_DELTA") && h.includes("GRID_SNAP_TOLERANCE");
+  })());
+
 process.exit(f>0?1:0);
 
 // ════════════════════════════════════════════════════════════════════════════
-// PARSER FIXTURE TESTS — Real GeoMet response shapes
+// REAL GEOMET RESPONSE FIXTURES — Confirmed Scarborough 2026-09-03
 // ════════════════════════════════════════════════════════════════════════════
-// These fixtures represent the actual JSON returned by GeoMet WMS 1.3.0
-// GetFeatureInfo for RADAR_1KM_RRAI and RADAR_COVERAGE_RRAI, as documented
-// at https://eccc-msc.github.io/open-data/msc-data/obs_radar/readme_radar_geomet_en/
-// and confirmed by ECCC MSC GeoMet WMS specifications.
-//
-// The parser (parseFeatureValue in radar-handler.ts) extracts features[0].properties.value.
-// We test it against the four known GeoMet response shapes.
+// These are the actual sanitized JSON structures returned by GeoMet
+// GetFeatureInfo for RADAR_COVERAGE_RRAI and RADAR_1KM_RRAI.
+// Geometry coordinates are abbreviated for test clarity.
 
-console.log("\\n══ GeoMet response shape fixtures ═════════════════════════════");
+console.log("\n══ Real GeoMet response schema fixtures ════════════════════════");
 
-// Port parseFeatureValue from radar-handler.ts for fixture testing
-function parseFeatureValue(json) {
-  if (typeof json !== "object" || json === null) return null;
-  const features = json.features;
-  if (!Array.isArray(features) || features.length === 0) return null;
-  const props = features[0]?.properties;
-  if (!props) return null;
-  const v = props.value;
-  if (typeof v === "number") return v;
-  return null;
+// Port parsers from radar-handler.ts for fixture testing
+function parseCoverageResponse(json) {
+  if (typeof json !== "object" || json === null) return "unavailable";
+  if (json.type !== "FeatureCollection") return "unavailable";
+  if (!Array.isArray(json.features)) return "unavailable";
+  if (json.features.length === 0) return "no-coverage";
+  const f = json.features[0];
+  if (f?.type !== "Feature") return "unavailable";
+  if (f.properties?.type !== "radar_coverage") return "unavailable";
+  const g = f.geometry?.type;
+  if (g !== "Polygon" && g !== "MultiPolygon") return "unavailable";
+  return "covered";
 }
-
-// Shape 1: Outside radar mosaic / no-data area
-// GeoMet returns empty features array when point is outside layer extent
-const fixture_outside = {
-  "type": "FeatureCollection",
-  "features": []
-};
-ok("Fixture-1. Outside extent → parseFeatureValue returns null",
-  parseFeatureValue(fixture_outside) === null);
-
-// Shape 2: Inside coverage, zero precipitation (dry)
-// GeoMet returns a feature with numeric value 0 when covered but no rain
-const fixture_dry = {
-  "type": "FeatureCollection",
-  "features": [
-    { "type": "Feature", "geometry": null,
-      "properties": { "value": 0 } }
-  ]
-};
-ok("Fixture-2. Covered+dry → parseFeatureValue returns 0",
-  parseFeatureValue(fixture_dry) === 0);
-ok("Fixture-2b. 0 ≤ threshold → classified dry", parseFeatureValue(fixture_dry) <= 0.1);
-
-// Shape 3: Active precipitation (rain rate in mm/hour)
-const fixture_rain = {
-  "type": "FeatureCollection",
-  "features": [
-    { "type": "Feature", "geometry": null,
-      "properties": { "value": 4.8 } }
-  ]
-};
-ok("Fixture-3. Active precipitation → parseFeatureValue returns 4.8",
-  parseFeatureValue(fixture_rain) === 4.8);
-ok("Fixture-3b. 4.8 > RADAR_RAIN_THRESHOLD_MM_PER_HR (0.1) → precipitation",
-  parseFeatureValue(fixture_rain) > 0.1);
-
-// Shape 4: Coverage layer response — value > 0 means covered
-const fixture_covered = {
-  "type": "FeatureCollection",
-  "features": [
-    { "type": "Feature", "geometry": null,
-      "properties": { "value": 1 } }
-  ]
-};
-ok("Fixture-4. Coverage layer value=1 → covered",
-  parseFeatureValue(fixture_covered) > 0);
-
-// Shape 5: null value — occurs for some no-data pixels within extent
-// This is NOT definitively dry; without coverage layer, ambiguous
-const fixture_null_value = {
-  "type": "FeatureCollection",
-  "features": [
-    { "type": "Feature", "geometry": null,
-      "properties": { "value": null } }
-  ]
-};
-ok("Fixture-5. Null value → parseFeatureValue returns null (not 0, not dry)",
-  parseFeatureValue(fixture_null_value) === null);
-
-// Shape 6: Malformed — missing properties
-const fixture_malformed = { "type": "FeatureCollection", "features": [{}] };
-ok("Fixture-6. Missing properties → null", parseFeatureValue(fixture_malformed) === null);
-
-// Shape 7: Non-JSON / error response
-ok("Fixture-7. Non-object → null", parseFeatureValue("error text") === null);
-ok("Fixture-8. null input → null", parseFeatureValue(null) === null);
-
-// Classification logic: coverage + rain
-// Mimic the handler's two-step classification
-function classifyRadar(coverageJson, rainJson, threshold) {
-  const coverageValue = parseFeatureValue(coverageJson);
-  if (coverageValue === null || coverageValue <= 0) return "no-coverage";
-  const rainValue = parseFeatureValue(rainJson);
-  if (typeof rainValue !== "number") return "unavailable";
-  if (rainValue > threshold) return "precipitation";
-  return "dry";
-}
-
-ok("Class-1. No coverage → no-coverage",
-  classifyRadar(fixture_outside, fixture_rain, 0.1) === "no-coverage");
-ok("Class-2. Covered + active rain → precipitation",
-  classifyRadar(fixture_covered, fixture_rain, 0.1) === "precipitation");
-ok("Class-3. Covered + dry (0) → dry",
-  classifyRadar(fixture_covered, fixture_dry, 0.1) === "dry");
-ok("Class-4. Covered + null rain value → unavailable (NOT dry)",
-  classifyRadar(fixture_covered, fixture_null_value, 0.1) === "unavailable");
-ok("Class-5. Covered + rain outside extent → unavailable",
-  classifyRadar(fixture_covered, fixture_outside, 0.1) === "unavailable");
-

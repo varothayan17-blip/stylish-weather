@@ -244,28 +244,6 @@ async function getMostRecentRadarTime(signal: AbortSignal): Promise<string | nul
 
 // ── GetFeatureInfo: parse a single layer's feature value ─────────────────────
 
-/**
- * Parse a WMS 1.3.0 GetFeatureInfo JSON response.
- * Returns the numeric value of the first feature, or null when:
- *   - features array is empty (outside spatial extent)
- *   - value is absent or null (within extent but no measurement)
- *   - response is not a FeatureCollection with a features array
- *
- * "absent" and "null" are deliberately both returned as null here.
- * The CALLER is responsible for distinguishing these semantics using the
- * coverage layer result.
- */
-function parseFeatureValue(json: unknown): number | null {
-  if (typeof json !== "object" || json === null) return null;
-  const fc = json as { features?: unknown[] };
-  if (!Array.isArray(fc.features) || fc.features.length === 0) return null;
-  const props = (fc.features[0] as { properties?: { value?: unknown } })?.properties;
-  if (!props) return null;
-  const v = props.value;
-  if (typeof v === "number") return v;
-  return null; // includes null, undefined, string, object
-}
-
 // ── WMS 1.3.0 BBOX builder ───────────────────────────────────────────────────
 
 /**
@@ -276,23 +254,188 @@ function parseFeatureValue(json: unknown): number | null {
  *
  * For Scarborough (lat=43.77, lon=-79.25, delta=0.02):
  *   BBOX = "43.75,-79.27,43.79,-79.23"
- *
- * The centre pixel I=1,J=1 (0-indexed in a 3×3 grid) corresponds to the
- * exact target coordinates.
  */
 export function buildWms13Bbox(lat: number, lon: number, delta: number): string {
   return `${lat - delta},${lon - delta},${lat + delta},${lon + delta}`;
 }
 
-// ── Single GetFeatureInfo request ─────────────────────────────────────────────
+// ── Coverage parser (RADAR_COVERAGE_RRAI) ────────────────────────────────────
+//
+// Real GeoMet response (confirmed Scarborough 2026-09-03):
+// {
+//   "type": "FeatureCollection",
+//   "name": "RADAR_COVERAGE_RRAI",
+//   "features": [{
+//     "type": "Feature",
+//     "properties": { "type": "radar_coverage" },
+//     "geometry": { "type": "MultiPolygon", "coordinates": [...] }
+//   }]
+// }
+//
+// There is NO properties.value field on this layer.
+// Coverage is confirmed by: feature present + properties.type === "radar_coverage"
+//                         + geometry is Polygon or MultiPolygon.
+//
+// Empty features → no-coverage.
+// Present feature but malformed geometry → unavailable.
+// We do NOT log the full geometry (it is extremely large).
 
-async function queryLayer(
+type CoverageResult = "covered" | "no-coverage" | "unavailable";
+
+export function parseCoverageResponse(json: unknown): CoverageResult {
+  if (typeof json !== "object" || json === null) return "unavailable";
+  const fc = json as { type?: unknown; features?: unknown[] };
+
+  // Must be a FeatureCollection
+  if (fc.type !== "FeatureCollection") return "unavailable";
+  if (!Array.isArray(fc.features)) return "unavailable";
+
+  // Empty features = outside coverage area
+  if (fc.features.length === 0) return "no-coverage";
+
+  // Require a Feature with the correct properties and a valid polygon geometry
+  const feature = fc.features[0] as {
+    type?: unknown;
+    properties?: { type?: unknown };
+    geometry?: { type?: unknown };
+  };
+
+  if (feature?.type !== "Feature") return "unavailable";
+
+  // properties.type must be "radar_coverage"
+  const propType = feature.properties?.type;
+  if (propType !== "radar_coverage") return "unavailable";
+
+  // geometry must be Polygon or MultiPolygon (do not validate coordinates — too large)
+  const geomType = feature.geometry?.type;
+  if (geomType !== "Polygon" && geomType !== "MultiPolygon") return "unavailable";
+
+  return "covered";
+}
+
+// ── Rain-rate parser (RADAR_1KM_RRAI) ────────────────────────────────────────
+//
+// Real GeoMet response (confirmed Scarborough 2026-09-03):
+// {
+//   "type": "FeatureCollection",
+//   "layer": "RADAR_1KM_RRAI",
+//   "features": [{
+//     "type": "Feature",
+//     "id": "RADAR_1KM_RRAI(-79.257915,43.76811)",
+//     "geometry": { "type": "Point", "coordinates": [-79.2579, 43.7681] },
+//     "properties": {
+//       "value": 0,
+//       "class": "Undetected",
+//       "title_en": "Radar precipitation rate for rain [mm/h]",
+//       "time": "2026-09-03T02:42:00Z",
+//       "dim_reference_time": "N/A"
+//     }
+//   }]
+// }
+//
+// GeoMet returns the radar grid-cell CENTRE coordinates, which differ slightly
+// from the queried point. GeoJSON Point coordinates are [longitude, latitude].
+//
+// Observed real deltas (Scarborough 2026-09-03):
+//   requested:  lat 43.77,    lon -79.25
+//   returned:   lat 43.7681,  lon -79.2579
+//   difference: lat  0.0019°, lon  0.0079°
+//
+// The WMS request uses BBOX_DELTA = 0.02°. We add GRID_SNAP_TOLERANCE = 0.01°
+// to account for radar grid-cell snapping beyond the BBOX edge. This gives
+// MAX_COORD_DELTA = 0.03° per axis — tight enough to catch a swapped lat/lon
+// (which would produce a ~123° error for Canadian coordinates) or a completely
+// unrelated cell returned by a service error.
+const BBOX_DELTA         = 0.02; // degrees — matches the WMS GetFeatureInfo BBOX
+const GRID_SNAP_TOLERANCE = 0.01; // degrees — additional allowance for grid snapping
+export const MAX_COORD_DELTA = BBOX_DELTA + GRID_SNAP_TOLERANCE; // 0.03°
+
+interface RainRateResult {
+  /** Rain rate in mm/hour. >= 0. */
+  rateMmPerHour: number;
+  /** UTC ISO timestamp from properties.time — the actual radar scan time. */
+  observedAt: string;
+}
+
+export function parseRainRateResponse(
+  json: unknown,
+  requestedLat: number,
+  requestedLon: number,
+): RainRateResult | null {
+  if (typeof json !== "object" || json === null) return null;
+  const fc = json as { type?: unknown; layer?: unknown; features?: unknown[] };
+
+  if (fc.type !== "FeatureCollection") return null;
+  if (!Array.isArray(fc.features) || fc.features.length === 0) return null;
+
+  // When present, validate that the layer field identifies the correct layer
+  if (fc.layer !== undefined && fc.layer !== RAIN_LAYER) return null;
+
+  const feature = fc.features[0] as {
+    type?: unknown;
+    geometry?: { type?: unknown; coordinates?: unknown };
+    properties?: {
+      value?: unknown;
+      time?: unknown;
+      [key: string]: unknown;
+    };
+  };
+
+  if (feature?.type !== "Feature") return null;
+
+  // Require Point geometry (GeoMet returns the grid-cell centre point)
+  const geom = feature.geometry;
+  if (geom?.type !== "Point") return null;
+
+  // Validate that the returned Point coordinates are within MAX_COORD_DELTA (0.03°)
+  // of the requested point, per axis.
+  //
+  // GeoJSON Point coordinates are [longitude, latitude] — confirmed by the real
+  // Scarborough response: [-79.2579, 43.7681] where coords[0] is lon, coords[1] is lat.
+  //
+  // A swapped lat/lon would produce a delta of ~123° for Canadian coordinates and
+  // is caught by the same check (0.03° threshold is far below that).
+  const coords = geom.coordinates;
+  if (Array.isArray(coords) && coords.length >= 2) {
+    const retLon = coords[0] as unknown; // GeoJSON: longitude is index 0
+    const retLat = coords[1] as unknown; // GeoJSON: latitude  is index 1
+    if (typeof retLon === "number" && typeof retLat === "number") {
+      if (
+        Math.abs(retLat - requestedLat) > MAX_COORD_DELTA ||
+        Math.abs(retLon - requestedLon) > MAX_COORD_DELTA
+      ) {
+        console.warn(
+          `[radar-rain] returned coords lat=${retLat} lon=${retLon} exceed ` +
+          `MAX_COORD_DELTA=${MAX_COORD_DELTA}° from ` +
+          `requested lat=${requestedLat} lon=${requestedLon}`,
+        );
+        return null;
+      }
+    }
+  }
+
+  const props = feature.properties;
+  if (!props) return null;
+
+  // value must be a finite number >= 0
+  const v = props.value;
+  if (typeof v !== "number" || !isFinite(v) || v < 0) return null;
+
+  // time must be an absolute ISO timestamp (this is the actual scan time)
+  const t = props.time;
+  if (typeof t !== "string" || !isAbsoluteIso(t)) return null;
+
+  return { rateMmPerHour: v, observedAt: t };
+}
+
+// ── GetFeatureInfo request builder ───────────────────────────────────────────
+
+function buildFeatureInfoUrl(
   layer: string,
   lat: number,
   lon: number,
   radarTime: string,
-  signal: AbortSignal,
-): Promise<number | null> {
+): string {
   const url = new URL(GEOMET_BASE);
   url.searchParams.set("SERVICE",      "WMS");
   url.searchParams.set("VERSION",      "1.3.0");
@@ -304,13 +447,10 @@ async function queryLayer(
   url.searchParams.set("BBOX",         buildWms13Bbox(lat, lon, 0.02));
   url.searchParams.set("WIDTH",        "3");
   url.searchParams.set("HEIGHT",       "3");
-  url.searchParams.set("I",            "1");  // centre pixel (0-indexed)
+  url.searchParams.set("I",            "1");
   url.searchParams.set("J",            "1");
   url.searchParams.set("TIME",         radarTime);
-
-  const resp = await fetch(url.toString(), { signal });
-  if (!resp.ok) return null;
-  return parseFeatureValue(await resp.json() as unknown);
+  return url.toString();
 }
 
 // ── Public: queryRadarNow ─────────────────────────────────────────────────────
@@ -339,32 +479,50 @@ export async function queryRadarNow(
     const cached = getCached(lat, lon, radarTime);
     if (cached) return cached;
 
-    // Query coverage layer first.
-    const coverageValue = await queryLayer(COVERAGE_LAYER, lat, lon, radarTime, controller.signal);
-
-    // Coverage classification:
-    //   null  = features empty → outside spatial extent → no-coverage
-    //   0     = within extent but mask = 0 → not covered
-    //   > 0   = confirmed inside radar coverage mosaic
-    if (coverageValue === null || coverageValue <= 0) {
+    // ── Step 1: Coverage layer ─────────────────────────────────────────────
+    // RADAR_COVERAGE_RRAI returns a polygon geometry (not a numeric value).
+    // parseCoverageResponse() interprets the real GeoMet schema.
+    let covJson: unknown;
+    try {
+      const covResp = await fetch(buildFeatureInfoUrl(COVERAGE_LAYER, lat, lon, radarTime), { signal: controller.signal });
+      if (!covResp.ok) return { status: "unavailable", source: "eccc-radar" };
+      covJson = await covResp.json();
+    } catch {
+      return { status: "unavailable", source: "eccc-radar" };
+    }
+    const coverage = parseCoverageResponse(covJson);
+    if (coverage === "no-coverage") {
       const r: RadarPrecipObservation = { status: "no-coverage", observedAt: radarTime, source: "eccc-radar" };
       setCached(lat, lon, radarTime, r);
       return r;
     }
+    if (coverage === "unavailable") {
+      return { status: "unavailable", source: "eccc-radar" };
+    }
 
-    // Point is confirmed covered — query the rain rate layer.
-    const rainValue = await queryLayer(RAIN_LAYER, lat, lon, radarTime, controller.signal);
+    // ── Step 2: Rain-rate layer ─────────────────────────────────────────────
+    // RADAR_1KM_RRAI returns properties.value (mm/hour) and properties.time
+    // (the actual radar scan timestamp, which becomes observedAt).
+    let rainJson: unknown;
+    try {
+      const rainResp = await fetch(buildFeatureInfoUrl(RAIN_LAYER, lat, lon, radarTime), { signal: controller.signal });
+      if (!rainResp.ok) return { status: "unavailable", source: "eccc-radar" };
+      rainJson = await rainResp.json();
+    } catch {
+      return { status: "unavailable", source: "eccc-radar" };
+    }
+    const rain = parseRainRateResponse(rainJson, lat, lon);
 
     let result: RadarPrecipObservation;
-    if (typeof rainValue !== "number") {
-      // Coverage confirmed but rain rate is null/absent.
-      // Do NOT classify as dry — measurement is ambiguous.
+    if (!rain) {
+      // Covered but rain-rate parse failed (null value, bad time, wrong layer, etc.)
       result = { status: "unavailable", observedAt: radarTime, source: "eccc-radar" };
-    } else if (rainValue > RADAR_RAIN_THRESHOLD_MM_PER_HR) {
-      result = { status: "precipitation", rateMmPerHour: rainValue, observedAt: radarTime, source: "eccc-radar" };
+    } else if (rain.rateMmPerHour > RADAR_RAIN_THRESHOLD_MM_PER_HR) {
+      result = { status: "precipitation", rateMmPerHour: rain.rateMmPerHour, observedAt: rain.observedAt, source: "eccc-radar" };
     } else {
       // Numeric value at or below threshold: confirmed dry within coverage.
-      result = { status: "dry", observedAt: radarTime, source: "eccc-radar" };
+      // observedAt comes from properties.time on the rain-rate feature.
+      result = { status: "dry", observedAt: rain.observedAt, source: "eccc-radar" };
     }
 
     setCached(lat, lon, radarTime, result);
