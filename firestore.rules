@@ -419,6 +419,14 @@ service cloud.firestore {
       allow write: if false;  // Admin SDK only
     }
 
+    // ── userFeedback — write via backend only ─────────────────────────────
+    // Written exclusively by POST /api/feedback via Firebase Admin SDK.
+    // Client applications have NO read or write access.
+    match /userFeedback/{feedbackId} {
+      allow read:  if false;
+      allow write: if false;
+    }
+
     // ── Deny everything else ─────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

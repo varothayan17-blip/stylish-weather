@@ -23,6 +23,7 @@ import { getUid } from "@/lib/auth";
 import { orchestrateEnable, orchestrateDisable, isIosSafariNonInstalled } from "@/lib/notifications";
 import { applyTheme, type Theme } from "@/lib/theme";
 import { useAuthGuard } from "@/lib/useAuthGuard";
+import { FeedbackSheet } from "@/components/FeedbackSheet";
 import {
   Sun,
   Moon,
@@ -70,6 +71,7 @@ const COMMUTE_LABEL: Record<Prefs["commute"], string> = {
 
 function Settings() {
   const { authLoading, uid: authUid } = useAuthGuard();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const [p, setP] = useState<Prefs>(defaultPrefs);
   const [saved, setSaved] = useState(false);
@@ -212,7 +214,8 @@ function Settings() {
   if (authLoading) return null;
 
   return (
-    <AppShell>
+    <>
+      <AppShell>
       <header className="mb-6 animate-fade-up">
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
           Settings
@@ -514,6 +517,18 @@ function Settings() {
         )}
       </Section>}
 
+      <Section delay={280} title="Help &amp; Feedback">
+        <button
+          onClick={() => setFeedbackOpen(true)}
+          className="glass-card flex w-full items-center justify-between rounded-2xl px-4 py-3.5
+                     text-sm text-foreground hover:bg-muted/60 focus-visible:outline-none
+                     focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+        >
+          <span className="font-medium">Send feedback</span>
+          <HelpCircle className="h-4 w-4 text-muted-foreground" aria-hidden />
+        </button>
+      </Section>
+
       <Section delay={300} title="About">
         <div className="glass-card overflow-hidden rounded-[2rem]">
           {[
@@ -622,6 +637,11 @@ function Settings() {
           <Check className="h-4 w-4" /> Saved
         </div>
       </div>
-    </AppShell>
+      </AppShell>
+      <FeedbackSheet
+        isOpen={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+      />
+    </>
   );
 }

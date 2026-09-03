@@ -65,12 +65,19 @@ export default {
         "/api/delete-account",
         "/api/reconcile-deletion",
         "/api/radar-now",
+        "/api/feedback",
       ]);
       if (apiPaths.has(pathname)) {
         // GET /api/radar-now — ECCC GeoMet radar precipitation overlay
         if (pathname === "/api/radar-now" && request.method === "GET") {
           const { handleRadarNow } = await import("./lib/radar-handler");
           return await handleRadarNow(request);
+        }
+
+        // POST /api/feedback — authenticated user feedback submission
+        if (pathname === "/api/feedback" && request.method === "POST") {
+          const { handleFeedback } = await import("./lib/feedback-handler");
+          return await handleFeedback(request);
         }
 
         // GET /api/wardrobe/status — read-only scanning availability flag
