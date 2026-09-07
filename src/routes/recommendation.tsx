@@ -11,6 +11,8 @@ import { cloudSync } from "@/lib/cloudSync";
 import { getUid } from "@/lib/auth";
 import { getErrorMessage } from "@/lib/utils";
 import { recommend } from "@/lib/recommend";
+import { shareOrDownload, deduplicateOutfit } from "@/lib/shareOutfit";
+import { toast } from "sonner";
 import { personalizeRecommendation, type PersonalizationResult } from "@/lib/stylePersonalization";
 import { loadStyleProfile } from "@/lib/styleProfileSync";
 import type { PersonalStyleProfile } from "@/lib/styleProfile";
@@ -18,7 +20,7 @@ import { useEntitlement } from "@/lib/entitlement";
 import { computeRegretRisk } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
 import { UMBRELLA_LABEL, UMBRELLA_ICON } from "@/lib/precipAdvice";
-import { Sun, Hand, Heart, AlertTriangle, Sparkles, ArrowLeft, Shirt } from "lucide-react";
+import { Sun, Hand, Heart, AlertTriangle, Sparkles, ArrowLeft, Shirt , Share2 } from "lucide-react";
 import { useAuthGuard } from "@/lib/useAuthGuard";
 
 export const Route = createFileRoute("/recommendation")({
@@ -36,7 +38,8 @@ function Recommendation() {
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved,   setSaved]   = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
@@ -270,6 +273,36 @@ function Recommendation() {
                   className={`h-4 w-4 transition-all ${saved ? "fill-current scale-125" : ""}`}
                 />
                 {saved ? "Saved to favorites" : "Save this outfit"}
+              </button>
+
+              {/* Share outfit — no entitlement check, all users.
+                  Uses [...rec.outfit, ...personalization.extraItems],
+                  the exact items rendered on screen. */}
+              <button
+                disabled={sharing}
+                aria-label="Share today's outfit"
+                onClick={async () => {
+                  if (sharing) return;
+                  setSharing(true);
+                  try {
+                    // Combine base + extra items exactly as rendered
+                    const combined   = [...rec.outfit, ...personalization.extraItems];
+                    const outfitItems = deduplicateOutfit(combined);
+                    const textFallback = `Today's outfit — Aeruvo\n${outfitItems.join("\n")}\n${rec.headline}\naeruvo.app`;
+                    const result = await shareOrDownload(
+                      { outfitItems, headline: rec.headline,
+                        tempC: weather.tempC, condition: weather.condition },
+                      textFallback,
+                    );
+                    if (result.message) toast(result.message);
+                  } finally {
+                    setSharing(false);
+                  }
+                }}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-border py-3.5 text-sm font-semibold text-foreground transition-transform active:scale-[0.98] disabled:opacity-60"
+              >
+                <Share2 className="h-4 w-4" aria-hidden />
+                {sharing ? "Generating…" : "Share outfit"}
               </button>
             </div>
           </section>
