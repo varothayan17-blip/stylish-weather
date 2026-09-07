@@ -37,6 +37,10 @@ import { getWeatherAlerts } from "@/lib/alerts";
 import { isFirstSetupPending } from "@/lib/introState";
 import { UMBRELLA_LABEL, UMBRELLA_LABEL_NOW, UMBRELLA_ICON, isRainNow } from "@/lib/precipAdvice";
 import { rainNowDecision, type RainNowDecision } from "@/lib/rainNowDecision";
+import { personalizeRecommendation, type PersonalizationResult } from "@/lib/stylePersonalization";
+import { loadStyleProfile } from "@/lib/styleProfileSync";
+import type { PersonalStyleProfile } from "@/lib/styleProfile";
+import { useEntitlement } from "@/lib/entitlement";
 import { fetchRadarNow } from "@/lib/fetchRadarNow";
 import type { RadarPrecipObservation } from "@/lib/radar-types";
 import { FeedbackSheet } from "@/components/FeedbackSheet";
@@ -170,6 +174,13 @@ function Home() {
   // Timestamp of the last successful weather fetch — used for background refresh deduplication.
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
+  // ── Personal Style Profile ──────────────────────────────────────────────
+  // Loaded only for authenticated Premium users. Never blocks weather render.
+  // Initialised as null so free/unauthenticated users get NO_CHANGE output.
+  const entitlement = useEntitlement();
+  const [styleProfile, setStyleProfile] = useState<PersonalStyleProfile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+
   // ── Notification discovery card ─────────────────────────────────────
   const [notifDismissed, setNotifDismissed] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
@@ -300,6 +311,28 @@ function Home() {
   // STALE_THRESHOLD_MS: 5 minutes. Current-condition data from Open-Meteo
   // updates at 15-minute model boundaries. Refreshing more often than 5 min
   // yields stale responses; less often risks showing very outdated conditions.
+  // Load style profile once when we know the user is Premium.
+  // Non-blocking: weather renders immediately; profile arrives asynchronously.
+  // On load failure, profileLoaded=true so we still render without profile.
+  useEffect(() => {
+    if (entitlement.loading) return;
+    if (!("active" in entitlement) || !entitlement.active) { setProfileLoaded(true); return; }
+    let cancelled = false;
+    import("@/lib/auth").then(({ getUid }) => getUid()).then(uid => {
+      if (!uid || cancelled) { setProfileLoaded(true); return; }
+      return loadStyleProfile(uid);
+    }).then(profile => {
+      if (!cancelled) {
+        setStyleProfile(profile ?? null);
+        setProfileLoaded(true);
+      }
+    }).catch(() => {
+      if (!cancelled) setProfileLoaded(true);
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entitlement.loading]);
+
   const STALE_THRESHOLD_MS = 5 * 60 * 1000;
   const fetchedAtRef = useRef<number | null>(null);
   useEffect(() => { fetchedAtRef.current = fetchedAt; }, [fetchedAt]);
@@ -394,6 +427,33 @@ function Home() {
     () => (weather && prefs ? recommend(weather, prefs, radar ?? undefined) : null),
     [weather, prefs, radar],
   );
+
+  // Personalization result — depends on rec, weather (for wind/precip),
+  // the trusted entitlement, and the style profile.
+  // Returns NO_CHANGE (empty, null fields) when entitlement is loading,
+  // inactive, or profile is null — identical to current free-user output.
+  // profileLoaded gate prevents optimistic personalization before resolution.
+  const personalization: PersonalizationResult = useMemo(() => {
+    if (!rec || !weather || !profileLoaded) {
+      return { headline: null, extraItems: [], explanation: null, commuteNote: null };
+    }
+    return personalizeRecommendation({
+      baseRecommendation: rec,
+      effectiveFeelsC:    rec.effectiveFeelsC,
+      isPrecipitatingNow: rainDecision?.isPrecipitatingNow ?? false,
+      windKph:            weather.windKph,
+      personalStyleProfile: styleProfile,
+      entitlement,
+    });
+  }, [rec, weather, profileLoaded, rainDecision, styleProfile, entitlement]);
+
+  // Merged outfit: base outfit plus non-duplicate extra items from personalization.
+  const mergedOutfit = useMemo(() => {
+    if (!rec || personalization.extraItems.length === 0) return rec?.outfit ?? [];
+    const baseSet = new Set(rec.outfit.map(i => i.toLowerCase()));
+    const safe    = personalization.extraItems.filter(i => !baseSet.has(i.toLowerCase()));
+    return [...rec.outfit, ...safe];
+  }, [rec, personalization.extraItems]);
   // useResolvedSlots must be called unconditionally (Rules of Hooks).
   // When rec is null (weather not loaded yet), the hook returns empty slots.
   const EMPTY_REC: Pick<NonNullable<typeof rec>, "outfit"|"effectiveFeelsC"|"headline"> = { outfit: [], effectiveFeelsC: 0, headline: "" };
@@ -664,6 +724,26 @@ function Home() {
           <div className="glass-card overflow-hidden rounded-[2rem] p-6">
             <p className="text-xl font-medium leading-snug tracking-tight">{rec.headline}</p>
 
+            {/* ── Personalization explanation (Premium) ───────────────
+                 Shown only when personalizeRecommendation() returned one.
+                 Free users: personalization.explanation === null → hidden. */}
+            {personalization.explanation && (
+              <p className="mt-2 text-sm text-primary/80 italic leading-snug">
+                {personalization.explanation}
+              </p>
+            )}
+
+            {/* Extra items from personalization (e.g. removable layer) */}
+            {personalization.extraItems.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {personalization.extraItems.map(item => (
+                  <span key={item} className="rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
+                    + {item}
+                  </span>
+                ))}
+              </div>
+            )}
+
             {/* Slot-by-slot list: generic for free users, personalised for Premium */}
             <OutfitSlotList rec={rec} slots={resolvedSlotsResult} />
 
@@ -720,6 +800,13 @@ function Home() {
               <div className="mt-5 flex gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                 <p className="text-sm leading-relaxed text-foreground/90">{rec.commuteWarning}</p>
+              </div>
+            )}
+
+            {/* Commute exposure note from personalization (Premium) */}
+            {personalization.commuteNote && (
+              <div className="mt-3 flex gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                <p className="text-sm text-foreground/80">{personalization.commuteNote}</p>
               </div>
             )}
 
