@@ -11,6 +11,10 @@ import { cloudSync } from "@/lib/cloudSync";
 import { getUid } from "@/lib/auth";
 import { getErrorMessage } from "@/lib/utils";
 import { recommend } from "@/lib/recommend";
+import { personalizeRecommendation, type PersonalizationResult } from "@/lib/stylePersonalization";
+import { loadStyleProfile } from "@/lib/styleProfileSync";
+import type { PersonalStyleProfile } from "@/lib/styleProfile";
+import { useEntitlement } from "@/lib/entitlement";
 import { computeRegretRisk } from "@/lib/regretRisk";
 import { getWeatherAlerts } from "@/lib/alerts";
 import { UMBRELLA_LABEL, UMBRELLA_ICON } from "@/lib/precipAdvice";
@@ -55,10 +59,43 @@ function Recommendation() {
     };
   }, [prefs, refreshTick]);
 
+  // Personal Style Profile personalization (Premium only)
+  const entitlement = useEntitlement();
+  const [styleProfile, setStyleProfile] = useState<PersonalStyleProfile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+
+  useEffect(() => {
+    if (entitlement.loading) return;
+    if (!("active" in entitlement) || !entitlement.active) { setProfileLoaded(true); return; }
+    let cancelled = false;
+    import("@/lib/auth").then(({ getUid }) => getUid()).then(uid => {
+      if (!uid || cancelled) { setProfileLoaded(true); return; }
+      return loadStyleProfile(uid);
+    }).then(profile => {
+      if (!cancelled) { setStyleProfile(profile ?? null); setProfileLoaded(true); }
+    }).catch(() => { if (!cancelled) setProfileLoaded(true); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entitlement.loading]);
+
   const rec = useMemo(
     () => (weather && prefs ? recommend(weather, prefs) : null),
     [weather, prefs],
   );
+
+  const personalization: PersonalizationResult = useMemo(() => {
+    if (!rec || !weather || !profileLoaded) {
+      return { headline: null, extraItems: [], explanation: null, commuteNote: null };
+    }
+    return personalizeRecommendation({
+      baseRecommendation: rec,
+      effectiveFeelsC:    rec.effectiveFeelsC,
+      isPrecipitatingNow: false, // radar not loaded on recommendation route
+      windKph:            weather.windKph,
+      personalStyleProfile: styleProfile,
+      entitlement,
+    });
+  }, [rec, weather, profileLoaded, styleProfile, entitlement]);
   const risk = useMemo(
     () => (weather && prefs && rec ? computeRegretRisk(weather, prefs, rec) : null),
     [weather, prefs, rec],
@@ -123,6 +160,18 @@ function Recommendation() {
 
             <div className="glass-card rounded-[2rem] p-6">
               <p className="text-xl font-medium leading-snug tracking-tight">{rec.headline}</p>
+              {personalization.explanation && (
+                <p className="mt-2 text-sm text-primary/80 italic">{personalization.explanation}</p>
+              )}
+              {personalization.extraItems.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {personalization.extraItems.map(item => (
+                    <span key={item} className="rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
+                      + {item}
+                    </span>
+                  ))}
+                </div>
+              )}
               <p className="mt-1.5 text-xs text-muted-foreground">
                 Based on current conditions in {weather.city}.
               </p>

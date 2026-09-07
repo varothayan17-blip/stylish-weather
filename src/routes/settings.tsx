@@ -24,6 +24,10 @@ import { orchestrateEnable, orchestrateDisable, isIosSafariNonInstalled } from "
 import { applyTheme, type Theme } from "@/lib/theme";
 import { useAuthGuard } from "@/lib/useAuthGuard";
 import { FeedbackSheet } from "@/components/FeedbackSheet";
+import { StyleProfileSheet } from "@/components/StyleProfileSheet";
+import { loadStyleProfile, saveStyleProfile } from "@/lib/styleProfileSync";
+import type { PersonalStyleProfile } from "@/lib/styleProfile";
+import { Lock } from "lucide-react";
 import {
   Sun,
   Moon,
@@ -71,7 +75,10 @@ const COMMUTE_LABEL: Record<Prefs["commute"], string> = {
 
 function Settings() {
   const { authLoading, uid: authUid } = useAuthGuard();
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackOpen,      setFeedbackOpen]      = useState(false);
+  const [styleProfileOpen,  setStyleProfileOpen]  = useState(false);
+  const [styleProfile,      setStyleProfile]       = useState<PersonalStyleProfile | null>(null);
+  const [styleProfileLoaded,setStyleProfileLoaded] = useState(false);
 
   const [p, setP] = useState<Prefs>(defaultPrefs);
   const [saved, setSaved] = useState(false);
@@ -84,6 +91,27 @@ function Settings() {
   // Entitlement from Firestore only — never from prefs or localStorage.
   // useEntitlement waits for Auth to settle — never hangs on "Loading...".
   const entitlement = useEntitlement();
+
+  // Load Personal Style Profile when user is authenticated
+  useEffect(() => {
+    let cancelled = false;
+    if (!entitlement.loading && !entitlement.loading && ("active" in entitlement) && entitlement.active) {
+      getUid().then(uid => {
+        if (!uid || cancelled) return;
+        return loadStyleProfile(uid);
+      }).then((profile: PersonalStyleProfile | null | undefined) => {
+        if (!cancelled) {
+          setStyleProfile(profile ?? null);
+          setStyleProfileLoaded(true);
+        }
+      }).catch(() => { if (!cancelled) setStyleProfileLoaded(true); });
+    } else if (!entitlement.loading) {
+      setStyleProfileLoaded(true);
+    }
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entitlement.loading]);
+
   // Track the detected local timezone once on mount
   const detectedTz = useRef<string>(
     typeof Intl !== "undefined"
@@ -517,6 +545,47 @@ function Settings() {
         )}
       </Section>}
 
+      {/* ── Personal Style Profile ──────────────────────────────────── */}
+      <Section delay={265} title="Personal Style">
+        {(!entitlement.loading && ("active" in entitlement) && entitlement.active) ? (
+          <button
+            onClick={() => setStyleProfileOpen(true)}
+            className="glass-card flex w-full items-center justify-between rounded-3xl p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary">
+                <Crown className="h-5 w-5" />
+              </div>
+              <div className="text-left">
+                <p className="text-sm font-medium text-foreground">Personal Style Profile</p>
+                <p className="text-xs text-muted-foreground">
+                  {!styleProfileLoaded ? "Loading…" :
+                   styleProfile?.completedAt ? "Edit your style preferences" :
+                   "Set up your style preferences"}
+                </p>
+              </div>
+            </div>
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          </button>
+        ) : (
+          <Link
+            to="/premium"
+            className="glass-card flex items-center gap-3 rounded-3xl p-4"
+          >
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-muted text-muted-foreground">
+              <Lock className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-foreground">Personal Style Profile</p>
+              <p className="text-xs text-muted-foreground">
+                Aeruvo learns how you like to dress and adapts recommendations to your comfort, style and routine.
+              </p>
+              <p className="mt-1 text-xs font-semibold text-primary">Upgrade to Premium →</p>
+            </div>
+          </Link>
+        )}
+      </Section>
+
       <Section delay={280} title="Help &amp; Feedback">
         <button
           onClick={() => setFeedbackOpen(true)}
@@ -641,6 +710,17 @@ function Settings() {
       <FeedbackSheet
         isOpen={feedbackOpen}
         onClose={() => setFeedbackOpen(false)}
+      />
+      <StyleProfileSheet
+        isOpen={styleProfileOpen}
+        onClose={() => setStyleProfileOpen(false)}
+        initialProfile={styleProfile}
+        onSave={async (profile) => {
+          const uid = await getUid();
+          if (!uid) throw new Error("Not signed in");
+          await saveStyleProfile(uid, profile);
+          setStyleProfile(profile);
+        }}
       />
     </>
   );

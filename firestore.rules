@@ -406,6 +406,134 @@ service cloud.firestore {
         allow read:  if false;  // Remaining scans returned in API response body
         allow write: if false;  // Admin SDK only
       }
+
+      // ── users/{uid}/styleProfile/v1 ──────────────────────────────────
+      //
+      // Personal Style Profile — Phase 1 Premium feature.
+      //
+      // ACCESS CONTROL:
+      //   read    — owner only (retained after Premium lapses so data survives)
+      //   create  — owner + active Premium entitlement
+      //   update  — owner + active Premium entitlement
+      //   delete  — owner only (privacy/data-control right, even without Premium)
+      //
+      // DOCUMENT CONSTRAINT:
+      //   Only the document with id "v1" is permitted.
+      //   Other document ids in this subcollection are rejected.
+      //
+      // SCHEMA:
+      //   Unknown keys are rejected (hasOnly).
+      //   Every enum is validated against its exact allow-list.
+      //   stylePreferences and commonActivities are lists, max 10 items each.
+      //   completedAt: null or numeric.
+      //   updatedAt: numeric (required).
+      //   version: must be 1.
+      //
+      // PREMIUM CHECK:
+      //   Uses get() to read users/{uid}/entitlements/premium.
+      //   Only proceeds when .data.active === true (backend-written field).
+      //   Clients cannot forge entitlement — that document is write:false.
+
+      // isOwnerWithPremium:
+      //   1. Auth present and caller is the document owner (checked first, cheapest)
+      //   2. Entitlement document exists at users/{uid}/entitlements/premium
+      //   3. .data.active == true (backend-written by Stripe webhook / Admin SDK)
+      // Using exists() before get() avoids a get() charge when the document is absent.
+      function isOwnerWithPremium() {
+        return request.auth != null
+          && request.auth.uid == uid
+          && exists(/databases/$(database)/documents/users/$(uid)/entitlements/premium)
+          && get(/databases/$(database)/documents/users/$(uid)/entitlements/premium).data.active == true;
+      }
+
+      // ── isValidStyleProfileData ──────────────────────────────────────────
+      //
+      // Firestore Security Rules Language has no list iteration primitives.
+      // However, our lists have fixed maximum sizes (6 and 5), so every possible
+      // index can be checked explicitly using safe short-circuit guards:
+      //
+      //   list.size() < N || list[N-1] in allowedValues
+      //
+      // This pattern is safe: the left side of || is evaluated first; when
+      // list.size() < N is true the right side is never evaluated, so
+      // list[N-1] is never accessed out of bounds.
+      //
+      // stylePreferences: valid values are
+      //   casual | sporty | streetwear | minimal | smart | formal  (6 values)
+      // commonActivities: valid values are
+      //   college | work | gym | casual | events  (5 values)
+
+      function validStylesElements(s) {
+        let allowed = ['casual', 'sporty', 'streetwear', 'minimal', 'smart', 'formal'];
+        // Check index 0 (always present because size >= 1)
+        // Check indexes 1-5 only when the list is large enough (short-circuit)
+        return s[0] in allowed
+          && (s.size() < 2 || s[1] in allowed)
+          && (s.size() < 3 || s[2] in allowed)
+          && (s.size() < 4 || s[3] in allowed)
+          && (s.size() < 5 || s[4] in allowed)
+          && (s.size() < 6 || s[5] in allowed);
+      }
+
+      function validActivitiesElements(a) {
+        let allowed = ['college', 'work', 'gym', 'casual', 'events'];
+        // Empty list is valid (no activities selected).
+        // Check each index only when the list is large enough (short-circuit).
+        return (a.size() < 1 || a[0] in allowed)
+          && (a.size() < 2 || a[1] in allowed)
+          && (a.size() < 3 || a[2] in allowed)
+          && (a.size() < 4 || a[3] in allowed)
+          && (a.size() < 5 || a[4] in allowed);
+      }
+
+      function isValidStyleProfileData(d) {
+        let allowedKeys = ['layeringPreference', 'stylePreferences', 'commuteMode',
+                            'windSensitivity', 'rainTolerance', 'commonActivities',
+                            'completedAt', 'updatedAt', 'version'];
+
+        // Scalar enum validation — exact allow-lists, fully server-enforced
+        let validLayering = d.layeringPreference in ['minimal', 'balanced', 'prefer'];
+        let validCommute  = d.commuteMode in ['walk', 'transit', 'drive', 'mixed'];
+        let validWind     = d.windSensitivity in ['low', 'normal', 'high'];
+        let validRain     = d.rainTolerance in ['low', 'normal', 'high'];
+
+        // stylePreferences: list, 1–6 items, every element in the allow-list
+        let validStyles = d.stylePreferences is list
+                          && d.stylePreferences.size() >= 1
+                          && d.stylePreferences.size() <= 6
+                          && validStylesElements(d.stylePreferences);
+
+        // commonActivities: list, 0–5 items, every element in the allow-list
+        let validActiv = d.commonActivities is list
+                         && d.commonActivities.size() >= 0
+                         && d.commonActivities.size() <= 5
+                         && validActivitiesElements(d.commonActivities);
+
+        // Timestamp and version fields
+        let validCompAt  = d.completedAt == null || d.completedAt is number;
+        let validUpdAt   = d.updatedAt is number;
+        let validVersion = d.version == 1;
+
+        return d.keys().hasOnly(allowedKeys)
+          && validLayering && validCommute && validWind && validRain
+          && validStyles && validActiv
+          && validCompAt && validUpdAt && validVersion;
+      }
+
+      match /styleProfile/{docId} {
+        // Only the canonical v1 document is allowed.
+        allow read:   if request.auth != null && request.auth.uid == uid
+                         && docId == "v1";
+        allow create: if docId == "v1"
+                         && isOwnerWithPremium()
+                         && isValidStyleProfileData(request.resource.data);
+        allow update: if docId == "v1"
+                         && isOwnerWithPremium()
+                         && isValidStyleProfileData(request.resource.data);
+        // Delete: owner may remove their profile for privacy, even without Premium.
+        allow delete: if request.auth != null && request.auth.uid == uid
+                         && docId == "v1";
+      }
     }
 
     // ── deletionJobs/{jobId} ─────────────────────────────────────────────
