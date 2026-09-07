@@ -46,7 +46,9 @@ import type { RadarPrecipObservation } from "@/lib/radar-types";
 import { FeedbackSheet } from "@/components/FeedbackSheet";
 import { WeatherDataSourcesSheet } from "@/components/WeatherDataSourcesSheet";
 import type { FeedbackDiagnostics } from "@/lib/feedback-types";
-import { MoreVertical } from "lucide-react";
+import { MoreVertical, Share2 } from "lucide-react";
+import { shareOrDownload, deduplicateOutfit, resolvedSlotsToDisplayLabels } from "@/lib/shareOutfit";
+import { toast } from "sonner";
 import { OutfitSlotList } from "@/components/OutfitSlotList";
 import {
   Wind,
@@ -163,7 +165,8 @@ function Home() {
   const [sourcesOpen,  setSourcesOpen]  = useState(false);
   const overflowTriggerRef = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved,   setSaved]   = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [greeting, setGreeting] = useState<{ label: string; isNight: boolean }>({
     label: "Hello",
     isNight: false,
@@ -454,10 +457,25 @@ function Home() {
     const safe    = personalization.extraItems.filter(i => !baseSet.has(i.toLowerCase()));
     return [...rec.outfit, ...safe];
   }, [rec, personalization.extraItems]);
+
   // useResolvedSlots must be called unconditionally (Rules of Hooks).
   // When rec is null (weather not loaded yet), the hook returns empty slots.
   const EMPTY_REC: Pick<NonNullable<typeof rec>, "outfit"|"effectiveFeelsC"|"headline"> = { outfit: [], effectiveFeelsC: 0, headline: "" };
   const resolvedSlotsResult = useResolvedSlots(rec ?? EMPTY_REC);
+
+  // finalDisplayOutfit — labels derived from the same resolvedSlots data
+  //   that OutfitSlotList uses. OutfitSlotList independently applies
+  //   "Your " + item.name in its own JSX; this memo mirrors that convention.
+  //   matched slot   → "Your {itemName}"
+  //   unmatched slot → genericText
+  //   extra items    → personalization.extraItems (deduped)
+  const finalDisplayOutfit = useMemo(
+    () => resolvedSlotsToDisplayLabels(
+      resolvedSlotsResult.resolvedSlots,
+      personalization.extraItems,
+    ),
+    [resolvedSlotsResult.resolvedSlots, personalization.extraItems],
+  );
 
   const risk = useMemo(
     () => (weather && prefs && rec ? computeRegretRisk(weather, prefs, rec) : null),
@@ -879,6 +897,36 @@ function Home() {
                 className={`h-4 w-4 transition-all ${saved ? "fill-current scale-125" : ""}`}
               />
               {saved ? "Saved to favorites" : "Save this outfit"}
+            </button>
+
+            {/* Share outfit — no entitlement check, all users.
+                Uses finalDisplayOutfit: wardrobe-matched labels + extras,
+                exactly matching what OutfitSlotList renders. */}
+            <button
+              disabled={sharing}
+              aria-label="Share today's outfit"
+              onClick={async () => {
+                if (sharing || !rec || !weather) return;
+                setSharing(true);
+                try {
+                  // finalDisplayOutfit already contains wardrobe-matched
+                  // display labels ("Your Blue jeans", not "Jeans")
+                  const outfitItems = finalDisplayOutfit;
+                  const textFallback = `Today's outfit — Aeruvo\n${outfitItems.join("\n")}\n${rec.headline}\naeruvo.app`;
+                  const result = await shareOrDownload(
+                    { outfitItems, headline: rec.headline,
+                      tempC: weather.tempC, condition: weather.condition },
+                    textFallback,
+                  );
+                  if (result.message) toast(result.message);
+                } finally {
+                  setSharing(false);
+                }
+              }}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-border py-3.5 text-sm font-semibold text-foreground transition-transform active:scale-[0.98] disabled:opacity-60"
+            >
+              <Share2 className="h-4 w-4" aria-hidden />
+              {sharing ? "Generating…" : "Share outfit"}
             </button>
           </div>
         </section>
