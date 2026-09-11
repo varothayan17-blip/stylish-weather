@@ -7,6 +7,10 @@
  * Run with: node tests/rain-now-regression.test.cjs
  */
 "use strict";
+const fs   = require("node:fs");
+const path = require("node:path");
+const repoRoot   = path.resolve(__dirname, "..");
+const readSource = (rel) => fs.readFileSync(path.join(repoRoot, rel), "utf8").replace(/\r\n/g, "\n");
 
 // ── Port constants and helpers ───────────────────────────────────────────────
 const AMOUNT_THRESHOLD_MM = 0.05;
@@ -598,8 +602,8 @@ console.log("\n── No hourly[0].code in active-now decision ─────�
 // ── Structural checks ─────────────────────────────────────────────────────────
 console.log("\n── Structural checks ─────────────────────────────────────────");
 {
-  const fs=require("fs");
-  const src=fs.readFileSync("/home/claude/live/src/lib/rainNowDecision.ts","utf8");
+  // fs declared at top level
+  const src=fs.readFileSync(path.join(repoRoot, "src/lib/rainNowDecision.ts"), "utf8").replace(/\r\n/g, "\n");
   const nonComment=src.split("\n").filter(l=>!l.trim().startsWith("*")&&!l.trim().startsWith("//"));
   ok("Struct-1. No weather.hourly in code lines", !nonComment.some(l=>l.includes("weather.hourly")));
   ok("Struct-2. AMOUNT_THRESHOLD_MM exported/documented", src.includes("AMOUNT_THRESHOLD_MM"));
@@ -624,11 +628,11 @@ console.log("\n── Structural checks ─────────────�
     const usages = codeLines.filter(l => l.includes("Date.parse("));
     return usages.every(l => l.includes("observedAt") || l.includes("radar"));
   })());
-  const idx=fs.readFileSync("/home/claude/live/src/routes/index.tsx","utf8");
+  const idx=fs.readFileSync(path.join(repoRoot, "src/routes/index.tsx"), "utf8").replace(/\r\n/g, "\n");
   ok("Struct-8. Hero uses effectiveCurrentCode", idx.includes("rainDecision?.effectiveCurrentCode"));
-  ok("Struct-9. providerDataAgeMs in RainNowDecision type (internal diagnostic field)", (() => { const d=require("fs").readFileSync("/home/claude/live/src/lib/rainNowDecision.ts","utf8"); return d.includes("providerDataAgeMs"); })());
+  ok("Struct-9. providerDataAgeMs in RainNowDecision type (internal diagnostic field)", (() => { const d=fs.readFileSync(path.join(repoRoot, "src/lib/rainNowDecision.ts"), "utf8").replace(/\r\n/g, "\n"); return d.includes("providerDataAgeMs"); })());
   ok("Struct-10. fetchedAt kept for background refresh dedup (not displayed)", idx.includes("fetchedAt"));
-  const types=fs.readFileSync("/home/claude/live/src/lib/weatherProviders/types.ts","utf8");
+  const types=fs.readFileSync(path.join(repoRoot, "src/lib/weatherProviders/types.ts"), "utf8").replace(/\r\n/g, "\n");
   ok("Struct-11. Weather.nowLocalMs in type", types.includes("nowLocalMs?:"));
   ok("Struct-12. Weather.currentRainMm in type", types.includes("currentRainMm?:"));
 }
@@ -735,8 +739,8 @@ console.log("\n── R7. Alert alone does not prove rain at point ────�
   const d = rainNowDecision(w, radarNoCov, RADAR_REF_NOW_MS);
   ok("R7-1. Alert not modeled as rain evidence (no alert param in decision)", !d.isPrecipitatingNow);
   ok("R7-2. rainNowDecision has no alert/warning parameter (structural)", (() => {
-    const fs=require("fs");
-    const src=fs.readFileSync("/home/claude/live/src/lib/rainNowDecision.ts","utf8");
+    // fs declared at top level
+    const src=fs.readFileSync(path.join(repoRoot, "src/lib/rainNowDecision.ts"), "utf8").replace(/\r\n/g, "\n");
     return !src.includes("alert") && !src.includes("warning") && !src.includes("Warning");
   })());
 }
@@ -744,15 +748,15 @@ console.log("\n── R7. Alert alone does not prove rain at point ────�
 // ── R8. No customer-facing timestamp text remains
 console.log("\n── R8. No customer-facing diagnostic timestamps ──────────────");
 {
-  const fs=require("fs");
-  const idx=fs.readFileSync("/home/claude/live/src/routes/index.tsx","utf8");
+  // fs declared at top level
+  const idx=fs.readFileSync(path.join(repoRoot, "src/routes/index.tsx"), "utf8").replace(/\r\n/g, "\n");
   ok("R8-1. No 'Conditions for' in JSX", !idx.includes("Conditions for"));
   ok("R8-2. No 'checked just now' in JSX", !idx.includes("checked just now"));
   ok("R8-3. No freshnessLabel in JSX render", !idx.includes("{freshnessLabel"));
   ok("R8-4. No 'Updated X min ago' label", !idx.includes("Updated") || !idx.includes("min ago"));
   // Internal diagnostic fields live in rainNowDecision output (not displayed in hero)
   ok("R8-5. providerDataAgeMs and providerTimeIso kept in RainNowDecision type", (() => {
-    const decSrc=require("fs").readFileSync("/home/claude/live/src/lib/rainNowDecision.ts","utf8");
+    const decSrc=fs.readFileSync(path.join(repoRoot, "src/lib/rainNowDecision.ts"), "utf8").replace(/\r\n/g, "\n");
     return decSrc.includes("providerDataAgeMs") && decSrc.includes("providerTimeIso");
   })());
   ok("R8-6. fetchedAt kept for bg-refresh dedup", idx.includes("fetchedAt"));
@@ -776,11 +780,11 @@ console.log("\n── R9. Hero + recommendation code consistency with radar ─�
 // ── R10. Structural: radar route registered, types correct
 console.log("\n── R10. Structural checks ─────────────────────────────────────");
 {
-  const fs=require("fs");
-  const srv=fs.readFileSync("/home/claude/live/src/server.ts","utf8");
+  // fs declared at top level
+  const srv=fs.readFileSync(path.join(repoRoot, "src/server.ts"), "utf8").replace(/\r\n/g, "\n");
   ok("R10-1. /api/radar-now in server.ts apiPaths", srv.includes('"/api/radar-now"'));
   ok("R10-2. handleRadarNow imported in server.ts", srv.includes("handleRadarNow"));
-  const handler=fs.readFileSync("/home/claude/live/src/lib/radar-handler.ts","utf8");
+  const handler=fs.readFileSync(path.join(repoRoot, "src/lib/radar-handler.ts"), "utf8").replace(/\r\n/g, "\n");
   ok("R10-3. GetFeatureInfo operation used (not pixel colour)", handler.includes("GetFeatureInfo"));
   ok("R10-4. INFO_FORMAT=application/json", handler.includes("application/json"));
   ok("R10-5. RADAR_RAIN_THRESHOLD_MM_PER_HR used for classification", handler.includes("RADAR_RAIN_THRESHOLD_MM_PER_HR"));
@@ -788,14 +792,14 @@ console.log("\n── R10. Structural checks ───────────�
   ok("R10-7. Request timeout implemented", handler.includes("REQUEST_TIMEOUT"));
   ok("R10-8. Cache by coord + radarTime", handler.includes("cacheKey"));
   ok("R10-9. Canadian bounding box guard", handler.includes("CANADA_LAT_MIN"));
-  const types=fs.readFileSync("/home/claude/live/src/lib/radar-types.ts","utf8");
+  const types=fs.readFileSync(path.join(repoRoot, "src/lib/radar-types.ts"), "utf8").replace(/\r\n/g, "\n");
   ok("R10-10. RadarPrecipObservation has no-coverage status", types.includes('"no-coverage"'));
   ok("R10-11. RadarPrecipObservation has unavailable status", types.includes('"unavailable"'));
-  const dec=fs.readFileSync("/home/claude/live/src/lib/rainNowDecision.ts","utf8");
+  const dec=fs.readFileSync(path.join(repoRoot, "src/lib/rainNowDecision.ts"), "utf8").replace(/\r\n/g, "\n");
   ok("R10-12. NowEvidence includes radar-precipitation and radar-dry", dec.includes('"radar-precipitation"') && dec.includes('"radar-dry"'));
   ok("R10-13. P0 radar block before P1", dec.indexOf("P0:") < dec.indexOf("P1:"));
   ok("R10-14. Thunderstorm preservation in P0", dec.includes("THUNDER_CODES"));
-  const idx=fs.readFileSync("/home/claude/live/src/routes/index.tsx","utf8");
+  const idx=fs.readFileSync(path.join(repoRoot, "src/routes/index.tsx"), "utf8").replace(/\r\n/g, "\n");
   ok("R10-15. Radar state in index.tsx", idx.includes("setRadar"));
   ok("R10-16. rainNowDecision receives radar in index.tsx", idx.includes("rainNowDecision(weather, radar"));
 }
@@ -874,8 +878,8 @@ ok("Fresh-12. Stale radar + OMe rain code → OMe P1 fires",
 // ════════════════════════════════════════════════════════════════════════════
 console.log("\n══ WMS 1.3.0 BBOX axis order (point 2) ════════════════════════");
 {
-  const fs = require("fs");
-  const handlerSrc = fs.readFileSync("/home/claude/live/src/lib/radar-handler.ts","utf8");
+  // fs declared at top level
+  const handlerSrc = fs.readFileSync(path.join(repoRoot, "src/lib/radar-handler.ts"), "utf8").replace(/\r\n/g, "\n");
 
   // Port buildWms13Bbox for testing
   function buildWms13Bbox(lat, lon, delta) {
@@ -903,8 +907,8 @@ console.log("\n══ WMS 1.3.0 BBOX axis order (point 2) ═══════�
 // ════════════════════════════════════════════════════════════════════════════
 console.log("\n══ Coverage layer semantics (point 1) ══════════════════════════");
 {
-  const fs = require("fs");
-  const handlerSrc = fs.readFileSync("/home/claude/live/src/lib/radar-handler.ts","utf8");
+  // fs declared at top level
+  const handlerSrc = fs.readFileSync(path.join(repoRoot, "src/lib/radar-handler.ts"), "utf8").replace(/\r\n/g, "\n");
 
   ok("Cov-1. RADAR_COVERAGE_RRAI layer queried separately", handlerSrc.includes("RADAR_COVERAGE_RRAI"));
   ok("Cov-2. parseCoverageResponse called before parseRainRateResponse", handlerSrc.indexOf("parseCoverageResponse") < handlerSrc.indexOf("parseRainRateResponse"));
@@ -926,10 +930,10 @@ console.log("\n══ Coverage layer semantics (point 1) ═══════�
 // ════════════════════════════════════════════════════════════════════════════
 console.log("\n══ Consumer consistency (point 6) ══════════════════════════════");
 {
-  const fs = require("fs");
-  const ctxSrc = fs.readFileSync("/home/claude/live/src/lib/weatherContext.ts","utf8");
-  const recSrc = fs.readFileSync("/home/claude/live/src/lib/recommend.ts","utf8");
-  const idxSrc = fs.readFileSync("/home/claude/live/src/routes/index.tsx","utf8");
+  // fs declared at top level
+  const ctxSrc = fs.readFileSync(path.join(repoRoot, "src/lib/weatherContext.ts"), "utf8").replace(/\r\n/g, "\n");
+  const recSrc = fs.readFileSync(path.join(repoRoot, "src/lib/recommend.ts"), "utf8").replace(/\r\n/g, "\n");
+  const idxSrc = fs.readFileSync(path.join(repoRoot, "src/routes/index.tsx"), "utf8").replace(/\r\n/g, "\n");
 
   ok("Cons-1. analyzeWeather accepts radar param", ctxSrc.includes("radar?: RadarPrecipObservation"));
   ok("Cons-2. analyzeWeather passes radar to rainNowDecision", ctxSrc.includes("rainNowDecision(w, radar)"));
@@ -1040,8 +1044,8 @@ console.log("\n── D. 100% forecast prob + fresh radar dry → currently dry 
 // ── Verify radar-dry can only come from the handler when coverage+valid rate ─
 console.log("\n── Handler: radar-dry emission preconditions ──────────────────");
 {
-  const fs=require("fs");
-  const handlerSrc=fs.readFileSync("/home/claude/live/src/lib/radar-handler.ts","utf8");
+  // fs declared at top level
+  const handlerSrc=fs.readFileSync(path.join(repoRoot, "src/lib/radar-handler.ts"), "utf8").replace(/\r\n/g, "\n");
   ok("Handler-1. dry only from numeric rainValue at or below threshold",
     handlerSrc.includes("} else {") && handlerSrc.includes('"dry"'));
   ok("Handler-2. dry only reached after coverage confirmed (coverageValue > 0)",
@@ -1054,8 +1058,8 @@ console.log("\n── Handler: radar-dry emission preconditions ─────�
 // ── Structural: NowEvidence contains both radar- values ────────────────────
 console.log("\n── Structural: evidence type and consistency ──────────────────");
 {
-  const fs=require("fs");
-  const decSrc=fs.readFileSync("/home/claude/live/src/lib/rainNowDecision.ts","utf8");
+  // fs declared at top level
+  const decSrc=fs.readFileSync(path.join(repoRoot, "src/lib/rainNowDecision.ts"), "utf8").replace(/\r\n/g, "\n");
   ok("Struct-NE-1. NowEvidence has radar-precipitation", decSrc.includes('"radar-precipitation"'));
   ok("Struct-NE-2. NowEvidence has radar-dry", decSrc.includes('"radar-dry"'));
   ok("Struct-NE-3. No bare 'radar' evidence value", (() => {
@@ -1197,8 +1201,8 @@ ok("RC-16. Single timestamp → that timestamp", parseRadarTime(SINGLE) === "202
 
 console.log("\n── Handler structural check ────────────────────────────────────");
 {
-  const fs = require("fs");
-  const h = fs.readFileSync("/home/claude/live/src/lib/radar-handler.ts", "utf8");
+  // fs declared at top level
+  const h = fs.readFileSync(path.join(repoRoot, "src/lib/radar-handler.ts"), "utf8").replace(/\r\n/g, "\n");
   ok("HC-1. default attribute parsed first", h.indexOf("default=") < h.indexOf("slashParts"));
   ok("HC-2. PT6M detected via period.startsWith P", h.includes("period.startsWith(\"P\")") || h.includes("period.startsWith('P')"));
   ok("HC-3. No computed fallback timestamp", !h.includes("setUTCMinutes") && !h.includes("Math.floor"));
@@ -1366,8 +1370,8 @@ ok("GF-12. Coverage with Point geometry → unavailable",
 
 // ── Structural: old parseFeatureValue removed, new parsers exported ────────
 {
-  const fs = require("fs");
-  const h = fs.readFileSync("/home/claude/live/src/lib/radar-handler.ts", "utf8");
+  // fs declared at top level
+  const h = fs.readFileSync(path.join(repoRoot, "src/lib/radar-handler.ts"), "utf8").replace(/\r\n/g, "\n");
   ok("GF-S1. parseCoverageResponse exported", h.includes("export function parseCoverageResponse"));
   ok("GF-S2. parseRainRateResponse exported", h.includes("export function parseRainRateResponse"));
   ok("GF-S3. Old parseFeatureValue removed", !h.includes("function parseFeatureValue"));
@@ -1459,7 +1463,7 @@ ok("GF-S8. MAX_COORD_DELTA exported and equals 0.03", (() => {
 console.log(`\n${"═".repeat(55)}`);
 console.log(`${p+f} tests: ${p} passed, ${f} failed`);
 
-    const h = require("fs").readFileSync("/home/claude/live/src/lib/radar-handler.ts","utf8");
+    const h = fs.readFileSync(path.join(repoRoot, "src/lib/radar-handler.ts"), "utf8").replace(/\r\n/g, "\n");
     return h.includes("export const MAX_COORD_DELTA") && h.includes("GRID_SNAP_TOLERANCE");
   })());
 

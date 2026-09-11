@@ -3,18 +3,21 @@
  * Google auth, pre-auth questions, draft handling, and service-worker guards.
  */
 "use strict";
-const fs = require("fs");
+const fs   = require("node:fs");
+const path = require("node:path");
+const repoRoot   = path.resolve(__dirname, "..");
+const readSource = (rel) => fs.readFileSync(path.join(repoRoot, rel), "utf8").replace(/\r\n/g, "\n");
 let p = 0, f = 0;
 function ok(l, c, d) { if (c) { console.log("✓", l); p++; } else { console.error("✗", l, d ?? ""); f++; } }
 
-const signup   = fs.readFileSync("/home/claude/live/src/routes/signup.tsx", "utf8");
-const welcome  = fs.readFileSync("/home/claude/live/src/routes/welcome.tsx", "utf8");
-const idx      = fs.readFileSync("/home/claude/live/src/routes/index.tsx", "utf8");
-const authLib  = fs.readFileSync("/home/claude/live/src/lib/auth.ts", "utf8");
-const guard    = fs.readFileSync("/home/claude/live/src/lib/useAuthGuard.ts", "utf8");
-const regSW    = fs.readFileSync("/home/claude/live/src/lib/registerSW.ts", "utf8");
-const paq      = fs.readFileSync("/home/claude/live/src/components/onboarding/PreAuthQuestions.tsx", "utf8");
-const introSt  = fs.readFileSync("/home/claude/live/src/lib/introState.ts", "utf8");
+const signup   = fs.readFileSync(path.join(repoRoot, "src/routes/signup.tsx"), "utf8").replace(/\r\n/g, "\n");
+const welcome  = fs.readFileSync(path.join(repoRoot, "src/routes/welcome.tsx"), "utf8").replace(/\r\n/g, "\n");
+const idx      = fs.readFileSync(path.join(repoRoot, "src/routes/index.tsx"), "utf8").replace(/\r\n/g, "\n");
+const authLib  = fs.readFileSync(path.join(repoRoot, "src/lib/auth.ts"), "utf8").replace(/\r\n/g, "\n");
+const guard    = fs.readFileSync(path.join(repoRoot, "src/lib/useAuthGuard.ts"), "utf8").replace(/\r\n/g, "\n");
+const regSW    = fs.readFileSync(path.join(repoRoot, "src/lib/registerSW.ts"), "utf8").replace(/\r\n/g, "\n");
+const paq      = fs.readFileSync(path.join(repoRoot, "src/components/onboarding/PreAuthQuestions.tsx"), "utf8").replace(/\r\n/g, "\n");
+const introSt  = fs.readFileSync(path.join(repoRoot, "src/lib/introState.ts"), "utf8").replace(/\r\n/g, "\n");
 
 // ════════════════════════════════════════════════════════════════════════════
 // A. Journey: signed-out / → /welcome (landing screen first)
@@ -156,7 +159,7 @@ ok("H5. Sign-in copy: no wardrobe claim",
 console.log("\n── I: Protected routes → /signup ─────────────────────────────");
 const guardRoutes = ["forecast", "recommendation", "wardrobe", "saved", "preferences", "settings", "premium"];
 for (const r of guardRoutes) {
-  const src = fs.readFileSync(`/home/claude/live/src/routes/${r}.tsx`, "utf8");
+  const src = fs.readFileSync(`${repoRoot}/src/routes/${r}.tsx`, "utf8");
   ok(`I. ${r}.tsx: has useAuthGuard`, src.includes("useAuthGuard"));
 }
 ok("I-guard. useAuthGuard → /signup (not /welcome)", guard.includes('"/signup"') && !guard.includes('"/welcome"'));
@@ -194,11 +197,11 @@ ok("L3. markDone() called only after questions complete (goToSignup)",
 // M. Draft isolation — dedicated key, never PREFS_KEY
 // ════════════════════════════════════════════════════════════════════════════
 console.log("\n── M: Draft isolation (aeruvo:onboarding-draft:v1) ──────────");
-const paqSrc     = fs.readFileSync("/home/claude/live/src/components/onboarding/PreAuthQuestions.tsx", "utf8");
-const introSrc   = fs.readFileSync("/home/claude/live/src/lib/introState.ts", "utf8");
-const authSrc    = fs.readFileSync("/home/claude/live/src/lib/auth.ts", "utf8");
-const welcomeSrc = fs.readFileSync("/home/claude/live/src/routes/welcome.tsx", "utf8");
-const signupSrc2 = fs.readFileSync("/home/claude/live/src/routes/signup.tsx", "utf8");
+const paqSrc     = fs.readFileSync(path.join(repoRoot, "src/components/onboarding/PreAuthQuestions.tsx"), "utf8").replace(/\r\n/g, "\n");
+const introSrc   = fs.readFileSync(path.join(repoRoot, "src/lib/introState.ts"), "utf8").replace(/\r\n/g, "\n");
+const authSrc    = fs.readFileSync(path.join(repoRoot, "src/lib/auth.ts"), "utf8").replace(/\r\n/g, "\n");
+const welcomeSrc = fs.readFileSync(path.join(repoRoot, "src/routes/welcome.tsx"), "utf8").replace(/\r\n/g, "\n");
+const signupSrc2 = fs.readFileSync(path.join(repoRoot, "src/routes/signup.tsx"), "utf8").replace(/\r\n/g, "\n");
 
 ok("M1. Dedicated draft key exists in introState.ts", introSrc.includes("aeruvo:onboarding-draft:v1"));
 ok("M2. loadOnboardingDraft exported", introSrc.includes("export function loadOnboardingDraft"));
@@ -285,12 +288,12 @@ ok("M23. Draft presence cannot grant access to protected routes (structural)",
 // N. Animation system: Lovable motion CSS + directional transitions
 // ════════════════════════════════════════════════════════════════════════════
 console.log("\n── N: Animation system + reduced-motion ──────────────────────");
-const css       = fs.readFileSync("/home/claude/live/src/components/onboarding/onboarding-motion.css", "utf8");
-const shell     = fs.readFileSync("/home/claude/live/src/components/onboarding/OnboardingShell.tsx", "utf8");
-const wdcSrc    = fs.readFileSync("/home/claude/live/src/components/onboarding/WeatherDemoCard.tsx", "utf8");
-const wardSrc   = fs.readFileSync("/home/claude/live/src/components/onboarding/WardrobeDemoCard.tsx", "utf8");
-const scanSrc   = fs.readFileSync("/home/claude/live/src/components/onboarding/ScanDemoCard.tsx", "utf8");
-const welSrc    = fs.readFileSync("/home/claude/live/src/routes/welcome.tsx", "utf8");
+const css       = fs.readFileSync(path.join(repoRoot, "src/components/onboarding/onboarding-motion.css"), "utf8").replace(/\r\n/g, "\n");
+const shell     = fs.readFileSync(path.join(repoRoot, "src/components/onboarding/OnboardingShell.tsx"), "utf8").replace(/\r\n/g, "\n");
+const wdcSrc    = fs.readFileSync(path.join(repoRoot, "src/components/onboarding/WeatherDemoCard.tsx"), "utf8").replace(/\r\n/g, "\n");
+const wardSrc   = fs.readFileSync(path.join(repoRoot, "src/components/onboarding/WardrobeDemoCard.tsx"), "utf8").replace(/\r\n/g, "\n");
+const scanSrc   = fs.readFileSync(path.join(repoRoot, "src/components/onboarding/ScanDemoCard.tsx"), "utf8").replace(/\r\n/g, "\n");
+const welSrc    = fs.readFileSync(path.join(repoRoot, "src/routes/welcome.tsx"), "utf8").replace(/\r\n/g, "\n");
 
 // CSS file exists and is non-empty
 ok("N1. onboarding-motion.css exists", css.length > 500);
@@ -429,12 +432,12 @@ const PROTECTED_ROUTES = [
 ];
 
 for (const [rel, name] of PROTECTED_ROUTES) {
-  checkHooksOrder(`/home/claude/live/${rel}`, name);
+  checkHooksOrder(`${repoRoot}/${rel}`, name);
 }
 
 // Also verify that every protected route still has useAuthGuard
 ok("O. All 7 protected routes import useAuthGuard", PROTECTED_ROUTES.every(([rel]) => {
-  const src = fs.readFileSync(`/home/claude/live/${rel}`, "utf8");
+  const src = fs.readFileSync(`${repoRoot}/${rel}`, "utf8");
   return src.includes("useAuthGuard");
 }));
 

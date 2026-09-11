@@ -8,7 +8,7 @@ const path = require("path");
 
 const ROOT = path.resolve(__dirname, "..");
 const readSource = (relativePath) =>
-  fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+  fs.readFileSync(path.join(ROOT, relativePath), "utf8").replace(/\r\n/g, "\n");
 
 let p = 0, f = 0;
 function ok(label, cond, detail) {
