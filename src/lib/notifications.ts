@@ -428,6 +428,25 @@ export async function listenForForegroundMessages(): Promise<() => void> {
 
 // ── Internal: write device record ─────────────────────────────────────────
 
+/**
+ * Write (or update) a device record in Firestore.
+ *
+ * createdAt semantics:
+ *   - Written ONLY when the document does not already exist (genuinely new device).
+ *   - Re-enabling an existing device refreshes fid, enabled and updatedAt
+ *     WITHOUT replacing the original createdAt.
+ *   - We read the device document first (when isCreate=true) to determine
+ *     whether createdAt already exists.
+ *   - Read failure: the error is propagated — writeDeviceRecord throws,
+ *     orchestrateEnable catches it and rolls back via unregister().
+ *     A fabricated createdAt is never written to an existing device.
+ *   - initRegistrationSync (isCreate=false) never sets createdAt (correct).
+ *
+ * Disable behaviour:
+ *   orchestrateDisable() deletes the current device's document (identified by
+ *   getStoredDeviceId()). It does NOT disable other devices. Only the device
+ *   that the user disabled notifications on is affected.
+ */
 async function writeDeviceRecord(
   uid: string,
   fid: string | null,
@@ -437,7 +456,7 @@ async function writeDeviceRecord(
   const db = await getFirestoreDb();
   if (!db) throw new Error("Firestore unavailable");
 
-  const { doc, setDoc } = await import("firebase/firestore");
+  const { doc, getDoc, setDoc } = await import("firebase/firestore");
   const deviceId = getOrCreateDeviceId();
   const now = Date.now();
 
@@ -449,9 +468,25 @@ async function writeDeviceRecord(
 
   if (fid !== null) {
     data.fid = fid;
-    if (isCreate) {
+  }
+
+  if (isCreate) {
+    // Read first to determine whether createdAt already exists.
+    // Three cases:
+    //   1. Document does not exist (new device)    → set createdAt = now
+    //   2. Document exists, createdAt present      → omit from write (merge preserves it)
+    //   3. Document exists, createdAt absent       → set createdAt = now (first-time init)
+    //
+    // Read failure: propagate the error so orchestrateEnable rolls back via its
+    // existing unregister() path. Never write a fabricated createdAt to an
+    // existing device whose original value cannot be verified — a transient read
+    // failure followed by a successful merge write would silently overwrite it.
+    const existing = await getDoc(doc(db, "users", uid, "devices", deviceId));
+    if (!existing.exists() || existing.data()?.createdAt == null) {
+      // Case 1 or 3 — safe to initialise createdAt.
       data.createdAt = now;
     }
+    // Case 2: createdAt already set; omit it so merge:true leaves it untouched.
   }
 
   await setDoc(doc(db, "users", uid, "devices", deviceId), data, { merge: true });

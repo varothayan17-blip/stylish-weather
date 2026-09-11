@@ -3,6 +3,10 @@
  * Run with: node tests/intro-state.test.cjs
  */
 "use strict";
+const fs   = require("node:fs");
+const path = require("node:path");
+const repoRoot   = path.resolve(__dirname, "..");
+const readSource = (rel) => fs.readFileSync(path.join(repoRoot, rel), "utf8").replace(/\r\n/g, "\n");
 
 // ── localStorage simulation ──────────────────────────────────────────────────
 const store = {};
@@ -77,7 +81,6 @@ function ok(label, cond, detail) {
 // 1. Complete route inventory — all functional routes are protected
 // ════════════════════════════════════════════════════════════════════════════
 console.log("\n── Route inventory (public allowlist + protected) ────────────");
-const fs = require("fs");
 const routeFiles = {
   // Public allowlist
   public: ["/welcome", "/signup", "/privacy", "/terms", "/about", "/support"],
@@ -88,14 +91,14 @@ const routeFiles = {
 
 // Every protected route must have useAuthGuard
 const routeSrc = {
-  "/": fs.readFileSync("/home/claude/live/src/routes/index.tsx", "utf8"),
-  "/forecast": fs.readFileSync("/home/claude/live/src/routes/forecast.tsx", "utf8"),
-  "/recommendation": fs.readFileSync("/home/claude/live/src/routes/recommendation.tsx", "utf8"),
-  "/wardrobe": fs.readFileSync("/home/claude/live/src/routes/wardrobe.tsx", "utf8"),
-  "/saved": fs.readFileSync("/home/claude/live/src/routes/saved.tsx", "utf8"),
-  "/preferences": fs.readFileSync("/home/claude/live/src/routes/preferences.tsx", "utf8"),
-  "/settings": fs.readFileSync("/home/claude/live/src/routes/settings.tsx", "utf8"),
-  "/premium": fs.readFileSync("/home/claude/live/src/routes/premium.tsx", "utf8"),
+  "/": fs.readFileSync(path.join(repoRoot, "src/routes/index.tsx"), "utf8").replace(/\r\n/g, "\n"),
+  "/forecast": fs.readFileSync(path.join(repoRoot, "src/routes/forecast.tsx"), "utf8").replace(/\r\n/g, "\n"),
+  "/recommendation": fs.readFileSync(path.join(repoRoot, "src/routes/recommendation.tsx"), "utf8").replace(/\r\n/g, "\n"),
+  "/wardrobe": fs.readFileSync(path.join(repoRoot, "src/routes/wardrobe.tsx"), "utf8").replace(/\r\n/g, "\n"),
+  "/saved": fs.readFileSync(path.join(repoRoot, "src/routes/saved.tsx"), "utf8").replace(/\r\n/g, "\n"),
+  "/preferences": fs.readFileSync(path.join(repoRoot, "src/routes/preferences.tsx"), "utf8").replace(/\r\n/g, "\n"),
+  "/settings": fs.readFileSync(path.join(repoRoot, "src/routes/settings.tsx"), "utf8").replace(/\r\n/g, "\n"),
+  "/premium": fs.readFileSync(path.join(repoRoot, "src/routes/premium.tsx"), "utf8").replace(/\r\n/g, "\n"),
 };
 // For /: uses useAuthGuard (added)
 // For /premium: check if it needs guard (uses useEntitlement which checks auth)
@@ -117,7 +120,7 @@ for (const [route, src] of Object.entries(routeSrc)) {
 // Public routes must NOT have auth guard redirecting users away
 for (const route of routeFiles.public) {
   const filename = route === "/" ? "index" : route.slice(1);
-  const filePath = `/home/claude/live/src/routes/${filename}.tsx`;
+  const filePath = `${repoRoot}/src/routes/${filename}.tsx`;
   if (fs.existsSync(filePath)) {
     const src = fs.readFileSync(filePath, "utf8");
     const isPublic = !src.includes("useAuthGuard");
@@ -236,14 +239,14 @@ ok("T8-7. Marker alone cannot grant access (auth still required)", authGuardChec
 // 9. Signup mode switching
 // ════════════════════════════════════════════════════════════════════════════
 console.log("\n── Signup mode switching ─────────────────────────────────────");
-const signupSrc = fs.readFileSync("/home/claude/live/src/routes/signup.tsx", "utf8");
-ok("T9-1. 'I already have an account' → sign-in mode (welcome.tsx)", fs.readFileSync("/home/claude/live/src/routes/welcome.tsx", "utf8").includes("Already have an account? Sign in"));
-ok("T9-2. Skip introduction navigates to /signup", fs.readFileSync("/home/claude/live/src/routes/welcome.tsx", "utf8").includes('{ to: "/signup"'));
+const signupSrc = fs.readFileSync(path.join(repoRoot, "src/routes/signup.tsx"), "utf8").replace(/\r\n/g, "\n");
+ok("T9-1. 'I already have an account' → sign-in mode (welcome.tsx)", fs.readFileSync(path.join(repoRoot, "src/routes/welcome.tsx"), "utf8").replace(/\r\n/g, "\n").includes("Already have an account? Sign in"));
+ok("T9-2. Skip introduction navigates to /signup", fs.readFileSync(path.join(repoRoot, "src/routes/welcome.tsx"), "utf8").replace(/\r\n/g, "\n").includes('{ to: "/signup"'));
 ok("T9-3. Sign-in mode state exists in signup.tsx", signupSrc.includes('"signin"') && signupSrc.includes('"create"'));
 ok("T9-4. Mode toggle: 'Already have an account? Sign in'", signupSrc.includes("Already have an account?"));
 ok("T9-5. Mode toggle: 'New to Aeruvo? Create an account'", signupSrc.includes("New to Aeruvo?"));
 ok("T9-6. No guest link in signup.tsx", !signupSrc.includes("continue as guest") && !signupSrc.includes("Skip for now"));
-ok("T9-7. No guest link in welcome.tsx", !fs.readFileSync("/home/claude/live/src/routes/welcome.tsx", "utf8").includes("Continue as guest"));
+ok("T9-7. No guest link in welcome.tsx", !fs.readFileSync(path.join(repoRoot, "src/routes/welcome.tsx"), "utf8").replace(/\r\n/g, "\n").includes("Continue as guest"));
 
 // ════════════════════════════════════════════════════════════════════════════
 // 10. Legacy guest data preservation
@@ -300,9 +303,9 @@ ok("T13-2. Authenticated + no pending setup → home renders", r3.render === "ho
 // 14. SVG garment illustrations (no emoji, no abstract shapes)
 // ════════════════════════════════════════════════════════════════════════════
 console.log("\n── Visual: recognizable SVG garments, no emoji ──────────────");
-const wdc = fs.readFileSync("/home/claude/live/src/components/onboarding/WardrobeDemoCard.tsx", "utf8");
-const sdc = fs.readFileSync("/home/claude/live/src/components/onboarding/ScanDemoCard.tsx", "utf8");
-const wdc2 = fs.readFileSync("/home/claude/live/src/components/onboarding/WeatherDemoCard.tsx", "utf8");
+const wdc = fs.readFileSync(path.join(repoRoot, "src/components/onboarding/WardrobeDemoCard.tsx"), "utf8").replace(/\r\n/g, "\n");
+const sdc = fs.readFileSync(path.join(repoRoot, "src/components/onboarding/ScanDemoCard.tsx"), "utf8").replace(/\r\n/g, "\n");
+const wdc2 = fs.readFileSync(path.join(repoRoot, "src/components/onboarding/WeatherDemoCard.tsx"), "utf8").replace(/\r\n/g, "\n");
 ok("T14-1. WardrobeDemoCard: has SVG paths (garment shapes)", wdc.includes("<path") && wdc.includes("<svg"));
 ok("T14-2. WardrobeDemoCard: has crewneck SVG", wdc.includes("CrewneckSVG") || wdc.includes("crewneck"));
 ok("T14-3. WardrobeDemoCard: has sweatpants SVG", wdc.includes("SweatpantsSVG") || wdc.includes("sweatpants"));
@@ -317,7 +320,7 @@ ok("T14-9. No emoji in any onboarding component",
 ok("T14-10. Six onboarding components exist", [
   "OnboardingShell", "IntroProgress", "IntroButtons",
   "WeatherDemoCard", "WardrobeDemoCard", "ScanDemoCard"
-].every(n => fs.existsSync(`/home/claude/live/src/components/onboarding/${n}.tsx`)));
+].every(n => fs.existsSync(`${repoRoot}/src/components/onboarding/${n}.tsx`)));
 
 // ════════════════════════════════════════════════════════════════════════════
 // 15. Accurate account copy (no false sync claims)

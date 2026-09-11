@@ -418,6 +418,7 @@ async function processUser(
   const permanentCodes = new Set([
     "messaging/registration-token-not-registered",
     "messaging/invalid-registration-token",
+    "messaging/installation-id-not-registered", // Web Push FID no longer registered
   ]);
 
   for (const deviceDoc of devicesSnap.docs) {
@@ -431,6 +432,14 @@ async function processUser(
         apns:    { payload: { aps: { "content-available": 1 } } },
         android: { priority: "high" },
       });
+      // Firebase accepted the send. This does NOT guarantee the OS displayed
+      // the notification — delivery to device and display are not confirmed here.
+      // Log safe device identifier only (never FID/token).
+      logger.info("morningRainCheck: FCM accepted", {
+        uid: shortUid,
+        deviceShortId: deviceDoc.id.slice(0, 8),
+        result: "accepted",
+      });
       sentCount++;
     } catch (err) {
       const code = (err as { code?: string }).code ?? "unknown";
@@ -438,9 +447,13 @@ async function processUser(
         // Stale FID — disable device. Never log the FID value.
         await deviceDoc.ref.update({ enabled: false, updatedAt: Date.now() });
       }
-      // Log safe metadata only (no FID, no credentials)
+      // Log safe metadata only (no FID, no credentials).
+      // deviceShortId is the first 8 chars of the Firestore document ID —
+      // safe to log, not a secret, useful for correlating disabled records.
+      const deviceShortId = deviceDoc.id.slice(0, 8);
       logger.warn("morningRainCheck: FCM error", {
         uid: shortUid,
+        deviceShortId,
         code,
         permanent: permanentCodes.has(code),
       });
