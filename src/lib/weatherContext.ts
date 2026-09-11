@@ -154,19 +154,46 @@ export function analyzeWeather(w: Weather, p: Prefs, radar?: RadarPrecipObservat
     }
   }
 
-  const umbrella = effectiveLevel >= 1;
-
   // ── Shared precipitation-now decision ────────────────────────────────────
-  // Must be computed BEFORE rainTimingPhrase so "happening now" wording
-  // is driven by active measurements and WMO codes, never by probability alone.
+  // Must be computed BEFORE rainTimingPhrase AND before umbrella promotion
+  // so that active-precipitation evidence (P1/P2/P3/radar) can promote the
+  // umbrella level even when w.code is a stale dry code.
   // Both the hero card and the recommendation consume this shared decision
   // so they always agree about whether rain is active now.
   const rainNow = rainNowDecision(w, radar);
 
+  // ── Active-precipitation level promotion ──────────────────────────────────
+  // rainNowDecision may fire (isPrecipitatingNow=true) even when w.code is
+  // still a stale dry code (e.g. Open-Meteo has not yet updated its current
+  // condition block). In that case the hero icon correctly shows a rain icon,
+  // but the umbrella level computed from w.code and precipProb alone may
+  // not reflect active rain. Promote to at least level 2 when active
+  // precipitation is confirmed so that umbrella advice is immediate.
+  if (rainNow.isPrecipitatingNow && effectiveLevel < 2) {
+    effectiveLevel = 2;
+  }
+
+  const umbrella = effectiveLevel >= 1;
+
   // Rain timing derived from hourly data — null when no rain expected.
   // Pass nowFrac and rainNow.isPrecipitatingNow to prevent probability-only
   // "happening now" wording. Only active measurement/code evidence enables it.
-  const rainTiming = umbrella ? rainTimingPhrase(hourlyForAdvice, 30, nowFrac, rainNow.isPrecipitatingNow) : null;
+  // When rainNow.isPrecipitatingNow=true, rainTimingPhrase will produce
+  // "Rain happening now." if the current fractional hour is inside any
+  // rain window. When no hourly window is active (e.g. the provider's hourly
+  // data still shows low probability), we synthesize the "happening now" phrase
+  // directly from the confirmed active-precipitation evidence.
+  const rawRainTiming = umbrella
+    ? rainTimingPhrase(hourlyForAdvice, 30, nowFrac, rainNow.isPrecipitatingNow)
+    : null;
+  // If rainNow confirmed active rain but hourly window timing produced a future
+  // or null phrase, override with "happening now" so timing is never stale.
+  const rainTiming = rainNow.isPrecipitatingNow && rawRainTiming !== null &&
+    !rawRainTiming.includes("happening now") && !rawRainTiming.includes("expected soon")
+    ? "Rain happening now."
+    : rainNow.isPrecipitatingNow && rawRainTiming === null
+    ? "Rain happening now."
+    : rawRainTiming;
 
   // ── Full-day look-ahead umbrella promotion ───────────────────────────────
   // w.hourly covers only ~12 hours from now. w.daily[0].hourlyPrecip covers
@@ -218,7 +245,10 @@ export function analyzeWeather(w: Weather, p: Prefs, radar?: RadarPrecipObservat
   const sunglasses = w.uv >= 5 && !rainCodeActive && w.precipProb < 30;
 
   // ── Additive clothing requirements ───────────────────────────────────────
-  const needsWaterproof = w.precipProb >= 60 || rainCodeActive;
+  // needsWaterproof: heavy rain (precipProb >= 60), active rain code, OR
+  // confirmed current precipitation (rainNow). This ensures the waterproof
+  // layer is recommended when rain is happening even if the WMO code is stale.
+  const needsWaterproof = w.precipProb >= 60 || rainCodeActive || rainNow.isPrecipitatingNow;
   const needsSnowBoots = w.snowProb > 0;
   // Windbreaker threshold is band-dependent:
   //   Cold/chilly/cool bands: >= 25 km/h — wind significantly amplifies cold
@@ -281,6 +311,35 @@ export function analyzeWeather(w: Weather, p: Prefs, radar?: RadarPrecipObservat
       else if (w.code === 82) headline = `${positivePrefix} — heavy showers expected.`;
       mood = "rainy";
     }
+  } else if (rainNow.isPrecipitatingNow && !THUNDER_CODES.has(w.code) && !SNOW_CODES.has(w.code)) {
+    // Active precipitation confirmed by rainNowDecision (P1/P2/P3/radar)
+    // but w.code is still a stale dry code (provider hasn't updated yet).
+    // The hero icon correctly shows rain. The headline MUST acknowledge current
+    // precipitation — never retain "Beautiful day" or equivalent dry wording.
+    //
+    // Use effectiveCurrentCode from rainNow to choose the right wording.
+    // These headlines mirror the existing rain-code overrides above so that
+    // the stale-code path produces identical copy to the live-code path.
+    const ec = rainNow.effectiveCurrentCode;
+    if (ec === 51 || ec === 53) {
+      headline = tempBase > 22
+        ? "Warm & lovely — light drizzle expected."
+        : tempBase > 15
+        ? "Light drizzle — grab a light jacket."
+        : "Light drizzle — layer up and stay dry.";
+    } else if (ec === 55) {
+      headline = tempBase > 22
+        ? "Warm & lovely — drizzle throughout the day."
+        : "Drizzle throughout the day — stay covered.";
+    } else {
+      // Code 61, 63, 80, 81 or fallback — rain is happening now
+      headline = tempBase > 22
+        ? "Warm — rain happening now, bring an umbrella."
+        : tempBase > 15
+        ? "Rain happening now — waterproof jacket advised."
+        : "Rain and cool — bundle up and stay dry.";
+    }
+    mood = "rainy";
   } else if (w.code === 45 || w.code === 48) {
     const fogPositive = ["Beautiful day", "Warm & lovely"].find((px) => headline.startsWith(px));
     if (fogPositive) headline = `${fogPositive} — foggy start to the day.`;

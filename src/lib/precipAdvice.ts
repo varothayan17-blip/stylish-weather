@@ -164,42 +164,73 @@ export function rainTimingPhrase(
 
   // ── Time-aware wording when nowFrac is supplied ──────────────────────────
   // nowFrac is the fractional current hour (e.g. 00:03 = 0.05).
-  // An integer hour H represents the interval [H, H+1), so the best window
-  // covers [startHour, endHour+1). The window is active when nowFrac is
-  // inside that interval.
+  // An integer hour H represents the interval [H, H+1).
+  // The best window covers [startHour, endHour+1).
+  //
+  // Tolerance rule: a window that started ≤ 15 min ago (nowFrac - startHour ≤ 0.25)
+  // is treated as "expected soon" even without confirmed active precipitation.
+  // Beyond 15 min: stale wording is suppressed if precipitation is not active.
+  //
+  // Past-window rule: once nowFrac > startHour + 0.25 and no active precip:
+  //   - single-hour window → null (never say "possible around X" for a past hour)
+  //   - multi-hour window with future hours remaining (endHour >= Math.ceil(nowFrac))
+  //     → use the remaining future end for wording
+  //   - multi-hour window fully past (endHour + 1 <= nowFrac) → null
   if (nowFrac !== undefined) {
     const windowIsActive = nowFrac >= startHour && nowFrac < endHour + 1;
-    // minutesToStart is negative when the window has already started.
     const minutesToStart = (startHour - nowFrac) * 60;
+    const startedMoreThan15MinAgo = nowFrac - startHour > 0.25;
 
     if (windowIsActive) {
-      // The probability window is active, but we must ALSO have confirmed
-      // active precipitation via the shared rainNowDecision() result.
-      // When precipitationIsActiveNow is explicitly false, probability alone
-      // cannot produce "happening now" — downgrade to "expected soon" if the
-      // rain is truly imminent, otherwise use future wording.
       if (precipitationIsActiveNow !== false) {
-        // Rain is occurring right now — current fractional hour is inside the
-        // best window AND caller confirms active precipitation evidence.
+        // Caller confirmed active precipitation — window is active → "happening now"
         return `${condition} happening now.`;
       }
-      // precipitationIsActiveNow === false: suppress "happening now".
-      // The window started but provider says no active precipitation.
-      // This is "Rain possible/expected right now" territory — use "expected soon"
-      // only if the window started very recently (within last 15 min).
-      if (nowFrac - startHour <= 0.25) {
+
+      // precipitationIsActiveNow === false:
+      if (!startedMoreThan15MinAgo) {
+        // Window started ≤ 15 min ago — treat as imminent.
         return `${condition} expected soon.`;
       }
-      // Window well underway but no provider evidence — fall to future wording
-      // with the end of the window as the reference.
-      // Falls through to regular future wording below.
+
+      // Window started > 15 min ago but no active precipitation confirmed.
+      // Do NOT produce "possible around X" for a time that has already passed.
+      if (best.length === 1) {
+        // Single-hour window: the only hour is already stale. Suppress entirely.
+        return null;
+      }
+
+      // Multi-hour window: some hours may still be in the future.
+      // Find the first future hour (>= ceiling of nowFrac).
+      const nextHour = Math.ceil(nowFrac);
+      const futureHours = best.filter((h) => h.hour >= nextHour);
+      if (futureHours.length === 0) {
+        // All hours have passed — suppress.
+        return null;
+      }
+      // Describe the remaining future portion of the window.
+      const futureEnd = futureHours[futureHours.length - 1].hour;
+      if (futureEnd === nextHour) {
+        // Only one future hour left in the window.
+        return `${condition} possible around ${formatHour(nextHour)}.`;
+      }
+      // Multiple future hours: show the remaining range.
+      return `${condition} expected between ${formatHour(nextHour)} and ${formatHour(futureEnd + 1)}.`;
     }
+
+    // Window has not yet started.
     if (minutesToStart > 0 && minutesToStart <= 60) {
-      // Rain window starts within the next 60 minutes.
       return `${condition} expected soon.`;
     }
+
+    // Window is fully past (endHour + 1 <= nowFrac) — suppress stale phrase.
+    if (endHour + 1 <= nowFrac) {
+      return null;
+    }
+
     // Falls through to regular future wording below.
   }
+
 
   // ── Regular wording (future window or no nowFrac supplied) ───────────────
   if (best.length === 1) {
