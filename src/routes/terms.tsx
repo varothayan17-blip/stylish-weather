@@ -61,6 +61,7 @@ function Terms() {
               By using Aeruvo you agree to these Terms. If you do not agree, do not use the app.
             </p>
             <p className="mt-2">
+              {/* ⚠️ LEGAL REVIEW REQUIRED — see privacy.tsx age section for the same flag */}
               <strong>Minimum age:</strong> You must be at least 13 years old to create an account, subject
               to applicable local consent requirements in your jurisdiction.
             </p>
@@ -89,7 +90,7 @@ function Terms() {
             <p>
               Aeruvo provides weather-based clothing recommendations and an AI-assisted wardrobe
               analysis feature. Recommendations are generated automatically from public weather data
-              and matching logic. AI wardrobe analysis uses a third-party AI model (Google Gemini).
+              and matching logic. AI wardrobe analysis uses a third-party AI model (Anthropic Claude). The AI scanner is available to users aged 15 and older.
             </p>
             <p className="mt-2">
               Recommendations and AI analysis results are <strong>suggestions only</strong> — not

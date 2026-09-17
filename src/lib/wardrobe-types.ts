@@ -49,12 +49,17 @@ export type FitEstimate =
 
 /**
  * Structured clothing analysis returned by /api/wardrobe/scan.
- * Gemini populates this; the client uses it to pre-fill the confirmation screen.
+ * The Anthropic provider populates this; the client uses it to pre-fill
+ * the confirmation screen.
+ *
+ * NOTE ON evidence: The `evidence` field was present in older versions of this
+ * type and may appear in items already saved in localStorage. New items never
+ * receive or persist an evidence field. Existing items load without error because
+ * the field is optional.
  *
  * IMPORTANT: Numeric confidence fields are [0, 1]. Values < 0.60 should be
  * displayed with an "Estimated" indicator in the UI. The AI is instructed to
- * use "unknown" rather than hallucinate unverifiable physical properties
- * (waterproofness, exact fabric composition, thermal rating, etc.).
+ * use "unknown" rather than hallucinate unverifiable physical properties.
  */
 export type ClothingAnalysis = {
   /** Short human-readable name, e.g. "Navy wool overcoat" */
@@ -92,8 +97,6 @@ export type ClothingAnalysis = {
   fitEstimate: FitEstimate;
   /**
    * Per-field confidence [0, 1]. Values < 0.60 → show "Estimated" in UI.
-   * AI is expected to be honest; it is better to give low confidence than
-   * to fabricate certainty about unverifiable properties.
    */
   confidence: {
     category: number;
@@ -104,12 +107,36 @@ export type ClothingAnalysis = {
     style: number;
   };
   /**
-   * Optional short user-facing evidence string (≤ 120 chars).
-   * e.g. "Looks like a medium-weight cotton-blend hoodie."
-   * Never a raw chain-of-thought or model reasoning.
+   * Optional evidence from legacy saved items only.
+   * New items never have this field set (it is stripped before saving).
+   * Kept as optional so old localStorage items continue to load without error.
+   * @deprecated Do not set on new items. Strip before persisting.
    */
   evidence?: string;
 };
+
+// ── Discriminated scan result (provider output before client mapping) ─────────
+
+/**
+ * Reason codes for provider rejection.
+ * The server maps each code to a safe, non-accusatory user-facing message.
+ * Reason codes are never exposed to the client directly.
+ */
+export type RejectionReasonCode =
+  | "person_present"
+  | "multiple_items"
+  | "id_or_document"
+  | "unsafe_content"
+  | "not_clothing"
+  | "unusable_image";
+
+/**
+ * Discriminated union: what the Anthropic provider returns after parsing.
+ * The server validates and normalises this before returning to the client.
+ */
+export type ScanResult =
+  | { status: "accepted"; analysis: ClothingAnalysis }
+  | { status: "rejected"; reasonCode: RejectionReasonCode };
 
 // ── Scan API request/response ─────────────────────────────────────────────────
 
@@ -122,7 +149,7 @@ export type ScanQuotaInfo = {
 
 export type ScanSuccessResponse = {
   ok: true;
-  analysis: ClothingAnalysis;
+  analysis: ClothingAnalysis;   // evidence field will never be set on new scans
   /** Remaining free scans (null = unlimited / premium) */
   remainingFreeScans: number | null;
   /** Quota information for display */
@@ -132,22 +159,40 @@ export type ScanSuccessResponse = {
 export type ScanErrorResponse = {
   ok: false;
   error: string;
-  /** 'quota' | 'auth' | 'size' | 'type' | 'ai' | 'server' */
+  /** 'quota' | 'auth' | 'size' | 'type' | 'ai' | 'server' | 'rejected' | 'ack' | 'abuse' */
   code: string;
 };
 
 export type ScanResponse = ScanSuccessResponse | ScanErrorResponse;
 
+// ── Scanner acknowledgement ───────────────────────────────────────────────────
+
+/**
+ * Age band for scanner acknowledgement.
+ * Stored server-side in the acknowledgement record.
+ * We never store full date of birth.
+ */
+export type ScannerAgeBand = "15-17" | "18-plus";
+
+/**
+ * The current acknowledgement schema version.
+ * Increment when the attestation text changes materially.
+ * Users who accepted an older version will be shown the new one.
+ */
+export const SCANNER_ACK_VERSION = "1" as const;
+
 // ── Scan state machine (client) ───────────────────────────────────────────────
 
 export type ScanStep =
-  | "status-check"    // checking /api/wardrobe/status on sheet open
-  | "scan-unavailable"// status returned false — show friendly message
-  | "manual"          // manual entry form (no photo, no AI)
-  | "manual-success"  // manual item saved successfully
-  | "pick"            // initial: no image chosen
-  | "preview"         // image selected, waiting for user to confirm
-  | "compressing"     // client-side compression in progress
-  | "analyzing"       // server AI call in flight
-  | "confirm"         // analysis complete, confirmation form
-  | "error";          // any unrecoverable error
+  | "status-check"     // checking /api/wardrobe/status on sheet open
+  | "scan-unavailable" // status returned false — show friendly message
+  | "manual"           // manual entry form (no photo, no AI)
+  | "manual-success"   // manual item saved successfully
+  | "ack-required"     // first-use acknowledgement required before scanning
+  | "pick"             // initial: no image chosen
+  | "preview"          // image selected, waiting for user to confirm
+  | "compressing"      // client-side compression in progress
+  | "detecting"        // on-device face/person detection in progress
+  | "analyzing"        // server AI call in flight
+  | "confirm"          // analysis complete, confirmation form
+  | "error";           // any unrecoverable error

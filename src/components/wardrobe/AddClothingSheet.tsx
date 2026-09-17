@@ -24,7 +24,7 @@
  *   - Firebase ID token sent in Authorization header; server verifies it.
  *   - No uid in request body.
  *   - Image bytes not persisted after session.
- *   - Gemini API key never in client bundle.
+ *   - AI provider API key never in client bundle.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -124,7 +124,8 @@ const GARMENT_TYPES: Record<WardrobeCategory, GarmentTypeEntry[]> = {
 function defaultGarmentType(cat: WardrobeCategory): string {
   return GARMENT_TYPES[cat][0]?.type ?? cat;
 }
-import type { ClothingAnalysis, ScanStep } from "@/lib/wardrobe-types";
+import type { ClothingAnalysis, ScanStep, ScannerAgeBand } from "@/lib/wardrobe-types";
+import { SCANNER_ACK_VERSION } from "@/lib/wardrobe-types";
 import { getFirebaseAuth } from "@/lib/firebase";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -171,6 +172,55 @@ async function compressImage(file: File): Promise<{ blob: Blob; objectUrl: strin
   });
 }
 
+// ── Scanner acknowledgement API ───────────────────────────────────────────
+
+/**
+ * Check whether the current user has completed the scanner acknowledgement.
+ */
+async function fetchAckStatus(): Promise<boolean> {
+  try {
+    const auth = await getFirebaseAuth();
+    const user = auth?.currentUser;
+    if (!user) return false;
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/wardrobe/ack-status", {
+      headers: { "Authorization": `Bearer ${idToken}` },
+    });
+    if (!res.ok) return false;
+    const data = await res.json() as { acknowledged?: boolean };
+    return data.acknowledged === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Submit the scanner acknowledgement to the server.
+ */
+async function submitAcknowledgement(
+  ageBand: ScannerAgeBand,
+  guardianPermissionConfirmed: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const auth = await getFirebaseAuth();
+    const user = auth?.currentUser;
+    if (!user) return { ok: false, error: "Please sign in to continue." };
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/wardrobe/acknowledge", {
+      method:  "POST",
+      headers: {
+        "Authorization": `Bearer ${idToken}`,
+        "Content-Type":  "application/json",
+      },
+      body: JSON.stringify({ ageBand, guardianPermissionConfirmed }),
+    });
+    const data = await res.json() as { ok: boolean; error?: string };
+    return data;
+  } catch {
+    return { ok: false, error: "Could not save acknowledgement. Please try again." };
+  }
+}
+
 // ── Wardrobe scanning status ───────────────────────────────────────────────
 
 /**
@@ -213,13 +263,20 @@ async function scanWithAI(blob: Blob): Promise<ClothingAnalysis> {
 
   if (!data.ok) {
     const msg = data.error ?? "Analysis failed. Please try another photo.";
-    if (data.code === "quota") throw Object.assign(new Error(msg), { code: "quota" });
+    if (data.code === "quota")  throw Object.assign(new Error(msg), { code: "quota" });
+    if (data.code === "ack")    throw Object.assign(new Error(msg), { code: "ack" });
+    if (data.code === "abuse")  throw Object.assign(new Error(msg), { code: "abuse" });
+    if (data.code === "rejected") throw Object.assign(new Error(msg), { code: "rejected" });
     if (data.code === "wardrobe_scanning_temporarily_unavailable")
       throw Object.assign(new Error(msg), { code: "wardrobe_scanning_temporarily_unavailable" });
     throw new Error(msg);
   }
   if (!data.analysis) throw new Error("No analysis returned. Please try another photo.");
-  return data.analysis;
+
+  // Defensive: strip evidence before returning to UI state.
+  // New scans never include evidence (server decision a), but guard defensively.
+  const { evidence: _stripped, ...analysisWithoutEvidence } = data.analysis;
+  return analysisWithoutEvidence as ClothingAnalysis;
 }
 
 // ── Analysis → WardrobeItem mapping ───────────────────────────────────────
@@ -382,6 +439,14 @@ export function AddClothingSheet({
   const [error, setError]       = useState<string | null>(null);
   const [isQuotaError, setIsQuota] = useState(false);
 
+  // Scanner acknowledgement state
+  const [ackAgeBand,       setAckAgeBand]       = useState<ScannerAgeBand | null>(null);
+  const [ackGuardian,      setAckGuardian]       = useState(false);
+  const [ackAllItems,      setAckAllItems]       = useState(false);
+  const [ackSubmitting,    setAckSubmitting]     = useState(false);
+  const [ackError,         setAckError]          = useState<string | null>(null);
+  const ackCheckedRef = useRef<boolean | null>(null); // cached per session
+
   // Manual entry form
   const [manual, setManual]         = useState<ManualFields>(MANUAL_DEFAULTS);
   const [manualErrors, setManualErr] = useState<ManualErrors>({});
@@ -410,19 +475,37 @@ export function AddClothingSheet({
       setBlob(null);
       setManual(MANUAL_DEFAULTS);
       setManualErr({});
+      setAckAgeBand(null);
+      setAckGuardian(false);
+      setAckAllItems(false);
+      setAckSubmitting(false);
+      setAckError(null);
       scanEnabledRef.current = null;
+      ackCheckedRef.current  = null;
       if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreview(null); }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Check scanning availability when sheet opens.
+  // Check scanning availability (and ack status) when sheet opens.
   // Camera is never triggered during this check.
   useEffect(() => {
     if (!open) return;
     if (scanEnabledRef.current !== null) {
-      if (step === "status-check")
-        setStep(scanEnabledRef.current ? "pick" : "scan-unavailable");
+      if (step === "status-check") {
+        if (!scanEnabledRef.current) { setStep("scan-unavailable"); return; }
+        // If scanning enabled but ack not yet checked, check now
+        if (ackCheckedRef.current === null) {
+          let cancelled = false;
+          fetchAckStatus().then((acknowledged) => {
+            if (cancelled) return;
+            ackCheckedRef.current = acknowledged;
+            setStep(acknowledged ? "pick" : "ack-required");
+          });
+          return () => { cancelled = true; };
+        }
+        setStep(ackCheckedRef.current ? "pick" : "ack-required");
+      }
       return;
     }
     setStep("status-check");
@@ -430,7 +513,13 @@ export function AddClothingSheet({
     fetchScanningStatus().then((enabled) => {
       if (cancelled) return;
       scanEnabledRef.current = enabled;
-      setStep(enabled ? "pick" : "scan-unavailable");
+      if (!enabled) { setStep("scan-unavailable"); return; }
+      // Scanning is enabled — check ack status
+      fetchAckStatus().then((acknowledged) => {
+        if (cancelled) return;
+        ackCheckedRef.current = acknowledged;
+        setStep(acknowledged ? "pick" : "ack-required");
+      });
     });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -485,9 +574,65 @@ export function AddClothingSheet({
   // ── Analyze ──────────────────────────────────────────────────────────
   async function analyze() {
     if (!imageBlob) return;
-    setStep("analyzing");
     setError(null);
     setIsQuota(false);
+
+    // ── Local on-device detection ───────────────────────────────────────
+    // Privacy safeguard: detect faces/persons before the image leaves the device.
+    // The localDetector module is lazily imported here — not in the initial bundle.
+    // All assets are self-hosted under /mediapipe/ (committed to the repository).
+    // Errors block the upload — detection is never silently bypassed.
+    setStep("detecting");
+    try {
+      const bitmap = await createImageBitmap(imageBlob).catch(() => null);
+      if (!bitmap) {
+        // Cannot decode image for detection — block upload
+        setError("Could not process image for screening. Please try another photo.");
+        setStep("error");
+        return;
+      }
+      const offscreen = document.createElement("canvas");
+      offscreen.width  = bitmap.width;
+      offscreen.height = bitmap.height;
+      const ctx2d = offscreen.getContext("2d");
+      if (!ctx2d) {
+        bitmap.close(); // dispose ImageBitmap
+        setError("Could not prepare image for screening. Please try again.");
+        setStep("error");
+        return;
+      }
+      ctx2d.drawImage(bitmap, 0, 0);
+      bitmap.close(); // dispose ImageBitmap after drawing — not needed further
+
+      // Dynamic import — localDetector is not in the initial bundle
+      const { runLocalDetection } = await import("@/lib/localDetector");
+      const detection = await runLocalDetection(offscreen);
+      // offscreen canvas is a temporary DOM element; no explicit cleanup needed
+      // (no object URLs or persistent references held)
+
+      if (!detection.ok) {
+        if (detection.reason === "face" || detection.reason === "person") {
+          // Face or person detected — block before any network request to Anthropic
+          setError("Please upload the clothing item by itself, without any person, face or body.");
+          setStep("error");
+          return;
+        }
+        if (detection.reason === "init_failed" || detection.reason === "inference_failed") {
+          // Detector failed — never silently bypass; block and ask user to retry
+          setError("Safety screening could not complete. Please try again.");
+          setStep("error");
+          return;
+        }
+      }
+    } catch {
+      // Unexpected error loading the detector module itself
+      setError("Could not initialize safety screening. Please try again.");
+      setStep("error");
+      return;
+    }
+
+    // ── AI scan ────────────────────────────────────────────────────────
+    setStep("analyzing");
     try {
       const result = await scanWithAI(imageBlob);
       setAnalysis(result);
@@ -498,6 +643,8 @@ export function AddClothingSheet({
         ? (err as { code?: string }).code : undefined;
       setError(err instanceof Error ? err.message : "Analysis failed.");
       setIsQuota(code === "quota");
+      // If server returns ack-required, show the ack step (user may have cleared session)
+      if (code === "ack") { ackCheckedRef.current = false; setStep("ack-required"); return; }
       setStep("error");
     }
   }
@@ -536,9 +683,11 @@ export function AddClothingSheet({
   const title =
     step === "status-check"    ? "Add clothing" :
     step === "scan-unavailable"? "Add clothing" :
+    step === "ack-required"    ? "Before you scan" :
     step === "manual"          ? "Add clothing manually" :
     step === "manual-success"  ? "Item added" :
     step === "confirm"         ? "Confirm item" :
+    step === "detecting"       ? "Checking photo…" :
     step === "analyzing" || step === "compressing" ? "Analyzing…" :
     step === "error"           ? "Try another photo" :
     "Add clothing";
@@ -852,6 +1001,103 @@ export function AddClothingSheet({
           </div>
         )}
 
+        {/* ── ACK REQUIRED ─────────────────────────────────────────── */}
+        {step === "ack-required" && (
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-muted-foreground">
+              The AI scanner is for users aged 15 and older. Please confirm the following before scanning.
+            </p>
+            {ackError && (
+              <p role="alert" className="rounded-2xl bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                {ackError}
+              </p>
+            )}
+            {/* Age band */}
+            <div>
+              <p className="mb-1.5 text-sm font-medium">Your age</p>
+              <div className="grid grid-cols-2 gap-2">
+                {(["15-17", "18-plus"] as const).map((band) => (
+                  <label
+                    key={band}
+                    className={`flex cursor-pointer items-center justify-center rounded-2xl px-3 py-2.5 text-sm font-medium ring-1 transition-colors ${
+                      ackAgeBand === band
+                        ? "bg-primary/15 text-primary ring-primary/30"
+                        : "bg-foreground/[0.04] text-muted-foreground ring-transparent"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="ack-age"
+                      value={band}
+                      checked={ackAgeBand === band}
+                      onChange={() => { setAckAgeBand(band); setAckError(null); }}
+                      className="sr-only"
+                    />
+                    {band === "15-17" ? "15–17 years old" : "18 or older"}
+                  </label>
+                ))}
+              </div>
+            </div>
+            {/* Guardian permission — only when 15-17 selected */}
+            {ackAgeBand === "15-17" && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-2xl bg-foreground/[0.04] px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={ackGuardian}
+                  onChange={(e) => { setAckGuardian(e.target.checked); setAckError(null); }}
+                  className="mt-0.5 h-4 w-4 accent-primary"
+                />
+                <span className="text-sm">
+                  I have a parent or guardian's permission to use the AI scanner.
+                </span>
+              </label>
+            )}
+            {/* Combined acknowledgement */}
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl bg-foreground/[0.04] px-4 py-3">
+              <input
+                type="checkbox"
+                checked={ackAllItems}
+                onChange={(e) => { setAckAllItems(e.target.checked); setAckError(null); }}
+                className="mt-0.5 h-4 w-4 accent-primary"
+              />
+              <span className="text-sm">
+                I understand that my garment photo will be analyzed by Anthropic's Claude AI, and I will upload only one clothing item, without people, faces, bodies, identification documents or personal information.
+              </span>
+            </label>
+            <button
+              disabled={
+                ackSubmitting ||
+                !ackAgeBand ||
+                !ackAllItems ||
+                (ackAgeBand === "15-17" && !ackGuardian)
+              }
+              onClick={async () => {
+                if (!ackAgeBand) { setAckError("Please select your age group."); return; }
+                if (!ackAllItems) { setAckError("Please check all required boxes."); return; }
+                if (ackAgeBand === "15-17" && !ackGuardian) {
+                  setAckError("Please confirm parent or guardian permission."); return;
+                }
+                setAckSubmitting(true);
+                setAckError(null);
+                const res = await submitAcknowledgement(ackAgeBand, ackAgeBand === "15-17");
+                setAckSubmitting(false);
+                if (!res.ok) { setAckError(res.error ?? "Could not save. Please try again."); return; }
+                ackCheckedRef.current = true;
+                setStep("pick");
+              }}
+              className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background disabled:opacity-50"
+            >
+              {ackSubmitting ? "Saving…" : "Continue to scan"}
+            </button>
+            <button
+              onClick={goToManual}
+              className="press flex w-full items-center justify-center gap-1.5 rounded-full py-2.5 text-sm text-muted-foreground"
+            >
+              Add manually instead
+            </button>
+          </div>
+        )}
+
         {/* ── PICK ──────────────────────────────────────────────────── */}
         {step === "pick" && (
           <div>
@@ -903,12 +1149,36 @@ export function AddClothingSheet({
                 >
                   <Sparkles className="h-4 w-4" /> Analyze with AI
                 </button>
+                {/* ── AI disclosure (required before any scan) ─────────── */}
+                <p className="mt-1 text-center text-xs text-muted-foreground">
+                  Your garment photo will be analyzed by Anthropic's Claude AI. Do not upload people, faces, bodies, identification documents or personal information.{" "}
+                  <a href="/privacy" className="underline underline-offset-2">
+                    Privacy Policy
+                  </a>
+                </p>
                 <button onClick={reset}
                   className="press flex items-center justify-center gap-1.5 text-sm text-muted-foreground">
                   <RefreshCw className="h-3.5 w-3.5" /> Choose another photo
                 </button>
               </>
             )}
+          </div>
+        )}
+
+        {/* ── DETECTING ─────────────────────────────────────────────── */}
+        {step === "detecting" && (
+          <div className="flex flex-col items-center gap-4 py-6 text-center" role="status" aria-live="polite">
+            {previewUrl && (
+              <div className="relative overflow-hidden rounded-[1.75rem]">
+                <img src={previewUrl} alt="Checking photo" className="h-48 w-48 object-cover" />
+                <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-2 animate-pulse bg-primary/30" />
+              </div>
+            )}
+            <p className="flex items-center gap-2 font-medium">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-foreground" />
+              Checking photo…
+            </p>
+            <p className="text-sm text-muted-foreground">Screening for privacy before upload.</p>
           </div>
         )}
 
@@ -968,9 +1238,7 @@ export function AddClothingSheet({
                 </p>
                 <p className="mt-1 text-lg font-semibold leading-tight">{draft.name}</p>
                 <p className="text-sm text-muted-foreground">{draft.type}</p>
-                {analysis.evidence && (
-                  <p className="mt-1.5 text-xs italic text-muted-foreground">{analysis.evidence}</p>
-                )}
+                {/* evidence field intentionally omitted — not returned by new scans (decision a) */}
               </div>
             </div>
 

@@ -18,28 +18,22 @@ const EFFECTIVE_DATE = "2026-08-26";
 /*
  * OWNER ACTION REQUIRED — before Live launch:
  *
- * 1. GEMINI DATA HANDLING (section "AI wardrobe analysis — Google Gemini"):
- *    The placeholder text notes must be replaced with an accurate statement
- *    based on the Google Gemini API Terms of Service that apply to your
- *    account type (free vs. paid, Google AI Studio vs. Vertex AI).
- *    Key questions to answer from the current terms:
- *      - Does Google retain images or prompts submitted via your API key?
- *      - Can Google use submitted data to improve or train models?
- *      - Is human review possible?
- *      - Can you request deletion of submitted data?
- *    Do NOT claim "Google does not retain images" or "Google does not train"
- *    unless you have confirmed this from the specific tier's current terms.
- *    URL for review: https://ai.google.dev/gemini-api/terms
+ * 1. ANTHROPIC DATA RETENTION (section "AI wardrobe analysis — Anthropic Claude"):
+ *    Verify the data-retention statement against Anthropic's current documentation
+ *    (platform.claude.com/docs/en/manage-claude/api-and-data-retention) and your
+ *    account's Data Processing Addendum before enabling the AI scanner.
  *
- * 2. VERCEL LOG RETENTION:
+ * 2. LEGAL REVIEW — age and consent:
+ *    Have a Canadian lawyer confirm (PIPEDA / Quebec Law 25) whether the 15+ age
+ *    gate and self-attestation flow satisfy applicable requirements before enabling
+ *    AI scanning for users under 18.
+ *
+ * 3. VERCEL LOG RETENTION:
  *    Verify the actual log-retention period for your Vercel plan/configuration
  *    and replace the placeholder in the Vercel section.
  *
- * 3. BREACH HANDLING:
+ * 4. BREACH HANDLING:
  *    Add any internal breach-detection/notification procedure you have in place.
- *
- * 4. Have a Canadian lawyer review this document (PIPEDA / Quebec Law 25)
- *    before enabling paid subscriptions.
  */
 
 function Privacy() {
@@ -80,14 +74,30 @@ function Privacy() {
           </Section>
 
           <Section title="Minimum age">
-            Aeruvo is intended for users aged 13 and older, subject to applicable local consent
-            requirements. We do not knowingly collect personal information from children
-            under 13. If you believe a person under 13 has
-            submitted data, contact us at{" "}
-            <a href={`mailto:${APP_CONFIG.privacyEmail}`}
-               className="text-primary underline underline-offset-2">
-              {APP_CONFIG.privacyEmail}
-            </a>.
+            {/*
+              ⚠️ LEGAL REVIEW REQUIRED before public launch.
+              The age thresholds below reflect the product's intended audience and
+              Anthropic's guidelines for serving minors. A Canadian lawyer familiar with
+              PIPEDA and Quebec Law 25 should confirm these thresholds and whether any
+              additional parental-consent mechanism is required before the AI scanner
+              is enabled for users under 18.
+            */}
+            <p>
+              Aeruvo is intended for users aged 13 and older for general access, subject
+              to applicable local consent requirements. We do not knowingly collect personal
+              information from children under 13. If you believe a person under 13 has
+              submitted data, contact us at{" "}
+              <a href={`mailto:${APP_CONFIG.privacyEmail}`}
+                 className="text-primary underline underline-offset-2">
+                {APP_CONFIG.privacyEmail}
+              </a>.
+            </p>
+            <p className="mt-2">
+              The AI clothing scanner is available to users aged <strong>15 and older</strong>.
+              Users aged 15–17 must attest that they have a parent or guardian&apos;s permission
+              to use the AI scanner. Users under 15 may add clothing items using the manual
+              entry form. Aeruvo does not collect full date of birth; age band is self-attested.
+            </p>
           </Section>
 
           <Section title="Data we collect and why">
@@ -148,41 +158,87 @@ function Privacy() {
             </DataItem>
           </Section>
 
-          <Section title="AI wardrobe analysis — Google Gemini">
+          <Section title="AI wardrobe analysis — Anthropic Claude">
+            {/*
+              ⚠️ LEGAL REVIEW REQUIRED before public launch.
+              The data-retention statement below reflects Anthropic's published API and
+              data retention documentation (platform.claude.com/docs/en/manage-claude/
+              api-and-data-retention) as verified September 2026. It must be re-verified
+              before enabling the scanner and whenever Anthropic's retention policy changes.
+              A contractual Zero Data Retention (ZDR) arrangement with Anthropic is not
+              currently in place; obtain legal advice on whether ZDR is required before
+              enabling AI scanning for users under 18.
+            */}
             <p>
               When you scan a clothing item, the image is transmitted to the{" "}
-              <strong>Google Gemini API</strong> (specifically the{" "}
-              <code>gemini-3.7-flash</code> model via{" "}
-              <code>generativelanguage.googleapis.com/v1beta</code>). Aeruvo does not store
-              the image after the analysis is complete.
+              <strong>Anthropic API</strong> (the{" "}
+              <code>claude-haiku-4-5-20251001</code> model at{" "}
+              <code>api.anthropic.com/v1/messages</code>). Aeruvo does not store the image
+              after the analysis is complete. The evidence or description text produced
+              during analysis is not stored anywhere.
             </p>
-            {/*
-              OWNER ACTION REQUIRED (source only — not rendered to customers):
-              Before Live launch, review https://ai.google.dev/gemini-api/terms for your
-              API tier and replace the paragraph below with an accurate, verified statement.
-              Key questions: image/prompt retention, training/product-improvement use,
-              human review possibility, deletion controls.
-              Do not claim "Google does not retain" or "Google does not train" without
-              confirming this from your specific tier's current terms.
-            */}
             <p className="mt-2">
-              Aeruvo uses the Google Gemini API under a <strong>Paid Services</strong> account.
-              Under Google's Paid Services terms:
+              <strong>Data retention at Anthropic:</strong> Aeruvo uses Anthropic&apos;s
+              standard commercial API. According to Anthropic&apos;s API and data retention
+              documentation (verified September 2026):
             </p>
             <ul className="mt-2 list-inside list-disc space-y-1 pl-2">
-              <li>Clothing images and the analysis prompt are sent to Google Gemini for processing.</li>
-              <li>Aeruvo does not retain the uploaded image after analysis is complete.</li>
-              <li>Google states that, under Paid Services, prompts, uploaded files and responses are not used to improve Google products.</li>
-              <li>Google may log prompts and responses for a limited period for abuse prevention, safety, and required legal or regulatory disclosures.</li>
-              <li>Data may be processed in countries where Google or its agents maintain infrastructure.</li>
-              <li>Numeric usage metadata (token counts, model name, success/failure) may be retained by Aeruvo for cost, quota, security and operational monitoring.</li>
+              <li>
+                Conversation content (prompts and outputs) is <strong>not retained by
+                default</strong> for this configuration. The Messages API is eligible for
+                Zero Data Retention (ZDR).
+              </li>
+              <li>
+                The JSON output schema used with Structured Outputs may be cached for up
+                to 24 hours for performance optimisation. No prompt or image data is
+                retained in this cache.
+              </li>
+              <li>
+                Content flagged by Anthropic&apos;s automated trust-and-safety systems may
+                be retained for up to two years.
+              </li>
+              <li>
+                Aeruvo does not currently have a contractual Zero Data Retention (ZDR)
+                arrangement with Anthropic. This will be noted if it changes.
+              </li>
+              <li>
+                Aeruvo retains numeric usage metadata (token counts, model name,
+                success/failure) for cost, quota, security and operational monitoring.
+                No image, prompt, garment description, or user identifier is included
+                in this metadata.
+              </li>
             </ul>
             <p className="mt-2">
-              For the authoritative terms applicable to this service, refer to the{" "}
-              <a href="https://ai.google.dev/gemini-api/terms"
+              The AI scanner is available to users aged 15 and older. We instruct the
+              AI model to refuse images that contain people, faces, bodies, identification
+              documents or personal information. Before uploading, Aeruvo attempts to detect
+              faces and persons locally on your device using on-device AI models (MediaPipe).
+              If a face or person is detected, the upload is blocked and the image is never
+              transmitted. This on-device check reduces prohibited uploads but does not
+              guarantee that all prohibited content is blocked — Anthropic&apos;s Claude AI
+              independently classifies image content and may decline to analyze images it
+              determines are outside the permitted categories.
+            </p>
+            <p className="mt-2">
+              To report a concern about an AI scan, use the{" "}
+              <strong>Report AI clothing scan</strong> option in the in-app feedback form,
+              or contact us at{" "}
+              <a href={`mailto:${APP_CONFIG.privacyEmail}`}
+                 className="text-primary underline underline-offset-2">
+                {APP_CONFIG.privacyEmail}
+              </a>.
+            </p>
+            <p className="mt-2">
+              For Anthropic&apos;s current data handling policies, refer to the{" "}
+              <a href="https://www.anthropic.com/legal/privacy"
                  target="_blank" rel="noopener noreferrer"
                  className="text-primary underline underline-offset-2">
-                Gemini API Additional Terms of Service
+                Anthropic Privacy Policy
+              </a>{" "}and{" "}
+              <a href="https://www.anthropic.com/legal/aup"
+                 target="_blank" rel="noopener noreferrer"
+                 className="text-primary underline underline-offset-2">
+                Anthropic Usage Policy
               </a>.
             </p>
           </Section>
@@ -245,7 +301,7 @@ function Privacy() {
               <Provider name="Cloud Firestore" provider="Google LLC" region="northamerica-northeast2 (Montréal, Canada)" purpose="Cloud profile/preferences storage" />
               <Provider name="Firebase Cloud Messaging" provider="Google LLC" region="Global (Google infrastructure)" purpose="Push notifications" />
               <Provider name="Open-Meteo" provider="Open-Meteo (Switzerland)" region="Switzerland / CDN" purpose="Weather data" />
-              <Provider name="Google Gemini API" provider="Google LLC" region="Global (Google infrastructure)" purpose="AI wardrobe image analysis" />
+              <Provider name="Anthropic API" provider="Anthropic, PBC" region="United States (Anthropic infrastructure)" purpose="AI wardrobe image analysis" />
               <Provider name="Stripe" provider="Stripe, Inc." region="United States" purpose="Payment processing" />
               <Provider name="Vercel" provider="Vercel, Inc." region="United States and/or edge network" purpose="Server hosting and functions" />
             </div>

@@ -10,6 +10,7 @@ export const FEEDBACK_CATEGORIES = [
   "outfit-recommendation",
   "app-problem",
   "feature-idea",
+  "report-ai-scan",
   "other",
 ] as const;
 export type FeedbackCategory = (typeof FEEDBACK_CATEGORIES)[number];
@@ -29,6 +30,7 @@ export const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
   "outfit-recommendation":"Outfit recommendation",
   "app-problem":          "App problem",
   "feature-idea":         "Feature idea",
+  "report-ai-scan":       "Report AI clothing scan",
   "other":                "Other",
 };
 

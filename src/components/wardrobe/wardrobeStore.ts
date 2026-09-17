@@ -8,7 +8,7 @@
  *
  * Value: JSON array of WardrobeItem[] (structured metadata only — no image bytes).
  *   Written synchronously on every mutation so the item survives a PWA kill/relaunch.
- *   aiAnalysis (Gemini structured output) is INCLUDED: it is text/numeric metadata,
+ *   aiAnalysis (AI structured output) is INCLUDED: it is text/numeric metadata,
  *   not the raw image. The compressed image blob lives only in AddClothingSheet state
  *   and is never stored here.
  *
@@ -47,7 +47,7 @@
  * button is somehow pressed twice before React disables it.
  *
  * ── What is NOT touched ───────────────────────────────────────────────────────
- * Firestore, Firebase Auth, Wardrobe scan API/quota, Gemini, Stripe,
+ * Firestore, Firebase Auth, Wardrobe scan API/quota, Anthropic, Stripe,
  * Premium entitlements, notifications, service worker, weather engine.
  */
 
@@ -170,11 +170,26 @@ export const wardrobe = {
   /**
    * Add a new item. No-op if an item with the same id already exists
    * (guards against double-tap before React disables the button).
+   *
+   * Evidence stripping: if the item contains aiAnalysis.evidence (from an older
+   * code path or a backward-compatible legacy item), it is stripped before
+   * persisting. New AI scans never receive evidence in the first place.
+   * Existing items already in storage are not affected (no rewrite of old data).
    */
   add(item: Omit<WardrobeItem, "id">): void {
     const id = `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     if (items.some((i) => i.id === id)) return; // Duplicate guard
-    items = [...items, { ...item, id }];
+
+    // Strip evidence from aiAnalysis before persisting (decision a).
+    // New scans never include evidence; this guard protects against any
+    // future code path that might accidentally include it.
+    let sanitized = item;
+    if (sanitized.aiAnalysis && "evidence" in sanitized.aiAnalysis) {
+      const { evidence: _stripped, ...analysisWithoutEvidence } = sanitized.aiAnalysis;
+      sanitized = { ...sanitized, aiAnalysis: analysisWithoutEvidence };
+    }
+
+    items = [...items, { ...sanitized, id }];
     saveToStorage(items); // Persist before notifying React
     emit();
   },

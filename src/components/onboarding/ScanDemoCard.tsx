@@ -3,7 +3,7 @@
  * Shows a front-facing garment and a three-step flow: Photograph → Review → Save.
  *
  * Rules:
- *   • Does NOT invoke camera, file picker, Gemini, Firebase or any AI endpoint.
+ *   • Does NOT invoke camera, file picker, Firebase or any AI endpoint.
  *   • Does NOT show or scan a person, face or body.
  *   • Illustration only — no material, brand or trait labels are shown.
  *   • Motion is CSS-only (./onboarding-motion.css); the beam runs a bounded
