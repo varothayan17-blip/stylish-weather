@@ -22,7 +22,12 @@ function planLabel(plan: LockedPlan): string {
 
 export function ActivePlanCard({ plan }: { plan: LockedPlan }) {
   const baseNames  = plan.snapshot.baseItems.map((i) => i.name).join(", ");
-  const layerNames = plan.snapshot.removableLayers.map((i) => i.name).join(", ");
+  // Use split fields when available; fall back to removableLayers for old snapshots
+  const snap = plan.snapshot;
+  const allLayers = snap.departureLayers !== undefined
+    ? [...(snap.departureLayers ?? []), ...(snap.carryLayers ?? [])]
+    : snap.removableLayers;
+  const layerNames = allLayers.map((i) => i.name).join(", ");
 
   return (
     <Link

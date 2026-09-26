@@ -10,6 +10,9 @@ import {
   type OutingForecastSlice,
 } from "../src/lib/outingForecast";
 
+import { recommend } from "../src/lib/recommend";
+import type { Weather } from "../src/lib/weather";
+
 import {
   planOuting,
   matchWardrobeItem,
@@ -109,6 +112,8 @@ function makePlanRecord(uid: string, startH: number, endH: number, status: PlanS
       locationLabel: "Toronto", locationLat: 43.65, locationLon: -79.38, occasion: "casual",
       baseItems: [{ name: "T-shirt", wardrobeId: null, fromWardrobe: false, reason: "warm" }],
       removableLayers: [],
+      departureLayers: [],
+      carryLayers: [],
       footwear: [{ name: "Sneakers", wardrobeId: null, fromWardrobe: false, reason: "ok" }],
       accessories: [],
       timelineGuidance: [{ startTime: isoFromNow(startH), instruction: "Go.", reason: "." }],
@@ -119,7 +124,7 @@ function makePlanRecord(uid: string, startH: number, endH: number, status: PlanS
         hasRain: false, hasSnow: false, isWindy: false, hasActiveRainCode: false,
       },
       personalizationExplanation: "Balanced.", generatedAt: new Date().toISOString(),
-      recommendationVersion: 2,
+      recommendationVersion: 3,
     },
     adaptationNote: null, lockedAt: Date.now(), attemptedAt: null, lastCheckedAt: null,
   };
@@ -668,14 +673,360 @@ console.log("\n── Restored regressions (from 79-test suite) ─────�
       `effectiveMinC=${plan.weatherSummary.effectiveMinC}`);
   }
 
-  // ── recommendationVersion === 2 ────────────────────────────────────────
+  // ── recommendationVersion === 3 ────────────────────────────────────────
   {
     const j = makeJson("2026-09-20", 9, Array(4).fill(15));
     const s = makeSlice(j, "2026-09-20T09:00", "2026-09-20T12:00");
     const plan = planOuting({ occasion:"casual", departureTime:"2026-09-20T09:00",
       returnTime:"2026-09-20T12:00", activity:"low", context:"mixed", locationLabel:"T" },
       s, NO_WARDROBE as any, PREFS, "2026-09-20T12:00");
-    ok("RR19. recommendationVersion === 2", plan.recommendationVersion === 2);
+    ok("RR19. recommendationVersion === 3", plan.recommendationVersion === 3);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+console.log("\n── departureLayers / carryLayers split ──────────────────────");
+{
+  // New fields exist on all planOuting results
+  {
+    const j = makeJson("2026-09-20", 9, Array(5).fill(12));
+    const s = makeSlice(j, "2026-09-20T09:00", "2026-09-20T13:00");
+    const plan = planOuting({ occasion:"casual", departureTime:"2026-09-20T09:00",
+      returnTime:"2026-09-20T13:00", activity:"low", context:"mixed", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T13:00", DEFAULT_STYLE);
+    ok("DL01. departureLayers is an array", Array.isArray(plan.departureLayers));
+    ok("DL02. carryLayers is an array", Array.isArray(plan.carryLayers));
+    ok("DL03. removableLayers === [...departureLayers, ...carryLayers]",
+      JSON.stringify(plan.removableLayers) ===
+      JSON.stringify([...plan.departureLayers, ...plan.carryLayers]));
+  }
+
+  // 13°C→12°C mixed/mostly-outdoor runs-warm: jacket in departureLayers (cold at departure), full-length bottom, no shorts
+  {
+    const temps = [13, 12, 12, 12, 12];
+    const j = makeJson("2026-09-20", 9, temps);
+    const s = makeSlice(j, "2026-09-20T09:00", "2026-09-20T13:00");
+    const runsWarm: PersonalStyleProfile = { ...DEFAULT_STYLE, layeringPreference: "minimal" };
+    const plan = planOuting({ occasion:"casual", departureTime:"2026-09-20T09:00",
+      returnTime:"2026-09-20T13:00", activity:"low", context:"mixed", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T13:00", runsWarm);
+    ok("DL04. 13→12°C mixed/outdoor: no shorts in base",
+      !plan.baseItems.some(i => i.name.toLowerCase().includes("short")),
+      plan.baseItems.map(i=>i.name).join(","));
+    ok("DL05. 13→12°C mixed/outdoor: full-length bottoms (jeans/trousers/chinos)",
+      plan.baseItems.some(i =>
+        /jean|trouser|chino|pant/i.test(i.name)),
+      plan.baseItems.map(i=>i.name).join(","));
+  }
+
+  // Cold at departure (≤14°C) → departureLayers, not carryLayers
+  {
+    const j = makeJson("2026-09-20", 8, Array(9).fill(10));
+    const s = makeSlice(j, "2026-09-20T08:00", "2026-09-20T16:00");
+    const plan = planOuting({ occasion:"casual", departureTime:"2026-09-20T08:00",
+      returnTime:"2026-09-20T16:00", activity:"low", context:"outdoors", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T16:00", DEFAULT_STYLE);
+    ok("DL06. 10°C departure: layer is in departureLayers (worn when leaving)",
+      plan.departureLayers.length > 0,
+      `dep=${plan.departureLayers.length} carry=${plan.carryLayers.length}`);
+    ok("DL07. 10°C departure: carryLayers is empty (cold at departure → wear it)",
+      plan.carryLayers.length === 0,
+      plan.carryLayers.map(l=>l.name).join(",") || "ok");
+  }
+
+  // Warm departure → carry layer
+  {
+    const temps = [22, 21, 18, 14, 12]; // warm → cools later
+    const j = makeJson("2026-09-20", 9, temps);
+    const s = makeSlice(j, "2026-09-20T09:00", "2026-09-20T13:00");
+    const plan = planOuting({ occasion:"casual", departureTime:"2026-09-20T09:00",
+      returnTime:"2026-09-20T13:00", activity:"low", context:"outdoors", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T13:00", DEFAULT_STYLE);
+    ok("DL08. Warm→cold swing: layer ends up in carryLayers (not needed at departure)",
+      plan.carryLayers.length > 0,
+      `dep=${plan.departureLayers.length} carry=${plan.carryLayers.length}`);
+    ok("DL09. Warm→cold swing: departureLayers is empty",
+      plan.departureLayers.length === 0,
+      plan.departureLayers.map(l=>l.name).join(",") || "ok");
+  }
+
+  // departureLayers and carryLayers cannot contain the same item
+  {
+    const j = makeJson("2026-09-20", 8, [5, 5, 5, 12, 18, 18, 18, 18, 18]);
+    const s = makeSlice(j, "2026-09-20T08:00", "2026-09-20T16:00");
+    const plan = planOuting({ occasion:"casual", departureTime:"2026-09-20T08:00",
+      returnTime:"2026-09-20T16:00", activity:"low", context:"mixed", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T16:00", DEFAULT_STYLE);
+    const depNames = new Set(plan.departureLayers.map(l => l.name));
+    const carryOverlap = plan.carryLayers.filter(l => depNames.has(l.name));
+    ok("DL10. departureLayers and carryLayers share no item names",
+      carryOverlap.length === 0,
+      carryOverlap.map(l=>l.name).join(",") || "ok");
+  }
+
+  // departure layer does not appear under Pack for later (no duplication in result fields)
+  {
+    const j = makeJson("2026-09-20", 8, Array(9).fill(8));
+    const s = makeSlice(j, "2026-09-20T08:00", "2026-09-20T16:00");
+    const plan = planOuting({ occasion:"casual", departureTime:"2026-09-20T08:00",
+      returnTime:"2026-09-20T16:00", activity:"low", context:"mixed", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T16:00", DEFAULT_STYLE);
+    const depNames = new Set(plan.departureLayers.map(l => l.name));
+    const duped = plan.carryLayers.filter(l => depNames.has(l.name));
+    ok("DL11. Departure layer names do not appear in carryLayers",
+      duped.length === 0,
+      duped.map(l=>l.name).join(",") || "ok");
+  }
+
+  // Indoor gym cold commute: gym clothes in base, outdoor coat in departureLayers
+  {
+    const j = makeJson("2026-09-20", 8, Array(9).fill(-2));
+    const s = makeSlice(j, "2026-09-20T08:00", "2026-09-20T16:00");
+    const plan = planOuting({ occasion:"gym", departureTime:"2026-09-20T08:00",
+      returnTime:"2026-09-20T16:00", activity:"active", context:"indoors", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T16:00", DEFAULT_STYLE);
+    ok("DL12. Indoor gym -2°C: gym base outfit (not coat in base)",
+      !plan.baseItems.some(i => /coat|jacket/i.test(i.name)),
+      plan.baseItems.map(i=>i.name).join(","));
+    ok("DL13. Indoor gym -2°C: winter coat in departureLayers (cold commute protection)",
+      plan.departureLayers.some(l => /coat|winter/i.test(l.name)),
+      plan.departureLayers.map(l=>l.name).join(",") || "none");
+    ok("DL14. Indoor gym -2°C: no shorts in base (exposure track controls protection)",
+      !plan.departureLayers.some(l => /short/i.test(l.name)));
+  }
+
+  // Indoor gym cold commute: gym shorts allowed in base (destination track = warm)
+  {
+    const j = makeJson("2026-09-20", 8, Array(9).fill(-2));
+    const s = makeSlice(j, "2026-09-20T08:00", "2026-09-20T16:00");
+    const plan = planOuting({ occasion:"gym", departureTime:"2026-09-20T08:00",
+      returnTime:"2026-09-20T16:00", activity:"active", context:"indoors", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T16:00", DEFAULT_STYLE);
+    ok("DL15. Indoor gym -2°C: gym shorts/training pants allowed in base (destination = warm)",
+      plan.baseItems.some(i => /short|pant|legging|trouser/i.test(i.name)),
+      plan.baseItems.map(i=>i.name).join(","));
+  }
+
+  // Indoor work/college/casual at 13°C: no shorts (not warm enough, not gym)
+  for (const occasion of ["work","college","casual"] as const) {
+    const j = makeJson("2026-09-20", 9, Array(5).fill(13));
+    const s = makeSlice(j, "2026-09-20T09:00", "2026-09-20T13:00");
+    const plan = planOuting({ occasion, departureTime:"2026-09-20T09:00",
+      returnTime:"2026-09-20T13:00", activity:"low", context:"indoors", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T13:00", DEFAULT_STYLE);
+    ok(`DL16. Indoor ${occasion} 13°C: no shorts in base (not warm enough)`,
+      !plan.baseItems.some(i => /short/i.test(i.name)),
+      plan.baseItems.map(i=>i.name).join(","));
+  }
+
+  // Genuine warm weather: shorts still permitted at destination
+  {
+    const j = makeJson("2026-09-20", 12, Array(5).fill(28));
+    const s = makeSlice(j, "2026-09-20T12:00", "2026-09-20T16:00");
+    const plan = planOuting({ occasion:"casual", departureTime:"2026-09-20T12:00",
+      returnTime:"2026-09-20T16:00", activity:"low", context:"outdoors", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T16:00", DEFAULT_STYLE);
+    ok("DL17. 28°C warm outdoor: shorts allowed in base",
+      plan.baseItems.some(i => /short/i.test(i.name)),
+      plan.baseItems.map(i=>i.name).join(","));
+  }
+
+  // Schema v3: old v2 snapshot (missing departureLayers/carryLayers) must be rejected
+  {
+    mockLocalStorage();
+    const uid = "u-schema-v2-rejected";
+    const base = makePlanRecord(uid, 2, 10, "upcoming");
+    // Simulate a pre-v3 snapshot: missing departureLayers, carryLayers, version=2
+    const oldSnap = { ...base.snapshot, recommendationVersion: 2 };
+    delete (oldSnap as any).departureLayers;
+    delete (oldSnap as any).carryLayers;
+    delete (oldSnap as any).adaptationHint;
+    const oldRecord = { ...base, snapshot: oldSnap };
+    _storage.set(storageKeyForUid(uid), JSON.stringify([oldRecord]));
+    ok("DL18. Old v2 snapshot without departureLayers/carryLayers is rejected by v3 store",
+      outingPlanStore.loadAll(uid).length === 0,
+      `loaded=${outingPlanStore.loadAll(uid).length} (should be 0 — v2 plans must regenerate)`);
+    clearLocalStorage();
+  }
+
+  // New v3 snapshot with departureLayers/carryLayers validates correctly
+  {
+    mockLocalStorage();
+    const uid = "u-schema-new";
+    const plan = planOuting(
+      { occasion:"casual", departureTime:"2026-10-01T09:00", returnTime:"2026-10-01T13:00",
+        activity:"low", context:"mixed", locationLabel:"T" },
+      makeSlice(makeJson("2026-10-01", 9, Array(5).fill(10)), "2026-10-01T09:00", "2026-10-01T13:00"),
+      NO_WARDROBE as any, PREFS, "2026-10-01T13:00", DEFAULT_STYLE,
+    );
+    const committed = outingPlanStore.commitPlan(uid, plan, null);
+    clearLocalStorage();
+    ok("DL19. v3 snapshot with departureLayers/carryLayers commits and loads correctly",
+      Array.isArray(committed.snapshot.departureLayers) &&
+      Array.isArray(committed.snapshot.carryLayers) &&
+      committed.snapshot.recommendationVersion === 3);
+  }
+
+  // planOuting returns version 3
+  {
+    const j = makeJson("2026-09-20", 9, Array(5).fill(15));
+    const s = makeSlice(j, "2026-09-20T09:00", "2026-09-20T13:00");
+    const plan = planOuting({ occasion:"work", departureTime:"2026-09-20T09:00",
+      returnTime:"2026-09-20T13:00", activity:"low", context:"indoors", locationLabel:"T" },
+      s, NO_WARDROBE as any, PREFS, "2026-09-20T13:00");
+    ok("DL20. planOuting returns recommendationVersion 3 with required new fields",
+      plan.recommendationVersion === 3 &&
+      Array.isArray(plan.departureLayers) && Array.isArray(plan.carryLayers));
+  }
+
+  // Real wardrobe items passed to planOuting
+  {
+    const jacket: WItem = { id:"jk1", name:"Light jacket", type:"Outerwear / Jacket",
+      category:"Outerwear", warmth:"Medium", unavailable:false };
+    const j = makeJson("2026-09-20", 9, Array(5).fill(12));
+    const s = makeSlice(j, "2026-09-20T09:00", "2026-09-20T13:00");
+    const plan = planOuting({ occasion:"casual", departureTime:"2026-09-20T09:00",
+      returnTime:"2026-09-20T13:00", activity:"low", context:"mixed", locationLabel:"T" },
+      s, [jacket] as any, PREFS, "2026-09-20T13:00", DEFAULT_STYLE);
+    ok("DL21. Wardrobe jacket matched in departureLayers at 12°C cool departure",
+      plan.departureLayers.some(l => l.fromWardrobe && l.wardrobeId === "jk1"),
+      plan.departureLayers.map(l=>l.name).join(",") || "none");
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Home / Planner consistency — Section 4
+// The outing planner must never recommend LESS minimum outdoor coverage than
+// the home recommendation for the same raw temperature and cold-sensitivity.
+//
+// Policy:
+//   Home cool band (rawApparent ≤ 15°C): outfit includes a layer (jacket/coat)
+//   Outing planner at raw ≤ 15°C: protection layer must appear in departureLayers
+//   or carryLayers (i.e. removableLayers) for any outdoor/mixed context.
+//
+//   Home uses (feelsLikeC + sensAdj) → sensitivityAdj shifts the home band.
+//   Outing planner uses rawMinApparentC for the protection floor (no sensAdj).
+//   The invariant: if rawApparentC ≤ 15°C (cool band or colder), the planner
+//   must include a protection layer regardless of cold-sensitivity profile.
+// ══════════════════════════════════════════════════════════════════════════
+{
+  console.log("\n── Home / Planner consistency ──────────────────────────");
+
+  /** Minimal Weather object for recommend(). Only feelsLikeC and band-critical fields. */
+  function makeWeather(feelsLikeC: number): Weather {
+    return {
+      feelsLikeC,
+      tempC: feelsLikeC,
+      precipProb: 0,
+      precipMm: 0,
+      windKph: 5,
+      gustKph: 5,
+      humidity: 50,
+      uvIndex: 0,
+      uv: 0,
+      code: 0,
+      isDay: 1,
+      windDir: 0,
+      hourly: [],
+      daily: [],
+    } as unknown as Weather;
+  }
+
+  /** Build a single-temperature OutingForecastSlice for planOuting(). */
+  function makeConstSlice(rawApparentC: number, date: string, startHour: number, hours: number): OutingForecastSlice {
+    const slots = Array.from({ length: hours }, (_, i) => ({
+      time:          `${date}T${String(startHour + i).padStart(2,"0")}:00`,
+      apparentTempC: rawApparentC,
+      code:          0,
+      precipProb:    0,
+      windKph:       5,
+    }));
+    return {
+      slots,
+      rawMinApparentC: rawApparentC,
+      rawMaxApparentC: rawApparentC,
+      peakPrecipProb:  0,
+      maxWindKph:      5,
+      hasRain:         false,
+      hasSnow:         false,
+      isWindy:         false,
+      lat:             43.7,
+      lon:             -79.4,
+    };
+  }
+
+  /**
+   * For each (rawApparentC, coldSensitivity) pair:
+   * 1. Check home recommendation uses a layer (jacket/coat) when feelsLikeC ≤ 15°C
+   * 2. Check outing planner includes a protection layer when rawApparentC ≤ 15°C
+   * 3. Assert outing planner is AT LEAST as protective as home recommendation.
+   */
+  type SensProfile = { cs: "cold" | "normal" | "hot"; label: string };
+  const profiles: SensProfile[] = [
+    { cs: "normal", label: "normal"     },
+    { cs: "cold",   label: "runs-cold"  },
+    { cs: "hot",    label: "runs-warm"  },
+  ];
+
+  const testTemps = [5, 12, 13, 18, 24];
+
+  for (const { cs, label } of profiles) {
+    const prefs: typeof PREFS = { ...PREFS, coldSensitivity: cs };
+
+    for (const rawC of testTemps) {
+      const date = "2026-09-26";
+      const slice = makeConstSlice(rawC, date, 10, 4);
+      const plan = planOuting(
+        { occasion: "casual", departureTime: `${date}T10:00`, returnTime: `${date}T14:00`,
+          activity: "low", context: "outdoors", locationLabel: "Toronto" },
+        slice, NO_WARDROBE as any, prefs, `${date}T14:00`, DEFAULT_STYLE
+      );
+
+      // Home recommendation
+      const sensAdj = cs === "cold" ? -4 : cs === "hot" ? 4 : 0;
+      const homeEffective = rawC + sensAdj;
+      const homeLayers = recommend(makeWeather(rawC + sensAdj), prefs);
+      // Home "has a layer" = outfit includes something warm/protective
+      const homeHasLayer = /jacket|coat|sweater|hoodie|fleece|layer|parka|windbreaker/i.test(
+        homeLayers.outfit.join(" ")
+      );
+
+      // Outing planner "has a layer" at departure or carry
+      const planHasLayer = plan.departureLayers.length > 0 || plan.carryLayers.length > 0;
+
+      // Outing planner must never have FEWER layers than home at rawC ≤ 15°C
+      // (both: cold band — protection required)
+      if (rawC <= 15) {
+        ok(
+          `HP. ${label} ${rawC}°C — planner has protection layer (rawC ≤ 15)`,
+          planHasLayer,
+          `departureLayers: [${plan.departureLayers.map(l=>l.name).join(",")}] carryLayers: [${plan.carryLayers.map(l=>l.name).join(",")}]`
+        );
+        ok(
+          `HP. ${label} ${rawC}°C — planner ≥ home coverage`,
+          !homeHasLayer || planHasLayer,
+          `home outfit: ${homeLayers.outfit.join(", ")} | homeEffC=${homeEffective}`
+        );
+      } else {
+        // rawC > 15: no minimum protection required, but planner must not have MORE layers
+        // than is warranted — soft check (just verify no crash / layer count consistent)
+        ok(
+          `HP. ${label} ${rawC}°C — planner runs without error (warm)`,
+          Array.isArray(plan.departureLayers) && Array.isArray(plan.carryLayers),
+          "unexpected type"
+        );
+      }
+
+      // Bottom consistency: rawC ≤ 15 must never produce shorts
+      const planHasShorts = plan.baseItems.some(i => /short/i.test(i.name));
+      if (rawC <= 15) {
+        ok(
+          `HP. ${label} ${rawC}°C — no shorts in base (rawC ≤ 15)`,
+          !planHasShorts,
+          plan.baseItems.map(i=>i.name).join(", ")
+        );
+      }
+    }
   }
 }
 

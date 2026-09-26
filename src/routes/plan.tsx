@@ -224,7 +224,26 @@ function PlanResult({
         </div>
       )}
 
-      {plan.removableLayers.length > 0 && (
+      {plan.departureLayers && plan.departureLayers.length > 0 && (
+        <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
+          <SectionHeader icon={Layers} title="Wear when leaving" />
+          <div className="flex flex-col gap-3">{plan.departureLayers.map((item,i) => <ItemRow key={i} item={item} />)}</div>
+          {plan.adaptationHint && (
+            <p className="mt-3 text-xs text-muted-foreground leading-snug">{plan.adaptationHint}</p>
+          )}
+        </div>
+      )}
+
+      {plan.carryLayers && plan.carryLayers.length > 0 && (
+        <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
+          <SectionHeader icon={Layers} title="Pack for later" />
+          <div className="flex flex-col gap-3">{plan.carryLayers.map((item,i) => <ItemRow key={i} item={item} />)}</div>
+        </div>
+      )}
+
+      {/* Safety fallback: v3 always has departureLayers/carryLayers; this path is unreachable
+          for validated v3 plans but guards against future schema drift or unit-test mocks. */}
+      {(!plan.departureLayers && !plan.carryLayers) && plan.removableLayers.length > 0 && (
         <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
           <SectionHeader icon={Layers} title="Bring for later" />
           <div className="flex flex-col gap-3">{plan.removableLayers.map((item,i) => <ItemRow key={i} item={item} />)}</div>

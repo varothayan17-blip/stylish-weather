@@ -129,7 +129,28 @@ export type OutingPlanRecommendation = {
   locationLon:                number;
   occasion:                   string;
   baseItems:                  PlannedItem[];
+  /**
+   * Layers required at departure — must be worn when leaving.
+   * These are chosen for outdoor exposure (cold commute, freezing return).
+   * They may be removed or opened indoors.
+   */
+  departureLayers:            PlannedItem[];
+  /**
+   * Layers genuinely optional at departure — pack for later.
+   * Not needed when leaving; needed later due to temperature swing or return cold.
+   */
+  carryLayers:                PlannedItem[];
+  /**
+   * Deprecated alias kept for backward-compat with v2 snapshots and existing
+   * tests that read removableLayers directly.
+   * = [...departureLayers, ...carryLayers]
+   */
   removableLayers:            PlannedItem[];
+  /**
+   * Optional indoor-adaptation hint shown when a departure layer may be
+   * removed/opened once at the warm destination.
+   */
+  adaptationHint?:            string;
   footwear:                   PlannedItem[];
   accessories:                PlannedItem[];
   timelineGuidance:           TimelineGuidance[];
@@ -140,7 +161,12 @@ export type OutingPlanRecommendation = {
   recommendationVersion:      number;
 };
 
-export const OUTING_PLAN_VERSION = 2;
+/**
+ * v3 — 2026-09-26: adds departureLayers / carryLayers / adaptationHint split.
+ * Old v2 records lacking these fields must be regenerated.
+ * Bumping the version ensures the store rejects v2 records silently on load.
+ */
+export const OUTING_PLAN_VERSION = 3;
 
 /**
  * The specific reason wind protection was or was not added to the plan.
@@ -662,15 +688,16 @@ export function matchWardrobeItem(
 // Uses exposure effective temperature for wear/carry threshold decisions.
 
 function buildTimeline(
-  departureIso:  string,
-  returnIso:     string,
-  summary:       WeatherSummary,
-  slots:         HourlyOutingSlot[],
-  hasLayer:      boolean,
-  sensAdj:       number,
-  effectiveMinC: number,
-  styleProfile:  PersonalStyleProfile | null,
-  needsUmbrella: boolean,   // Issue 1: single authoritative decision from planOuting
+  departureIso:    string,
+  returnIso:       string,
+  summary:         WeatherSummary,
+  slots:           HourlyOutingSlot[],
+  departureLayers: PlannedItem[],
+  carryLayers:     PlannedItem[],
+  sensAdj:         number,
+  effectiveMinC:   number,
+  styleProfile:    PersonalStyleProfile | null,
+  needsUmbrella:   boolean,   // Issue 1: single authoritative decision from planOuting
 ): TimelineGuidance[] {
   const guidance: TimelineGuidance[] = [];
 
@@ -690,27 +717,35 @@ function buildTimeline(
 
   // Layer guidance uses exposure departure temperature (not destination)
   const coldAtDeparture = deptExposure <= 14;
-  if (hasLayer) {
-    if (coldAtDeparture) {
+  const hasLayer = departureLayers.length > 0 || carryLayers.length > 0;
+
+  // Departure layers: must be worn when leaving (cold at departure)
+  if (departureLayers.length > 0) {
+    guidance.push({
+      startTime:   departureIso,
+      instruction: `Wear your ${departureLayers.map(l => l.name.toLowerCase()).join(" and ")} — it's cool when you leave.`,
+      reason:      `Outdoor exposure is ${deptExposure.toFixed(0)} °C at departure`,
+    });
+  }
+
+  // Carry layers: not needed at departure, pack for later
+  if (carryLayers.length > 0) {
+    if (coldestIso && coldestIso > departureIso) {
       guidance.push({
         startTime:   departureIso,
-        instruction: "Wear your layer — it's cool when you leave.",
-        reason:      `Outdoor exposure is ${deptExposure.toFixed(0)} °C at departure`,
-      });
-    } else if (tempSwing >= 4 && coldestIso && coldestIso > departureIso) {
-      guidance.push({
-        startTime:   departureIso,
-        instruction: "Carry your layer — you won't need it yet but will later.",
+        instruction: `Pack your ${carryLayers.map(l => l.name.toLowerCase()).join(" and ")} — you won't need it yet but will later.`,
         reason:      `Outdoor temperature drops to ~${minExp.toFixed(0)} °C later`,
       });
     } else {
       guidance.push({
         startTime:   departureIso,
-        instruction: "Your layer is available if you need it.",
+        instruction: `Your ${carryLayers.map(l => l.name.toLowerCase()).join(" and ")} is available if you need it.`,
         reason:      "Conditions may vary during your outing",
       });
     }
   }
+
+  // (hasLayer and coldAtDeparture are now handled via departureLayers/carryLayers above)
 
   // Commute note from StyleProfile
   if (styleProfile) {
@@ -739,17 +774,24 @@ function buildTimeline(
     });
   }
 
-  // Layer removal at warmest point
-  if (hasLayer && coldAtDeparture && tempSwing >= 5 && warmestIso && warmestIso > departureIso) {
+  // Layer removal at warmest point — only for departure layers worn at leaving
+  if (departureLayers.length > 0 && tempSwing >= 5 && warmestIso && warmestIso > departureIso) {
     guidance.push({
       startTime:   warmestIso,
-      instruction: "Consider removing your layer when you feel comfortable.",
+      instruction: "Consider removing or opening your layer indoors when you feel comfortable.",
       reason:      `Outdoor temperature peaks around ${formatHour(warmestIso)}`,
     });
   }
 
-  // Layer back on for cold return
-  if (hasLayer && !coldAtDeparture && coldestIso && coldestIso > departureIso) {
+  // Layer back on for cold return — for carry layers being donned later
+  if (carryLayers.length > 0 && coldestIso && coldestIso > departureIso) {
+    guidance.push({
+      startTime:   coldestIso,
+      instruction: `Put on your ${carryLayers.map(l => l.name.toLowerCase()).join(" and ")} now — it's getting cooler outside.`,
+      reason:      `Outdoor temperature drops around ${formatHour(coldestIso)}`,
+    });
+  } else if (hasLayer && departureLayers.length === 0 && coldestIso && coldestIso > departureIso) {
+    // carry-only layer for later cold
     guidance.push({
       startTime:   coldestIso,
       instruction: "Put your layer on now — it's getting cooler outside.",
@@ -864,8 +906,16 @@ export function planOuting(
   const expMinC  = Math.min(...expTemps);
   const expMaxC  = Math.max(...expTemps);
 
-  // Exposure track drives protection bands
-  const exposureColdBand = bandFor(expMinC);
+  // Raw apparent minimum — used for minimum-protection floor decisions.
+  // sensAdj must NOT be allowed to eliminate minimum cold-weather coverage.
+  const rawMinApparentC = slice.rawMinApparentC;
+  const rawMaxApparentC = slice.rawMaxApparentC;
+
+  // Exposure track drives protection bands.
+  // Protection-layer triggering uses the raw-apparent band so that "runs warm"
+  // (+4 sensAdj) cannot suppress a layer when raw outdoor temperature is genuinely cold.
+  const rawColdBand      = bandFor(rawMinApparentC);   // raw-apparent — for protection floor
+  const exposureColdBand = bandFor(expMinC);           // sensAdj-adjusted — for comfort/outfit
   const exposureWarmBand = bandFor(expMaxC);
   // Destination track drives base outfit band
   const destWarmBand     = bandFor(destMaxC);
@@ -907,15 +957,32 @@ export function planOuting(
   };
 
   // ── Base outfit: driven by DESTINATION track ─────────────────────────────
+  // Minimum-protection floor: when raw outdoor apparent temperature is ≤ 15°C,
+  // the occasion band used for bottoms is capped at "cool" (jeans/chinos/trousers).
+  // This prevents sensAdj or indoor-comfort boost from producing shorts at 12–15°C raw.
+  // Gym occasion is exempt — gym shorts are destination clothing, not outdoor bottoms.
+  const BOTTOMS_FLOOR_RAW_C = 15;
+
   const spec    = garmentSpec(input.occasion, destWarmBand, profile);
+  // Override the bottom from spec when the floor applies
+  const specBottom = input.occasion !== "gym" && rawMinApparentC <= BOTTOMS_FLOOR_RAW_C && /short/i.test(spec.bottom)
+    ? garmentSpec(input.occasion, "cool", profile).bottom
+    : spec.bottom;
+
   const usedIds = new Set<string>();
 
   // Wardrobe candidates: matchWardrobeItem handles style preference via its bonus score.
   const sortedWardrobe = wardrobeItems;
 
-  const matchTop    = matchWardrobeItem(spec.top,    sortedWardrobe, usedIds, destWarmBand, styleProfile?.stylePreferences);
+  // bottomsBand: cap at "cool" when raw outdoor temp is ≤ floor (no shorts at cool-raw temps)
+  const bottomsBand: TempBand =
+    input.occasion !== "gym" && rawMinApparentC <= BOTTOMS_FLOOR_RAW_C && destWarmBand === "warm"
+      ? "cool"
+      : destWarmBand;
+
+  const matchTop    = matchWardrobeItem(spec.top,   sortedWardrobe, usedIds, destWarmBand, styleProfile?.stylePreferences);
   if (matchTop)    usedIds.add(matchTop.id);
-  const matchBottom = matchWardrobeItem(spec.bottom, sortedWardrobe, usedIds, destWarmBand, styleProfile?.stylePreferences);
+  const matchBottom = matchWardrobeItem(specBottom, sortedWardrobe, usedIds, bottomsBand,  styleProfile?.stylePreferences);
   if (matchBottom) usedIds.add(matchBottom.id);
 
   const baseItems: PlannedItem[] = [
@@ -926,59 +993,97 @@ export function planOuting(
       reason:       `Appropriate for the destination (~${destMaxC.toFixed(0)} °C effective indoors)`,
     },
     {
-      name:         matchBottom ? matchBottom.name : spec.bottom,
+      name:         matchBottom ? matchBottom.name : specBottom,
       wardrobeId:   matchBottom ? matchBottom.id   : null,
       fromWardrobe: !!matchBottom,
-      reason:       "Suitable for your occasion and conditions",
+      reason:       rawMinApparentC <= BOTTOMS_FLOOR_RAW_C && /jean|trouser|chino|pant/i.test(specBottom)
+        ? `Full-length bottoms required — outdoor apparent temperature is ~${rawMinApparentC.toFixed(0)} °C`
+        : "Suitable for your occasion and conditions",
     },
   ];
 
   // ── Protection layers: driven by EXPOSURE track ──────────────────────────
-  const removableLayers: PlannedItem[] = [];
+  // departureLayers: must be WORN at departure (cold at departure)
+  // carryLayers: OPTIONAL at departure but needed later (warm departure, colder later)
+  const departureLayers: PlannedItem[] = [];
+  const carryLayers:     PlannedItem[] = [];
 
-  const outerCoat = outerCoatForBand(exposureColdBand);
+  // Departure exposure: last slot at or before departure time.
+  // coldAtDeparture uses raw apparent temperature (no sensAdj) so that "runs warm"
+  // cannot suppress a departure layer at genuinely cold outdoor conditions.
+  const expSlots = slice.slots;
+  const deptSlotForLayer = [...expSlots].reverse().find(s => s.time <= input.departureTime) ?? expSlots[0];
+  const deptRawApparentC = deptSlotForLayer ? deptSlotForLayer.apparentTempC : rawMinApparentC;
+  const coldAtDeparture  = deptRawApparentC <= 15; // raw apparent floor — consistent with PROTECTION_FLOOR_RAW_C
+
+  const expSwing = expMaxC - expMinC;
+
+  // Use rawColdBand (raw-apparent, no sensAdj) to determine outer coat requirement.
+  // A user who "runs warm" must still carry an outer coat in genuinely freezing/winter conditions.
+  const outerCoat = outerCoatForBand(rawColdBand);
   if (outerCoat) {
-    // Outer coat always required when exposure band is winter/freezing
+    // Outer coat always required when raw-apparent band is winter/freezing
     // regardless of StyleProfile layeringPreference (safety override)
-    const m = matchWardrobeItem(outerCoat, wardrobeItems, usedIds, exposureColdBand);
+    const m = matchWardrobeItem(outerCoat, wardrobeItems, usedIds, rawColdBand);
     if (m) usedIds.add(m.id);
-    removableLayers.push({
+    const item: PlannedItem = {
       name:         m ? m.name : outerCoat,
       wardrobeId:   m ? m.id   : null,
       fromWardrobe: !!m,
-      reason:       `Outdoor temperature is ~${expMinC.toFixed(0)} °C — required for commute and return`,
-    });
+      reason:       `Outdoor temperature is ~${rawMinApparentC.toFixed(0)} °C — required for commute and return`,
+    };
+    // Outer coat is always worn at departure (cold exposure requires it immediately)
+    departureLayers.push(item);
   } else {
-    // Check if an optional carry-layer is warranted by EXPOSURE track
-    // Trigger layer when: temperature swings enough, bands differ, OR the cold band
-    // itself demands a layer (chilly/cool exposure even with constant temperature
-    // still requires commute protection).
-    const expSwing   = expMaxC - expMinC;
-    const coldBandNeedsLayer = exposureColdBand === "chilly" || exposureColdBand === "cool";
-    const needsLayer = expSwing >= 4 || exposureColdBand !== exposureWarmBand || coldBandNeedsLayer;
-    const layerName    = needsLayer ? layerForBand(exposureColdBand, input.occasion, profile) : null;
+    // Check if a carry-layer is warranted by EXPOSURE track.
+    // Use raw-apparent band for triggering so that "runs warm" (+sensAdj) cannot
+    // suppress a layer when raw outdoor temperature is genuinely chilly/cool.
+    const rawSwing        = rawMaxApparentC - rawMinApparentC;
+    const rawWarmBand     = bandFor(rawMaxApparentC);
+    const coldBandNeedsLayer = rawColdBand === "chilly" || rawColdBand === "cool";
+    const needsLayer = rawSwing >= 4 || rawColdBand !== rawWarmBand || coldBandNeedsLayer;
+    const layerName    = needsLayer ? layerForBand(rawColdBand, input.occasion, profile) : null;
     const wantsLayer   = layerName !== null;
 
-    // StyleProfile layeringPreference can suppress OPTIONAL layers only (not safety coats)
-    const skipOptional = styleProfile?.layeringPreference === "minimal" && expMinC > 8;
-    // StyleProfile "prefer" adds a layer if not already there and exposure is cool
+    // StyleProfile layeringPreference can suppress OPTIONAL layers only when
+    // raw outdoor apparent temperature is genuinely safe (> 15°C raw).
+    // This prevents "runs warm" or "minimal" preference from removing minimum
+    // cold-weather protection at genuinely cool/chilly raw temperatures.
+    const PROTECTION_FLOOR_RAW_C = 15; // raw apparent above this → optional layer may be skipped
+    const skipOptional = styleProfile?.layeringPreference === "minimal" && rawMinApparentC > PROTECTION_FLOOR_RAW_C;
+    // StyleProfile "prefer" adds a layer if not already there and raw exposure is cool
     const addExtra     = styleProfile?.layeringPreference === "prefer" &&
-      !wantsLayer && expMinC <= 15 && outerCoat === null;
+      !wantsLayer && rawMinApparentC <= 15 && outerCoat === null;
     const finalLayer   = skipOptional ? null : (layerName ?? (addExtra ? "Light jacket" : null));
 
     if (finalLayer) {
-      const m = matchWardrobeItem(finalLayer, wardrobeItems, usedIds, exposureColdBand);
+      const m = matchWardrobeItem(finalLayer, wardrobeItems, usedIds, rawColdBand);
       if (m) usedIds.add(m.id);
-      removableLayers.push({
+      const item: PlannedItem = {
         name:         m ? m.name : finalLayer,
         wardrobeId:   m ? m.id   : null,
         fromWardrobe: !!m,
-        reason:       expSwing >= 4
-          ? `~${expSwing.toFixed(0)} °C outdoor swing — carry this for the cooler period`
-          : `Outdoor exposure may reach ~${expMinC.toFixed(0)} °C`,
-      });
+        reason:       rawSwing >= 4
+          ? `~${rawSwing.toFixed(0)} °C outdoor swing — carry this for the cooler period`
+          : `Outdoor apparent temperature may reach ~${rawMinApparentC.toFixed(0)} °C`,
+      };
+      // Classify: if cold at departure → departureLayers; if warm now but cold later → carryLayers
+      if (coldAtDeparture) {
+        departureLayers.push(item);
+      } else {
+        carryLayers.push(item);
+      }
     }
   }
+
+  // Derived alias for backward-compat (existing tests, store validation, ActivePlanCard)
+  const removableLayers: PlannedItem[] = [...departureLayers, ...carryLayers];
+
+  // Adaptation hint: when departure layer is worn, note it can be removed/opened indoors
+  const adaptationHint: string | undefined =
+    departureLayers.length > 0 && (input.context === "indoors" || input.context === "mixed")
+      ? `Your ${departureLayers.map(l => l.name).join(" and ")} can be removed or opened once you're indoors.`
+      : undefined;
 
   // ── Footwear: driven by EXPOSURE track (outdoor conditions) ─────────────
   const footwearName = footwearFor(exposureColdBand, input.occasion, profile, slice.hasRain, slice.hasSnow);
@@ -1042,10 +1147,9 @@ export function planOuting(
     });
   }
 
-  const hasLayer = removableLayers.length > 0;
   const timeline = buildTimeline(
     input.departureTime, effectiveReturn, summary,
-    slice.slots, hasLayer, sensAdj, expMinC, styleProfile, needsUmbrella,
+    slice.slots, departureLayers, carryLayers, sensAdj, expMinC, styleProfile, needsUmbrella,
   );
   const explanation = buildExplanation(prefs, input.activity, input.context, summary, styleProfile, needsUmbrella, windReason);
 
@@ -1057,7 +1161,10 @@ export function planOuting(
     locationLon:                slice.lon,
     occasion:                   input.occasion,
     baseItems,
+    departureLayers,
+    carryLayers,
     removableLayers,
+    adaptationHint,
     footwear,
     accessories,
     timelineGuidance:           timeline,

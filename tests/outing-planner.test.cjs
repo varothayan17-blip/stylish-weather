@@ -189,7 +189,7 @@ ok("S47. commitPlan exact-ID replacement", (() => {
   const s = storeSrc.indexOf("commitPlan("); const e = storeSrc.indexOf("cancelPlan(", s);
   return storeSrc.slice(s,e).includes("p.id === replaceId");
 })());
-ok("S48. OUTING_PLAN_VERSION = 2", plannerSrc.includes("OUTING_PLAN_VERSION = 2"));
+ok("S48. OUTING_PLAN_VERSION = 3", plannerSrc.includes("OUTING_PLAN_VERSION = 3"));
 ok("S49. Array.isArray on item.labels", plannerSrc.includes("Array.isArray(itemRec.labels)"));
 ok("S50. wardrobe-ai-handler fail-closed", handlerSrc.includes('WARDROBE_AI_SCANNING_ENABLED !== "true"'));
 ok("S51. No AI-provider calls in planner",
