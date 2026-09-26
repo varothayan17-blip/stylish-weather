@@ -234,6 +234,25 @@ function isValidPlan(p: unknown, uid: string): p is LockedPlan {
   const pp = ws.peakPrecipitationProbability as number;
   if (pp < 0 || pp > 100) return false;
 
+  // v3 invariant: removableLayers must be semantically identical to [...departureLayers, ...carryLayers]
+  // Check ordered, field-by-field equality — length match alone is insufficient.
+  type PI = { name: string; wardrobeId: string | null; fromWardrobe: boolean; reason: string };
+  const dept  = snap.departureLayers as PI[];
+  const carry = snap.carryLayers     as PI[];
+  const concat = [...dept, ...carry];
+  const removable = snap.removableLayers as PI[];
+  if (removable.length !== concat.length) return false;
+  for (let i = 0; i < concat.length; i++) {
+    const a = removable[i], b = concat[i];
+    if (a.name !== b.name || a.wardrobeId !== b.wardrobeId ||
+        a.fromWardrobe !== b.fromWardrobe || a.reason !== b.reason) return false;
+  }
+
+  // v3 invariant: no item name may appear in both departureLayers and carryLayers
+  const deptNames = new Set(dept.map(i => i.name));
+  const carryDup  = carry.some(i => deptNames.has(i.name));
+  if (carryDup) return false;
+
   return true;
 }
 

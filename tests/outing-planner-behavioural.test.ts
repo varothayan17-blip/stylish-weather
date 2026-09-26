@@ -706,10 +706,11 @@ console.log("\n── departureLayers / carryLayers split ───────�
     const temps = [13, 12, 12, 12, 12];
     const j = makeJson("2026-09-20", 9, temps);
     const s = makeSlice(j, "2026-09-20T09:00", "2026-09-20T13:00");
-    const runsWarm: PersonalStyleProfile = { ...DEFAULT_STYLE, layeringPreference: "minimal" };
+    const runsWarmPrefs = { ...PREFS, coldSensitivity: "hot" as const };
+    const runsWarmStyle: PersonalStyleProfile = { ...DEFAULT_STYLE, layeringPreference: "minimal" };
     const plan = planOuting({ occasion:"casual", departureTime:"2026-09-20T09:00",
       returnTime:"2026-09-20T13:00", activity:"low", context:"mixed", locationLabel:"T" },
-      s, NO_WARDROBE as any, PREFS, "2026-09-20T13:00", runsWarm);
+      s, NO_WARDROBE as any, runsWarmPrefs, "2026-09-20T13:00", runsWarmStyle);
     ok("DL04. 13→12°C mixed/outdoor: no shorts in base",
       !plan.baseItems.some(i => i.name.toLowerCase().includes("short")),
       plan.baseItems.map(i=>i.name).join(","));
@@ -985,7 +986,7 @@ console.log("\n── departureLayers / carryLayers split ───────�
       // Home recommendation
       const sensAdj = cs === "cold" ? -4 : cs === "hot" ? 4 : 0;
       const homeEffective = rawC + sensAdj;
-      const homeLayers = recommend(makeWeather(rawC + sensAdj), prefs);
+      const homeLayers = recommend(makeWeather(rawC), prefs);
       // Home "has a layer" = outfit includes something warm/protective
       const homeHasLayer = /jacket|coat|sweater|hoodie|fleece|layer|parka|windbreaker/i.test(
         homeLayers.outfit.join(" ")
@@ -1028,6 +1029,239 @@ console.log("\n── departureLayers / carryLayers split ───────�
       }
     }
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Section 5: Issue-regression tests (Issues 1–8)
+// ══════════════════════════════════════════════════════════════════════════
+console.log("\n" + "═".repeat(55));
+console.log("Section 5: Issue regression tests");
+console.log("═".repeat(55));
+
+{
+  // Issue 1 regression: 20°C departure / -2°C return → Winter coat in carryLayers NOT departureLayers
+  const temps = [20, 18, 14, 8, 2, -2];
+  const j = makeJson("2026-10-01", 9, temps);
+  const s = makeSlice(j, "2026-10-01T09:00", "2026-10-01T14:00");
+  const plan = planOuting(
+    { occasion:"casual", departureTime:"2026-10-01T09:00", returnTime:"2026-10-01T14:00",
+      activity:"low", context:"outdoors", locationLabel:"T" },
+    s, NO_WARDROBE as any, PREFS, "2026-10-01T14:00", DEFAULT_STYLE,
+  );
+  const coatInCarry   = plan.carryLayers.some(l => /coat|parka|winter/i.test(l.name));
+  const coatInDept    = plan.departureLayers.some(l => /coat|parka|winter/i.test(l.name));
+  ok("R01. 20°C dept/-2°C return: winter coat is in carryLayers (warm departure)",
+    coatInCarry,
+    `carryLayers=[${plan.carryLayers.map(l=>l.name)}] departureLayers=[${plan.departureLayers.map(l=>l.name)}]`);
+  ok("R02. 20°C dept/-2°C return: winter coat NOT in departureLayers",
+    !coatInDept,
+    `departureLayers=[${plan.departureLayers.map(l=>l.name)}]`);
+}
+
+{
+  // Issue 2 regression: -2°C raw, "runs warm" profile → gloves AND cold-appropriate footwear present
+  const j = makeJson("2026-10-01", 9, Array(5).fill(-2));
+  const s = makeSlice(j, "2026-10-01T09:00", "2026-10-01T13:00");
+  const runsWarmPrefs = { ...PREFS, coldSensitivity: "hot" as const };
+  const plan = planOuting(
+    { occasion:"casual", departureTime:"2026-10-01T09:00", returnTime:"2026-10-01T13:00",
+      activity:"low", context:"outdoors", locationLabel:"T" },
+    s, NO_WARDROBE as any, runsWarmPrefs, "2026-10-01T13:00", DEFAULT_STYLE,
+  );
+  ok("R03. -2°C runs-warm: gloves present (raw protection, not sensAdj-adjusted)",
+    plan.accessories.some(a => /glove/i.test(a.name)),
+    plan.accessories.map(a=>a.name).join(",") || "none");
+  ok("R04. -2°C runs-warm: cold-appropriate footwear (boots/waterproof not trainers)",
+    plan.footwear.some(f => /boot|waterproof/i.test(f.name)),
+    plan.footwear.map(f=>f.name).join(",") || "none");
+}
+
+{
+  // Issue 3 regression: actual 13°C with runs-warm profile → timeline shows ~13 not adjusted
+  const j = makeJson("2026-10-01", 9, Array(5).fill(13));
+  const s = makeSlice(j, "2026-10-01T09:00", "2026-10-01T13:00");
+  const runsWarmPrefs = { ...PREFS, coldSensitivity: "hot" as const };
+  const plan = planOuting(
+    { occasion:"casual", departureTime:"2026-10-01T09:00", returnTime:"2026-10-01T13:00",
+      activity:"low", context:"outdoors", locationLabel:"T" },
+    s, NO_WARDROBE as any, runsWarmPrefs, "2026-10-01T13:00", DEFAULT_STYLE,
+  );
+  const deptGuidance  = plan.timelineGuidance.find(g => g.startTime === "2026-10-01T09:00");
+  const rawTempShown  = deptGuidance?.reason.includes("13") ?? false;
+  const adjustedShown = deptGuidance?.reason.includes("17") ?? false; // 13 + 4 sensAdj = 17
+  ok("R05. 13°C runs-warm: timeline departure reason shows actual ~13°C (not adjusted 17°C)",
+    rawTempShown && !adjustedShown,
+    `reason="${deptGuidance?.reason}"`);
+}
+
+{
+  // Issue 4 regression: outdoors context — reason must NOT contain "effective indoors"
+  const j = makeJson("2026-10-01", 12, Array(5).fill(25));
+  const s = makeSlice(j, "2026-10-01T12:00", "2026-10-01T16:00");
+  const plan = planOuting(
+    { occasion:"casual", departureTime:"2026-10-01T12:00", returnTime:"2026-10-01T16:00",
+      activity:"low", context:"outdoors", locationLabel:"T" },
+    s, NO_WARDROBE as any, PREFS, "2026-10-01T16:00", DEFAULT_STYLE,
+  );
+  const noIndoorsLabel = plan.baseItems.every(i => !i.reason.includes("effective indoors"));
+  const hasOutdoorsLabel = plan.baseItems.some(i => i.reason.includes("personalized outdoor conditions"));
+  ok("R06. outdoors context: base item reason does NOT say 'effective indoors'", noIndoorsLabel,
+    plan.baseItems.map(i=>i.reason).join(" | "));
+  ok("R07. outdoors context: base item reason says 'personalized outdoor conditions'", hasOutdoorsLabel,
+    plan.baseItems.map(i=>i.reason).join(" | "));
+}
+
+{
+  // Issue 4 (indoors): base item reason should say "estimated indoor comfort"
+  const j = makeJson("2026-10-01", 9, Array(5).fill(20));
+  const s = makeSlice(j, "2026-10-01T09:00", "2026-10-01T13:00");
+  const plan = planOuting(
+    { occasion:"work", departureTime:"2026-10-01T09:00", returnTime:"2026-10-01T13:00",
+      activity:"low", context:"indoors", locationLabel:"T" },
+    s, NO_WARDROBE as any, PREFS, "2026-10-01T13:00", DEFAULT_STYLE,
+  );
+  ok("R08. indoors context: base item reason says 'estimated indoor comfort'",
+    plan.baseItems.some(i => i.reason.includes("estimated indoor comfort")),
+    plan.baseItems.map(i=>i.reason).join(" | "));
+}
+
+{
+  // Issue 5 regression: women/event at 13°C → full-length bottoms (not skirt when cold)
+  const j = makeJson("2026-10-01", 9, Array(5).fill(13));
+  const s = makeSlice(j, "2026-10-01T09:00", "2026-10-01T13:00");
+  const femProfile: PersonalStyleProfile = { ...DEFAULT_STYLE, stylePreferences: ["feminine"] };
+  const plan = planOuting(
+    { occasion:"event", departureTime:"2026-10-01T09:00", returnTime:"2026-10-01T13:00",
+      activity:"low", context:"mixed", locationLabel:"T" },
+    s, NO_WARDROBE as any, PREFS, "2026-10-01T13:00", femProfile,
+  );
+  const hasSkirt  = plan.baseItems.some(i => /skirt/i.test(i.name));
+  const hasBottom = plan.baseItems.some(i => /trouser|pant|chino|jean/i.test(i.name));
+  ok("R09. women/event 13°C: no skirt — full-length bottoms enforced", !hasSkirt,
+    plan.baseItems.map(i=>i.name).join(","));
+  ok("R10. women/event 13°C: has full-length bottom", hasBottom,
+    plan.baseItems.map(i=>i.name).join(","));
+}
+
+{
+  // Issue 5 regression: men/casual at 13°C
+  const j = makeJson("2026-10-01", 9, Array(5).fill(13));
+  const s = makeSlice(j, "2026-10-01T09:00", "2026-10-01T13:00");
+  const plan = planOuting(
+    { occasion:"casual", departureTime:"2026-10-01T09:00", returnTime:"2026-10-01T13:00",
+      activity:"low", context:"outdoors", locationLabel:"T" },
+    s, NO_WARDROBE as any, PREFS, "2026-10-01T13:00", DEFAULT_STYLE,
+  );
+  ok("R11. men/casual 13°C: no shorts", !plan.baseItems.some(i => /short/i.test(i.name)),
+    plan.baseItems.map(i=>i.name).join(","));
+  ok("R12. men/casual 13°C: full-length bottom",
+    plan.baseItems.some(i => /trouser|pant|chino|jean/i.test(i.name)),
+    plan.baseItems.map(i=>i.name).join(","));
+}
+
+{
+  // Issue 5 regression: neutral/college at 13°C
+  const j = makeJson("2026-10-01", 9, Array(5).fill(13));
+  const s = makeSlice(j, "2026-10-01T09:00", "2026-10-01T13:00");
+  const plan = planOuting(
+    { occasion:"college", departureTime:"2026-10-01T09:00", returnTime:"2026-10-01T13:00",
+      activity:"low", context:"mixed", locationLabel:"T" },
+    s, NO_WARDROBE as any, PREFS, "2026-10-01T13:00", DEFAULT_STYLE,
+  );
+  ok("R13. neutral/college 13°C: no shorts", !plan.baseItems.some(i => /short/i.test(i.name)),
+    plan.baseItems.map(i=>i.name).join(","));
+  ok("R14. neutral/college 13°C: full-length bottom",
+    plan.baseItems.some(i => /trouser|pant|chino|jean/i.test(i.name)),
+    plan.baseItems.map(i=>i.name).join(","));
+}
+
+{
+  // Issue 6 regression: corrupt storage — removableLayers count mismatch rejected
+  mockLocalStorage();
+  const uid = "u-corrupt-count";
+  const base = makePlanRecord(uid, 2, 10, "upcoming");
+  // Corrupt: add extra item to removableLayers but not to departureLayers/carryLayers
+  const corruptSnap = {
+    ...base.snapshot,
+    removableLayers: [...(base.snapshot.removableLayers as any[]),
+      { name:"Extra Jacket", wardrobeId:null, fromWardrobe:false, reason:"phantom" }],
+  };
+  _storage.set(storageKeyForUid(uid), JSON.stringify([{ ...base, snapshot: corruptSnap }]));
+  ok("R15. Corrupt storage (removableLayers count mismatch) is rejected by isValidPlan",
+    outingPlanStore.loadAll(uid).length === 0,
+    `loaded=${outingPlanStore.loadAll(uid).length}`);
+  clearLocalStorage();
+}
+
+{
+  // Issue 6 regression (2a): same length but different content — must be rejected
+  mockLocalStorage();
+  const uid = "u-corrupt-swap";
+  const base = makePlanRecord(uid, 2, 10, "upcoming");
+  const itemA = { name:"Light jacket", wardrobeId:null, fromWardrobe:false, reason:"cold" };
+  const itemB = { name:"Raincoat",     wardrobeId:null, fromWardrobe:false, reason:"rain" };
+  // departureLayers=[A], carryLayers=[], but removableLayers=[B] — length 1 = 1 but content differs
+  const corruptSnap = {
+    ...base.snapshot,
+    departureLayers: [itemA],
+    carryLayers: [],
+    removableLayers: [itemB],
+  };
+  _storage.set(storageKeyForUid(uid), JSON.stringify([{ ...base, snapshot: corruptSnap }]));
+  ok("R17. Corrupt storage (length matches but item differs) is rejected by isValidPlan",
+    outingPlanStore.loadAll(uid).length === 0,
+    `loaded=${outingPlanStore.loadAll(uid).length}`);
+  clearLocalStorage();
+}
+
+{
+  // Issue 6 regression: corrupt storage — same item in both departureLayers and carryLayers
+  mockLocalStorage();
+  const uid = "u-corrupt-dup";
+  const dupItem = { name:"Winter coat", wardrobeId:null, fromWardrobe:false, reason:"test" };
+  const base = makePlanRecord(uid, 2, 10, "upcoming");
+  const corruptSnap = {
+    ...base.snapshot,
+    departureLayers: [dupItem],
+    carryLayers: [dupItem],
+    removableLayers: [dupItem, dupItem],
+  };
+  _storage.set(storageKeyForUid(uid), JSON.stringify([{ ...base, snapshot: corruptSnap }]));
+  ok("R16. Corrupt storage (item in both departureLayers+carryLayers) is rejected by isValidPlan",
+    outingPlanStore.loadAll(uid).length === 0,
+    `loaded=${outingPlanStore.loadAll(uid).length}`);
+  clearLocalStorage();
+}
+
+{
+  // Issue (timeline wording) regression: runs-warm 20°C→-2°C
+  // Winter coat must be in carryLayers; later guidance must show -2°C not adjusted +2°C
+  const temps = [20, 18, 14, 8, 2, -2];
+  const j = makeJson("2026-10-01", 9, temps);
+  const s = makeSlice(j, "2026-10-01T09:00", "2026-10-01T14:00");
+  const runsWarmPrefs = { ...PREFS, coldSensitivity: "hot" as const };
+  const plan = planOuting(
+    { occasion:"casual", departureTime:"2026-10-01T09:00", returnTime:"2026-10-01T14:00",
+      activity:"low", context:"outdoors", locationLabel:"T" },
+    s, NO_WARDROBE as any, runsWarmPrefs, "2026-10-01T14:00", DEFAULT_STYLE,
+  );
+  ok("R18. 20°C→-2°C runs-warm: winter coat in carryLayers",
+    plan.carryLayers.some(l => /coat|parka|winter/i.test(l.name)),
+    `carryLayers=[${plan.carryLayers.map(l=>l.name)}]`);
+  ok("R19. 20°C→-2°C runs-warm: departureLayers is empty (warm departure)",
+    plan.departureLayers.length === 0,
+    `departureLayers=[${plan.departureLayers.map(l=>l.name)}]`);
+  const packGuidance = plan.timelineGuidance.find(g =>
+    g.startTime === "2026-10-01T09:00" && /pack|available/i.test(g.instruction));
+  // sensAdj for runs-warm (+4) would produce -2+4 = +2; raw is -2.
+  // Verify the reason contains "-2" and does NOT contain a standalone positive "2 °C" (which would be the adjusted value).
+  const reason = packGuidance?.reason ?? "";
+  ok("R20. 20°C→-2°C runs-warm: carry guidance shows raw -2°C",
+    reason.includes("-2"),
+    `reason="${reason}"`);
+  ok("R21. 20°C→-2°C runs-warm: carry guidance does NOT show adjusted +2°C as outdoor temp",
+    !reason.match(/~\s*2 °C/),
+    `reason="${reason}"`);
 }
 
 // ══════════════════════════════════════════════════════════════════════════

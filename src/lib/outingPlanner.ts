@@ -701,8 +701,9 @@ function buildTimeline(
 ): TimelineGuidance[] {
   const guidance: TimelineGuidance[] = [];
 
-  // Departure slot on the EXPOSURE track (not destination track)
+  // Departure slot — raw apparent temperature (no sensAdj) for honest temperature display
   const deptSlot = [...slots].reverse().find(s => s.time <= departureIso) ?? slots[0];
+  const deptRawApparentC = deptSlot ? deptSlot.apparentTempC : summary.rawMinApparentTempC;
   const deptExposure = deptSlot ? exposureEffC(deptSlot.apparentTempC, sensAdj) : summary.effectiveMinC;
 
   // Find warmest/coldest using EXPOSURE track
@@ -715,8 +716,6 @@ function buildTimeline(
   }
   const tempSwing = maxExp - minExp;
 
-  // Layer guidance uses exposure departure temperature (not destination)
-  const coldAtDeparture = deptExposure <= 14;
   const hasLayer = departureLayers.length > 0 || carryLayers.length > 0;
 
   // Departure layers: must be worn when leaving (cold at departure)
@@ -724,7 +723,7 @@ function buildTimeline(
     guidance.push({
       startTime:   departureIso,
       instruction: `Wear your ${departureLayers.map(l => l.name.toLowerCase()).join(" and ")} — it's cool when you leave.`,
-      reason:      `Outdoor exposure is ${deptExposure.toFixed(0)} °C at departure`,
+      reason:      `Outdoor apparent temperature is ${deptRawApparentC.toFixed(0)} °C at departure`,
     });
   }
 
@@ -734,7 +733,7 @@ function buildTimeline(
       guidance.push({
         startTime:   departureIso,
         instruction: `Pack your ${carryLayers.map(l => l.name.toLowerCase()).join(" and ")} — you won't need it yet but will later.`,
-        reason:      `Outdoor temperature drops to ~${minExp.toFixed(0)} °C later`,
+        reason:      `Outdoor apparent temperature drops to ~${summary.rawMinApparentTempC.toFixed(0)} °C later`,
       });
     } else {
       guidance.push({
@@ -964,8 +963,11 @@ export function planOuting(
   const BOTTOMS_FLOOR_RAW_C = 15;
 
   const spec    = garmentSpec(input.occasion, destWarmBand, profile);
-  // Override the bottom from spec when the floor applies
-  const specBottom = input.occasion !== "gym" && rawMinApparentC <= BOTTOMS_FLOOR_RAW_C && /short/i.test(spec.bottom)
+  // Override the bottom from spec when the floor applies.
+  // At rawMinApparentC ≤ BOTTOMS_FLOOR_RAW_C, ALWAYS use cool-band bottom (guaranteed full-length)
+  // for non-gym occasions regardless of what the warm-band spec produces.
+  // This catches shorts, skirts, and any other non-full-length bottoms — not just names with "short".
+  const specBottom = input.occasion !== "gym" && rawMinApparentC <= BOTTOMS_FLOOR_RAW_C
     ? garmentSpec(input.occasion, "cool", profile).bottom
     : spec.bottom;
 
@@ -974,9 +976,9 @@ export function planOuting(
   // Wardrobe candidates: matchWardrobeItem handles style preference via its bonus score.
   const sortedWardrobe = wardrobeItems;
 
-  // bottomsBand: cap at "cool" when raw outdoor temp is ≤ floor (no shorts at cool-raw temps)
+  // bottomsBand: cap at "cool" when raw outdoor temp is ≤ floor (no shorts/skirts at cool-raw temps)
   const bottomsBand: TempBand =
-    input.occasion !== "gym" && rawMinApparentC <= BOTTOMS_FLOOR_RAW_C && destWarmBand === "warm"
+    input.occasion !== "gym" && rawMinApparentC <= BOTTOMS_FLOOR_RAW_C
       ? "cool"
       : destWarmBand;
 
@@ -990,7 +992,13 @@ export function planOuting(
       name:         matchTop    ? matchTop.name    : spec.top,
       wardrobeId:   matchTop    ? matchTop.id      : null,
       fromWardrobe: !!matchTop,
-      reason:       `Appropriate for the destination (~${destMaxC.toFixed(0)} °C effective indoors)`,
+      reason:       `Appropriate for the destination — ${
+        input.context === "indoors"
+          ? `estimated indoor comfort (~${destMaxC.toFixed(0)} °C)`
+          : input.context === "mixed"
+          ? `personalized destination conditions (~${destMaxC.toFixed(0)} °C)`
+          : `personalized outdoor conditions (~${destMaxC.toFixed(0)} °C)`
+      }`,
     },
     {
       name:         matchBottom ? matchBottom.name : specBottom,
@@ -1032,8 +1040,13 @@ export function planOuting(
       fromWardrobe: !!m,
       reason:       `Outdoor temperature is ~${rawMinApparentC.toFixed(0)} °C — required for commute and return`,
     };
-    // Outer coat is always worn at departure (cold exposure requires it immediately)
-    departureLayers.push(item);
+    // Outer coat: classify by raw departure temperature (Issue 1 fix)
+    // Cold at departure → wear it leaving; warm departure but cold later → pack it
+    if (coldAtDeparture) {
+      departureLayers.push(item);
+    } else {
+      carryLayers.push(item);
+    }
   } else {
     // Check if a carry-layer is warranted by EXPOSURE track.
     // Use raw-apparent band for triggering so that "runs warm" (+sensAdj) cannot
@@ -1086,8 +1099,8 @@ export function planOuting(
       : undefined;
 
   // ── Footwear: driven by EXPOSURE track (outdoor conditions) ─────────────
-  const footwearName = footwearFor(exposureColdBand, input.occasion, profile, slice.hasRain, slice.hasSnow);
-  const matchFoot    = matchWardrobeItem(footwearName, wardrobeItems, usedIds, exposureColdBand);
+  const footwearName = footwearFor(rawColdBand, input.occasion, profile, slice.hasRain, slice.hasSnow);
+  const matchFoot    = matchWardrobeItem(footwearName, wardrobeItems, usedIds, rawColdBand);
   if (matchFoot) usedIds.add(matchFoot.id);
   const footwear: PlannedItem[] = [{
     name:         matchFoot ? matchFoot.name : footwearName,
@@ -1112,7 +1125,7 @@ export function planOuting(
 
   // Gloves required whenever outdoor exposure is sub-zero,
   // regardless of destination context — the commute still happens.
-  if (exposureColdBand === "freezing" || exposureColdBand === "winter") {
+  if (rawColdBand === "freezing" || rawColdBand === "winter") {
     accessories.push({
       name: "Gloves", wardrobeId: null, fromWardrobe: false,
       reason: "Sub-zero outdoor temperatures — gloves required for commute and travel legs",
