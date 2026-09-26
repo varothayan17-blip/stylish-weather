@@ -20,6 +20,7 @@ import { Route as RecommendationRouteImport } from './routes/recommendation'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as PremiumRouteImport } from './routes/premium'
 import { Route as PreferencesRouteImport } from './routes/preferences'
+import { Route as PlanRouteImport } from './routes/plan'
 import { Route as ForecastRouteImport } from './routes/forecast'
 import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
@@ -79,6 +80,11 @@ const PreferencesRoute = PreferencesRouteImport.update({
   path: '/preferences',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlanRoute = PlanRouteImport.update({
+  id: '/plan',
+  path: '/plan',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ForecastRoute = ForecastRouteImport.update({
   id: '/forecast',
   path: '/forecast',
@@ -99,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/forecast': typeof ForecastRoute
+  '/plan': typeof PlanRoute
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
   '/privacy': typeof PrivacyRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/forecast': typeof ForecastRoute
+  '/plan': typeof PlanRoute
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
   '/privacy': typeof PrivacyRoute
@@ -132,6 +140,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/forecast': typeof ForecastRoute
+  '/plan': typeof PlanRoute
   '/preferences': typeof PreferencesRoute
   '/premium': typeof PremiumRoute
   '/privacy': typeof PrivacyRoute
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/'
     | '/about'
     | '/forecast'
+    | '/plan'
     | '/preferences'
     | '/premium'
     | '/privacy'
@@ -166,6 +176,7 @@ export interface FileRouteTypes {
     | '/'
     | '/about'
     | '/forecast'
+    | '/plan'
     | '/preferences'
     | '/premium'
     | '/privacy'
@@ -182,6 +193,7 @@ export interface FileRouteTypes {
     | '/'
     | '/about'
     | '/forecast'
+    | '/plan'
     | '/preferences'
     | '/premium'
     | '/privacy'
@@ -199,6 +211,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AboutRoute: typeof AboutRoute
   ForecastRoute: typeof ForecastRoute
+  PlanRoute: typeof PlanRoute
   PreferencesRoute: typeof PreferencesRoute
   PremiumRoute: typeof PremiumRoute
   PrivacyRoute: typeof PrivacyRoute
@@ -291,6 +304,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PreferencesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/plan': {
+      id: '/plan'
+      path: '/plan'
+      fullPath: '/plan'
+      preLoaderRoute: typeof PlanRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/forecast': {
       id: '/forecast'
       path: '/forecast'
@@ -319,6 +339,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AboutRoute: AboutRoute,
   ForecastRoute: ForecastRoute,
+  PlanRoute: PlanRoute,
   PreferencesRoute: PreferencesRoute,
   PremiumRoute: PremiumRoute,
   PrivacyRoute: PrivacyRoute,

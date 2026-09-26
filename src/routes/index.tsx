@@ -50,6 +50,10 @@ import { MoreVertical, Share2 } from "lucide-react";
 import { shareOrDownload, deduplicateOutfit, resolvedSlotsToDisplayLabels } from "@/lib/shareOutfit";
 import { toast } from "sonner";
 import { OutfitSlotList } from "@/components/OutfitSlotList";
+import { OutingPlannerCard } from "@/components/OutingPlannerCard";
+import { ActivePlanCard } from "@/components/ActivePlanCard";
+import { outingPlanStore, computeAdaptationNote, RECHECK_THROTTLE_MS, type LockedPlan } from "@/lib/outingPlanStore";
+import { fetchOutingForecast, RAIN_CODES } from "@/lib/outingForecast";
 import {
   Wind,
   Droplets,
@@ -163,6 +167,8 @@ function Home() {
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [sourcesOpen,  setSourcesOpen]  = useState(false);
+  // Outing planner — shown only when Premium entitlement is verified
+  const [activePlan, setActivePlan] = useState<LockedPlan | null>(null);
   const overflowTriggerRef = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved,   setSaved]   = useState(false);
@@ -299,6 +305,52 @@ function Home() {
     setRefreshing(true);
     setRefreshTick((t) => t + 1);
   }
+
+  // ── Outing planner: load plan and run home-screen recheck (issue 8) ────
+  // recheckToken replaces a bare boolean so a stale finally block from user A
+  // cannot clear user B's in-flight state. Token matches {uid, planId}.
+  const homeRecheckToken = useRef<{uid:string;planId:string}|null>(null);
+  useEffect(() => {
+    const isPremiumNow = !entitlement.loading && (entitlement as {active?:boolean}).active === true;
+    const planUid = authUid;
+    if (!isPremiumNow || !planUid) {
+      setActivePlan(null);
+      homeRecheckToken.current = null;
+      return;
+    }
+    const p = outingPlanStore.getMostRelevantPlan(planUid);
+    setActivePlan(p);
+    if (!p || !outingPlanStore.needsRecheck(p)) return;
+    // Only start if no token already owns this exact plan
+    if (homeRecheckToken.current?.uid === planUid &&
+        homeRecheckToken.current?.planId === p.id) return;
+    homeRecheckToken.current = { uid: planUid, planId: p.id };
+    const recorded = outingPlanStore.recordAttempt(planUid, p.id);
+    if (recorded) setActivePlan(recorded);
+    fetchOutingForecast(p.snapshot.locationLat, p.snapshot.locationLon,
+      p.snapshot.coverageStart, p.snapshot.coverageEnd)
+      .then(result => {
+        // Guard: both token and UID must still match
+        if (!result.ok ||
+            homeRecheckToken.current?.uid !== planUid ||
+            homeRecheckToken.current?.planId !== p.id) return;
+        const note = computeAdaptationNote(p, result.slice.rawMinApparentC,
+          result.slice.rawMaxApparentC, result.slice.peakPrecipProb,
+          result.slice.hasRain,
+          result.slice.slots.some((s: {code:number}) => RAIN_CODES.has(s.code)));
+        const updated = outingPlanStore.updateAdaptation(planUid, p.id, note);
+        if (updated) setActivePlan(updated);
+      })
+      .catch(() => {})
+      .finally(() => {
+        // Only clear if this request still owns the token
+        if (homeRecheckToken.current?.uid === planUid &&
+            homeRecheckToken.current?.planId === p.id) {
+          homeRecheckToken.current = null;
+        }
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entitlement.loading, (entitlement as {active?: boolean}).active, authUid]);
 
   // ── Visibility / focus refresh with deduplication ────────────────────────
   //
@@ -729,7 +781,22 @@ function Home() {
         </section>
       )}
 
-      {/* AI recommendation */}
+      {/* ── Outing Planner cards ────────────────────────────────────────────
+         ActivePlanCard: locked snapshot, rendered ONLY when entitlement.active.
+         Labelled distinctly: "Your 3–11 PM Work plan" vs "Today's recommendation"
+         so they cannot be confused. Clicking opens /plan. */}
+      {activePlan && activePlan.uid === authUid && !entitlement.loading && (entitlement as {active?:boolean}).active === true && authUid && (
+        <section className="mt-6 animate-fade-up">
+          <ActivePlanCard plan={activePlan} />
+        </section>
+      )}
+      {!activePlan && (
+        <section className="mt-6 animate-fade-up">
+          <OutingPlannerCard />
+        </section>
+      )}
+
+      {/* AI recommendation — current weather, distinct from any locked plan */}
       {rec && weather && (
         <section className="mt-6 animate-fade-up delay-300">
           <div className="mb-3 flex items-center justify-between">
