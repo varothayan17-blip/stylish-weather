@@ -2,7 +2,7 @@
  * wardrobeMatch.ts — Wardrobe Matching v1
  *
  * Pure, deterministic, testable module.
- * No Gemini calls, no network, no AI. No changes to the weather engine.
+ * No AI provider calls, no network. No changes to the weather engine.
  *
  * ── Algorithm ────────────────────────────────────────────────────────────────
  *

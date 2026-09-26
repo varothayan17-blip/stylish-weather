@@ -62,6 +62,8 @@ export default {
         "/api/stripe-webhook",
         "/api/wardrobe/scan",
         "/api/wardrobe/status",
+        "/api/wardrobe/acknowledge",
+        "/api/wardrobe/ack-status",
         "/api/delete-account",
         "/api/reconcile-deletion",
         "/api/radar-now",
@@ -89,6 +91,11 @@ export default {
             headers: { "Content-Type": "application/json" },
           });
         }
+        // GET /api/wardrobe/ack-status — whether user has current acknowledgement
+        if (pathname === "/api/wardrobe/ack-status" && request.method === "GET") {
+          const { handleWardrobeAckStatus } = await getWardrobeHandlers();
+          return await handleWardrobeAckStatus(request);
+        }
         // Reject all non-POST methods explicitly — prevents information disclosure
         // via falling through to TanStack Start router for wrong-method requests.
         if (request.method !== "POST") {
@@ -110,6 +117,10 @@ export default {
         if (pathname === "/api/wardrobe/scan") {
           const { handleWardrobeScan } = await getWardrobeHandlers();
           return await handleWardrobeScan(request);
+        }
+        if (pathname === "/api/wardrobe/acknowledge") {
+          const { handleWardrobeAcknowledge } = await getWardrobeHandlers();
+          return await handleWardrobeAcknowledge(request);
         }
         if (pathname === "/api/delete-account") {
           const { handleDeleteAccount } = await import("./lib/account-deletion-handler");

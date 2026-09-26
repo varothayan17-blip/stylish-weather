@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Sparkles, Shirt } from "lucide-react";
+import { Plus, Sparkles, Shirt, CalendarClock } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { ItemTile } from "@/components/wardrobe/ItemTile";
 import { AddClothingSheet } from "@/components/wardrobe/AddClothingSheet";
@@ -158,6 +158,15 @@ function Wardrobe() {
           </div>
         </section>
       )}
+
+      {/* Plan with my wardrobe shortcut — links to /plan */}
+      <div className="mb-4 animate-fade-up" style={{ animationDelay: "60ms" }}>
+        <Link {...{to: "/plan" as any}}
+          className="flex items-center gap-3 rounded-2xl bg-primary/[0.06] px-4 py-3 ring-1 ring-primary/15 hover:ring-primary/30 transition-all">
+          <CalendarClock className="h-4 w-4 text-primary shrink-0" />
+          <span className="text-sm font-medium text-primary">Plan with my wardrobe</span>
+        </Link>
+      </div>
 
       {items.length > 0 && (
         <div
