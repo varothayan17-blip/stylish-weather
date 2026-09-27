@@ -121,6 +121,13 @@ export async function checkConsentStatusWith(
 // ── submitServerAck ───────────────────────────────────────────────────────────
 
 /**
+ * Diagnostic stage tracker for submitServerAckWith.
+ * Identifies where in the async pipeline an exception occurred so the error
+ * message is stage-specific and no sensitive data (token, UID, body) is logged.
+ */
+type AckStage = "get_auth" | "pre_token" | "get_token" | "fetch" | "parse_response";
+
+/**
  * Testable version of submitServerAck with injected dependencies.
  *
  * Ownership is verified at four points:
@@ -131,6 +138,10 @@ export async function checkConsentStatusWith(
  *
  * Returns { ok: false; reason: "uid_changed" } at any mismatch WITHOUT
  * touching any UI state — the caller is responsible for ignoring the response.
+ *
+ * On unexpected exceptions the stage is logged (safe metadata only — no token,
+ * UID, Authorization header, request body, or secrets) and a stage-specific
+ * user message is returned.
  */
 export async function submitServerAckWith(
   expectedUid: string,
@@ -143,15 +154,18 @@ export async function submitServerAckWith(
     fetchFn: typeof fetch;
   },
 ): Promise<ServerAckResult> {
+  let stage: AckStage = "get_auth";
   try {
     // 1. Pre-token ownership check
     const auth = await deps.getAuth();
+    stage = "pre_token";
     const user = auth?.currentUser;
     if (!user || user.uid !== expectedUid) {
       return { ok: false, reason: "uid_changed" };
     }
 
     // Fetch token
+    stage = "get_token";
     const idToken = await user.getIdToken();
 
     // 2. Post-token ownership check
@@ -160,6 +174,7 @@ export async function submitServerAckWith(
     }
 
     // Make the request
+    stage = "fetch";
     const res = await deps.fetchFn("/api/wardrobe/acknowledge", {
       method: "POST",
       headers: {
@@ -175,6 +190,7 @@ export async function submitServerAckWith(
     }
 
     // Parse response
+    stage = "parse_response";
     const data = await res.json() as { ok: boolean; error?: string };
 
     // 4. Post-JSON ownership check
@@ -186,8 +202,25 @@ export async function submitServerAckWith(
       return { ok: false, error: data.error ?? "Could not save. Please try again." };
     }
     return { ok: true };
-  } catch {
-    return { ok: false, error: "Could not save. Please try again." };
+  } catch (error) {
+    // Log only safe metadata — never token, UID, Authorization header, body, or secrets
+    const err = error as { name?: string; code?: string; message?: string } | null;
+    console.error("[scan-consent] acknowledgement failed", {
+      stage,
+      name: err?.name,
+      code: err?.code,
+      message: err?.message,
+    });
+
+    // Stage-specific user message (no sensitive data)
+    const hint =
+      stage === "get_auth" || stage === "pre_token" || stage === "get_token"
+        ? "Please sign in again and retry."
+        : "Please try again.";
+    return {
+      ok: false,
+      error: `Could not save acknowledgement (${stage}). ${hint}`,
+    };
   }
 }
 

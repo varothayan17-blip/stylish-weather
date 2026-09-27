@@ -21,6 +21,13 @@
  *  B32: submitServerAckWith — uid changes while JSON parsing → response discarded → uid_changed
  *  B33: submitServerAckWith — stable uid + accepted server response → ok:true
  *  B34: submitServerAckWith — server returns ok:false → error string, no uid_changed
+ *  B35: submitServerAckWith — getAuth throws → error result with stage "get_auth", user-safe message
+ *  B36: submitServerAckWith — currentUser is null (not signed in) → uid_changed result, no throw
+ *  B37: submitServerAckWith — getIdToken throws → error result with stage "get_token", user-safe message
+ *  B38: submitServerAckWith — fetch throws (network error) → error result with stage "fetch", user-safe message
+ *  B39: submitServerAckWith — response.json() throws → error result with stage "parse_response", user-safe message
+ *  B40: submitServerAckWith — no token or Authorization value appears in logged error metadata
+ *  B41: submitServerAckWith — stage label present in returned error string, no UID in error string
  */
 
 import { strict as assert } from "node:assert";
@@ -354,6 +361,136 @@ function makeMutableAuth(initialUid: string) {
     !result.ok
     && (result as { ok: false; reason?: string; error?: string }).reason !== "uid_changed"
     && (result as { ok: false; reason?: string; error?: string }).error === "Age not permitted");
+}
+
+// ── Stage-aware error / safe-logging tests (B35–B41) ──────────────────────
+
+section("submitServerAckWith — stage-aware error handling");
+
+// B35: getAuth throws → stage "get_auth", error result with user-safe message
+{
+  const expectedUid = "uid-b35";
+  const result = await submitServerAckWith(expectedUid, "18-plus", false, {
+    getAuth: async () => { throw new Error("Firebase not initialised"); },
+    fetchFn: async () => ({ ok: true, json: async () => ({ ok: true }) } as unknown as Response),
+  });
+  const r = result as { ok: false; reason?: string; error?: string };
+  ok("B35. getAuth throws → ok:false with stage get_auth in message",
+    !result.ok && r.reason !== "uid_changed" &&
+    typeof r.error === "string" && r.error.includes("get_auth"));
+}
+
+// B36: currentUser is null (not signed in) → uid_changed, no throw
+{
+  const expectedUid = "uid-b36";
+  const result = await submitServerAckWith(expectedUid, "18-plus", false, {
+    getAuth: async () => ({ currentUser: null }),
+    fetchFn: async () => ({ ok: true, json: async () => ({ ok: true }) } as unknown as Response),
+  });
+  const r = result as { ok: false; reason?: string };
+  ok("B36. currentUser null → uid_changed, no throw",
+    !result.ok && r.reason === "uid_changed");
+}
+
+// B37: getIdToken throws → stage "get_token", error result with user-safe message
+{
+  const expectedUid = "uid-b37";
+  const result = await submitServerAckWith(expectedUid, "18-plus", false, {
+    getAuth: async () => ({
+      currentUser: {
+        uid: expectedUid,
+        getIdToken: async () => { throw new Error("auth/network-request-failed"); },
+      },
+    }),
+    fetchFn: async () => ({ ok: true, json: async () => ({ ok: true }) } as unknown as Response),
+  });
+  const r = result as { ok: false; reason?: string; error?: string };
+  ok("B37. getIdToken throws → ok:false with stage get_token in message",
+    !result.ok && r.reason !== "uid_changed" &&
+    typeof r.error === "string" && r.error.includes("get_token"));
+}
+
+// B38: fetch throws (network error) → stage "fetch", error result with user-safe message
+{
+  const expectedUid = "uid-b38";
+  const result = await submitServerAckWith(expectedUid, "18-plus", false, {
+    getAuth: async () => ({
+      currentUser: { uid: expectedUid, getIdToken: async () => "token-b38" },
+    }),
+    fetchFn: async () => { throw new TypeError("Failed to fetch"); },
+  });
+  const r = result as { ok: false; reason?: string; error?: string };
+  ok("B38. fetch throws → ok:false with stage fetch in message",
+    !result.ok && r.reason !== "uid_changed" &&
+    typeof r.error === "string" && r.error.includes("fetch"));
+}
+
+// B39: response.json() throws → stage "parse_response", user-safe message
+{
+  const expectedUid = "uid-b39";
+  const result = await submitServerAckWith(expectedUid, "18-plus", false, {
+    getAuth: async () => ({
+      currentUser: { uid: expectedUid, getIdToken: async () => "token-b39" },
+    }),
+    fetchFn: async () => ({
+      ok: true,
+      json: async () => { throw new SyntaxError("Unexpected token"); },
+    } as unknown as Response),
+  });
+  const r = result as { ok: false; reason?: string; error?: string };
+  ok("B39. response.json() throws → ok:false with stage parse_response in message",
+    !result.ok && r.reason !== "uid_changed" &&
+    typeof r.error === "string" && r.error.includes("parse_response"));
+}
+
+// B40: logged error metadata contains no token or Authorization value
+{
+  const expectedUid = "uid-b40";
+  const loggedArgs: unknown[][] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { loggedArgs.push(args); };
+
+  await submitServerAckWith(expectedUid, "18-plus", false, {
+    getAuth: async () => ({
+      currentUser: {
+        uid: expectedUid,
+        getIdToken: async () => { throw new Error("token-request-failed"); },
+      },
+    }),
+    fetchFn: async () => ({ ok: true, json: async () => ({ ok: true }) } as unknown as Response),
+  });
+
+  console.error = origError;
+
+  const logStr = JSON.stringify(loggedArgs);
+  // Must not log any token-shaped strings or Authorization header values
+  const noTokenInLog =
+    !logStr.includes("Bearer ") &&
+    !logStr.includes("Authorization") &&
+    !logStr.includes("token-b40") &&
+    !logStr.includes(expectedUid);  // UID must not appear either
+
+  ok("B40. logged error metadata contains no token, Authorization header, or UID",
+    loggedArgs.length > 0 && noTokenInLog);
+}
+
+// B41: stage label in error string; UID not in error string
+{
+  const expectedUid = "uid-b41-very-specific";
+  const result = await submitServerAckWith(expectedUid, "18-plus", false, {
+    getAuth: async () => ({
+      currentUser: {
+        uid: expectedUid,
+        getIdToken: async () => { throw new Error("network failure"); },
+      },
+    }),
+    fetchFn: async () => ({ ok: true, json: async () => ({ ok: true }) } as unknown as Response),
+  });
+  const r = result as { ok: false; error?: string };
+  ok("B41. error string contains stage label and does not expose UID",
+    typeof r.error === "string" &&
+    r.error.includes("get_token") &&
+    !r.error.includes(expectedUid));
 }
 
 // ── Summary ────────────────────────────────────────────────────────────────
