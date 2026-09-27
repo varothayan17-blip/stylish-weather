@@ -57,7 +57,7 @@ export async function fetchAckStatusWith(
     const idToken = await user.getIdToken();
     // Re-check after async token fetch
     if (auth.currentUser?.uid !== expectedUid) return false;
-    const res = await deps.fetchFn("/api/wardrobe/ack-status", {
+    const res = await deps.fetchFn.call(globalThis, "/api/wardrobe/ack-status", {
       headers: { "Authorization": `Bearer ${idToken}` },
     });
     if (!res.ok) return false;
@@ -175,7 +175,7 @@ export async function submitServerAckWith(
 
     // Make the request
     stage = "fetch";
-    const res = await deps.fetchFn("/api/wardrobe/acknowledge", {
+    const res = await deps.fetchFn.call(globalThis, "/api/wardrobe/acknowledge", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${idToken}`,
