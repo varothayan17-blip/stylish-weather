@@ -85,7 +85,7 @@ import { FaceDetector, FilesetResolver, ObjectDetector } from "@mediapipe/tasks-
 // ── Asset paths ───────────────────────────────────────────────────────────────
 
 const WASM_BASE        = "/mediapipe/wasm";
-const FACE_MODEL_PATH  = "/mediapipe/models/face_detection_short_range.tflite";
+const FACE_MODEL_PATH  = "/mediapipe/models/blaze_face_short_range.tflite";
 const PERSON_MODEL_PATH = "/mediapipe/models/efficientdet_lite0.tflite";
 
 // ── Confidence thresholds ─────────────────────────────────────────────────────
