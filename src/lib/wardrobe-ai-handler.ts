@@ -669,85 +669,96 @@ interface WardrobeScanProvider {
 // ── Anthropic JSON schema (Structured Outputs GA) ────────────────────────────
 
 /**
- * Discriminated-union JSON schema for output_config.format.
- * Accepted branch: status="accepted" + nested analysis object.
- * Rejected branch: status="rejected" + reasonCode enum.
+ * Flat JSON schema for output_config.format.schema (Anthropic Structured Outputs GA).
  *
- * Notes:
- * - additionalProperties: false at every object level
- * - No free-text evidence field (decision a): stripped from schema entirely
- * - oneOf branches are complete — no shared top-level properties
- * - If this schema is rejected by Haiku's grammar compiler (400 "Schema is too
- *   complex"), stop and report the exact error before changing to a weaker schema.
+ * Anthropic does NOT support `oneOf`, `anyOf`, `allOf`, `if/then/else`, or `const`
+ * at schema-evaluation time (400 "Schema type 'oneOf' is not supported").
+ *
+ * Replacement strategy:
+ * - Single flat object with all top-level keys present.
+ * - `status` is an enum discriminator: "accepted" | "rejected".
+ * - `analysis` and `reasonCode` are both declared as optional properties.
+ * - Runtime validation (validateScanResult / validateClothingAnalysis) is unchanged
+ *   and enforces the discriminated-union constraint after parsing.
+ *
+ * Supported keywords (Anthropic Structured Outputs GA):
+ *   type, properties, required, additionalProperties, enum, items.
+ * NOT used (unsupported and omitted):
+ *   oneOf, anyOf, allOf, const, if/then/else, $ref, not, pattern (regex),
+ *   format, unevaluatedProperties, minimum, maximum, minLength, maxLength,
+ *   maxItems, minItems, multipleOf.
+ * Range / length / array-size constraints are enforced by runtime validation
+ * (validateScanResult / validateClothingAnalysis) after JSON parsing.
  */
 const SCAN_JSON_SCHEMA = {
   type: "object",
-  oneOf: [
-    {
+  additionalProperties: false,
+  required: ["status"],
+  properties: {
+    // Discriminator — always present.
+    // "accepted" → analysis must be populated; reasonCode is absent.
+    // "rejected" → reasonCode must be populated; analysis is absent.
+    status: {
+      type: "string",
+      enum: ["accepted", "rejected"],
+    },
+
+    // Present only when status="accepted".
+    analysis: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "name", "category", "subcategory", "primaryColor", "secondaryColors",
+        "pattern", "materialEstimate", "layerRole", "warmth",
+        "waterResistance", "windProtection", "weatherFit", "styles",
+        "seasons", "fitEstimate", "confidence",
+      ],
       properties: {
-        status:   { type: "string", const: "accepted" },
-        analysis: {
+        name:             { type: "string" },
+        category:         { type: "string", enum: ["tops","bottoms","outerwear","shoes","accessories","dress","other"] },
+        subcategory:      { type: "string" },
+        primaryColor:     { type: "string" },
+        secondaryColors:  { type: "array", items: { type: "string" } },
+        pattern:          { type: "string", enum: ["solid","striped","checked","graphic","patterned","other"] },
+        materialEstimate: { type: "array", items: { type: "string" } },
+        layerRole:        { type: "string", enum: ["base","mid","outer","standalone"] },
+        warmth: {
           type: "object",
           additionalProperties: false,
-          required: [
-            "name","category","subcategory","primaryColor","secondaryColors",
-            "pattern","materialEstimate","layerRole","warmth",
-            "waterResistance","windProtection","weatherFit","styles",
-            "seasons","fitEstimate","confidence",
-          ],
+          required: ["score", "label"],
           properties: {
-            name:             { type: "string", maxLength: 120 },
-            category:         { type: "string", enum: ["tops","bottoms","outerwear","shoes","accessories","dress","other"] },
-            subcategory:      { type: "string", maxLength: 60 },
-            primaryColor:     { type: "string", maxLength: 60 },
-            secondaryColors:  { type: "array",  items: { type: "string", maxLength: 60 }, maxItems: 8 },
-            pattern:          { type: "string", enum: ["solid","striped","checked","graphic","patterned","other"] },
-            materialEstimate: { type: "array",  items: { type: "string", maxLength: 80 }, maxItems: 8 },
-            layerRole:        { type: "string", enum: ["base","mid","outer","standalone"] },
-            warmth: {
-              type: "object", additionalProperties: false,
-              required: ["score","label"],
-              properties: {
-                score: { type: "number", minimum: 1, maximum: 5 },
-                label: { type: "string", enum: ["very-light","light","medium","warm","very-warm"] },
-              },
-            },
-            waterResistance:  { type: "string", enum: ["none","low","medium","high","unknown"] },
-            windProtection:   { type: "string", enum: ["low","medium","high","unknown"] },
-            weatherFit:       { type: "array",  items: { type: "string", maxLength: 40 }, maxItems: 8 },
-            styles:           { type: "array",  items: { type: "string", maxLength: 40 }, maxItems: 8 },
-            seasons:          { type: "array",  items: { type: "string", maxLength: 20 }, maxItems: 8 },
-            fitEstimate:      { type: "string", enum: ["slim","regular","relaxed","oversized","unknown"] },
-            confidence: {
-              type: "object", additionalProperties: false,
-              required: ["category","color","material","warmth","waterResistance","style"],
-              properties: {
-                category:        { type: "number", minimum: 0, maximum: 1 },
-                color:           { type: "number", minimum: 0, maximum: 1 },
-                material:        { type: "number", minimum: 0, maximum: 1 },
-                warmth:          { type: "number", minimum: 0, maximum: 1 },
-                waterResistance: { type: "number", minimum: 0, maximum: 1 },
-                style:           { type: "number", minimum: 0, maximum: 1 },
-              },
-            },
+            score: { type: "number" },
+            label: { type: "string", enum: ["very-light","light","medium","warm","very-warm"] },
+          },
+        },
+        waterResistance: { type: "string", enum: ["none","low","medium","high","unknown"] },
+        windProtection:  { type: "string", enum: ["low","medium","high","unknown"] },
+        weatherFit:      { type: "array", items: { type: "string" } },
+        styles:          { type: "array", items: { type: "string" } },
+        seasons:         { type: "array", items: { type: "string" } },
+        fitEstimate:     { type: "string", enum: ["slim","regular","relaxed","oversized","unknown"] },
+        confidence: {
+          type: "object",
+          additionalProperties: false,
+          required: ["category","color","material","warmth","waterResistance","style"],
+          properties: {
+            category:        { type: "number" },
+            color:           { type: "number" },
+            material:        { type: "number" },
+            warmth:          { type: "number" },
+            waterResistance: { type: "number" },
+            style:           { type: "number" },
           },
         },
       },
-      required: ["status","analysis"],
-      additionalProperties: false,
     },
-    {
-      properties: {
-        status:     { type: "string", const: "rejected" },
-        reasonCode: {
-          type: "string",
-          enum: ["person_present","multiple_items","id_or_document","unsafe_content","not_clothing","unusable_image"],
-        },
-      },
-      required: ["status","reasonCode"],
-      additionalProperties: false,
+
+    // Present only when status="rejected".
+    reasonCode: {
+      type: "string",
+      enum: ["person_present","multiple_items","id_or_document","unsafe_content","not_clothing","unusable_image"],
     },
-  ],
+  },
 } as const;
 
 // ── Anthropic system prompt ───────────────────────────────────────────────────

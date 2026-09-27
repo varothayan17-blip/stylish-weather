@@ -997,6 +997,84 @@ ok("20g. New item simulation: wardrobeStore strips evidence before persisting",
   })());
 
 // ════════════════════════════════════════════════════════════════════════════
+// 22. Anthropic output schema — no unsupported keywords
+// ════════════════════════════════════════════════════════════════════════════
+console.log("\n── 22. Anthropic output schema keywords ──────────────────────────");
+
+// Extract SCAN_JSON_SCHEMA literal from source and evaluate it
+const schemaMatch = handlerSrc.match(
+  /const SCAN_JSON_SCHEMA\s*=\s*(\{[\s\S]*?\}) as const;/
+);
+ok("22a. SCAN_JSON_SCHEMA constant found in source", !!schemaMatch);
+
+if (schemaMatch) {
+  let schema;
+  try {
+    const cleaned = schemaMatch[1].replace(/,(\s*[}\]])/g, "$1");
+    schema = Function(`"use strict"; return (${cleaned});`)();
+  } catch (e) {
+    ok("22a2. SCAN_JSON_SCHEMA parseable as object literal", false, e.message);
+  }
+
+  if (schema) {
+    /**
+     * Walk every key in a JSON Schema tree.
+     * insidePropertiesBlock=true when the parent key was 'properties' —
+     * meaning the current key is an APPLICATION field name, not a keyword.
+     */
+    function walkSchemaKeys(obj, insidePropertiesBlock, fn) {
+      if (!obj || typeof obj !== "object") return;
+      if (Array.isArray(obj)) { obj.forEach(i => walkSchemaKeys(i, false, fn)); return; }
+      for (const [k, v] of Object.entries(obj)) {
+        fn(k, insidePropertiesBlock);
+        walkSchemaKeys(v, k === "properties", fn);
+      }
+    }
+
+    const schemaKeywords = new Set();
+    const appNames       = new Set();
+    walkSchemaKeys(schema, false, (k, inProps) => {
+      if (inProps) appNames.add(k); else schemaKeywords.add(k);
+    });
+
+    ok("22b. schema contains no 'oneOf'",         !schemaKeywords.has("oneOf"));
+    ok("22c. schema contains no 'anyOf'",         !schemaKeywords.has("anyOf"));
+    ok("22d. schema contains no 'allOf'",         !schemaKeywords.has("allOf"));
+    ok("22e. schema contains no '$ref'",          !schemaKeywords.has("$ref"));
+    ok("22f. schema contains no 'const'",         !schemaKeywords.has("const"));
+    ok("22g. schema contains no 'if'",            !schemaKeywords.has("if"));
+    ok("22h. schema contains no 'pattern' (regex keyword)", !schemaKeywords.has("pattern"));
+    ok("22i. schema contains no 'format'",        !schemaKeywords.has("format"));
+    ok("22j. schema contains no 'not'",           !schemaKeywords.has("not"));
+    ok("22k. schema contains no 'unevaluatedProperties'", !schemaKeywords.has("unevaluatedProperties"));
+    ok("22l. schema contains no 'minimum'",       !schemaKeywords.has("minimum"));
+    ok("22m. schema contains no 'maximum'",       !schemaKeywords.has("maximum"));
+    ok("22n. schema contains no 'minLength'",     !schemaKeywords.has("minLength"));
+    ok("22o. schema contains no 'maxLength'",     !schemaKeywords.has("maxLength"));
+    ok("22p. schema contains no 'maxItems'",      !schemaKeywords.has("maxItems"));
+    ok("22q. schema contains no 'minItems'",      !schemaKeywords.has("minItems"));
+    ok("22r. schema contains no 'multipleOf'",    !schemaKeywords.has("multipleOf"));
+    ok("22s. application field 'pattern' (clothing attr) is present", appNames.has("pattern"));
+    ok("22t. top-level type is 'object'",         schema.type === "object");
+    ok("22u. top-level additionalProperties is false", schema.additionalProperties === false);
+    ok("22v. top-level required includes 'status'",
+      Array.isArray(schema.required) && schema.required.includes("status"));
+    ok("22w. status enum contains 'accepted' and 'rejected'",
+      schema.properties?.status?.type === "string" &&
+      Array.isArray(schema.properties?.status?.enum) &&
+      schema.properties.status.enum.includes("accepted") &&
+      schema.properties.status.enum.includes("rejected"));
+    ok("22x. analysis is optional (not in top-level required)",
+      !!schema.properties?.analysis && !(schema.required ?? []).includes("analysis"));
+    ok("22y. reasonCode is optional string enum",
+      schema.properties?.reasonCode?.type === "string" &&
+      Array.isArray(schema.properties?.reasonCode?.enum) &&
+      !(schema.required ?? []).includes("reasonCode"));
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
 // 21. Notices file and version pinning
 // ════════════════════════════════════════════════════════════════════════════
 console.log("\n── 21. Notices and version pin ──────────────────────────────");
