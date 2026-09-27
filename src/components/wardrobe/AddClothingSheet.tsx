@@ -32,7 +32,14 @@ import {
   Camera, ImageIcon, X, Sparkles, Check, AlertCircle,
   RefreshCw, PenLine, ChevronLeft,
 } from "lucide-react";
+import { ScanConsentSheet } from "./ScanConsentSheet";
 import { CATEGORIES, type WardrobeItem, type WardrobeCategory } from "./wardrobeData";
+import {
+  resolvePickerRequestWith,
+  resolveConsentComplete,
+  resolveAuthSwitch,
+  type AckCache,
+} from "@/lib/pickerConsentLogic";
 
 // ── Controlled garment types ──────────────────────────────────────────────
 // Each type string contains a specific token present in production slot strings
@@ -124,9 +131,10 @@ const GARMENT_TYPES: Record<WardrobeCategory, GarmentTypeEntry[]> = {
 function defaultGarmentType(cat: WardrobeCategory): string {
   return GARMENT_TYPES[cat][0]?.type ?? cat;
 }
-import type { ClothingAnalysis, ScanStep, ScannerAgeBand } from "@/lib/wardrobe-types";
-import { SCANNER_ACK_VERSION } from "@/lib/wardrobe-types";
+import type { ClothingAnalysis, ScanStep } from "@/lib/wardrobe-types";
 import { getFirebaseAuth } from "@/lib/firebase";
+import { getUid, subscribeToAuthState } from "@/lib/auth";
+import { fetchAckStatus, checkConsentStatus } from "@/lib/scanConsentApi";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -170,55 +178,6 @@ async function compressImage(file: File): Promise<{ blob: Blob; objectUrl: strin
     img.onerror = () => { URL.revokeObjectURL(rawUrl); reject(new Error("Could not decode image")); };
     img.src = rawUrl;
   });
-}
-
-// ── Scanner acknowledgement API ───────────────────────────────────────────
-
-/**
- * Check whether the current user has completed the scanner acknowledgement.
- */
-async function fetchAckStatus(): Promise<boolean> {
-  try {
-    const auth = await getFirebaseAuth();
-    const user = auth?.currentUser;
-    if (!user) return false;
-    const idToken = await user.getIdToken();
-    const res = await fetch("/api/wardrobe/ack-status", {
-      headers: { "Authorization": `Bearer ${idToken}` },
-    });
-    if (!res.ok) return false;
-    const data = await res.json() as { acknowledged?: boolean };
-    return data.acknowledged === true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Submit the scanner acknowledgement to the server.
- */
-async function submitAcknowledgement(
-  ageBand: ScannerAgeBand,
-  guardianPermissionConfirmed: boolean,
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const auth = await getFirebaseAuth();
-    const user = auth?.currentUser;
-    if (!user) return { ok: false, error: "Please sign in to continue." };
-    const idToken = await user.getIdToken();
-    const res = await fetch("/api/wardrobe/acknowledge", {
-      method:  "POST",
-      headers: {
-        "Authorization": `Bearer ${idToken}`,
-        "Content-Type":  "application/json",
-      },
-      body: JSON.stringify({ ageBand, guardianPermissionConfirmed }),
-    });
-    const data = await res.json() as { ok: boolean; error?: string };
-    return data;
-  } catch {
-    return { ok: false, error: "Could not save acknowledgement. Please try again." };
-  }
 }
 
 // ── Wardrobe scanning status ───────────────────────────────────────────────
@@ -420,6 +379,10 @@ function manualToItem(f: ManualFields): Omit<WardrobeItem, "id"> {
   };
 }
 
+// ── Auth sentinel (module-level, stable across renders) ───────────────────
+// Used by observedAuthUidRef to detect first (initial) auth emission.
+const INITIAL_AUTH_SENTINEL = Symbol("initial");
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function AddClothingSheet({
@@ -431,7 +394,9 @@ export function AddClothingSheet({
   onClose: () => void;
   onAdd:   (item: Omit<WardrobeItem, "id">) => void;
 }) {
-  const [step, setStep]         = useState<ScanStep>("pick");
+  // V4: initial step is "status-check" — camera/library UI must not render
+  // until fetchScanningStatus confirms enabled=true (fail-closed).
+  const [step, setStep]         = useState<ScanStep>("status-check");
   const [previewUrl, setPreview] = useState<string | null>(null);
   const [imageBlob, setBlob]    = useState<Blob | null>(null);
   const [analysis, setAnalysis] = useState<ClothingAnalysis | null>(null);
@@ -439,13 +404,15 @@ export function AddClothingSheet({
   const [error, setError]       = useState<string | null>(null);
   const [isQuotaError, setIsQuota] = useState(false);
 
-  // Scanner acknowledgement state
-  const [ackAgeBand,       setAckAgeBand]       = useState<ScannerAgeBand | null>(null);
-  const [ackGuardian,      setAckGuardian]       = useState(false);
-  const [ackAllItems,      setAckAllItems]       = useState(false);
-  const [ackSubmitting,    setAckSubmitting]     = useState(false);
-  const [ackError,         setAckError]          = useState<string | null>(null);
-  const ackCheckedRef = useRef<boolean | null>(null); // cached per session
+  // Consent state — tracks whether current user has completed scan setup.
+  // Stored in a mutable ref object (AckCache) so resolvePickerRequestWith
+  // can mutate it synchronously without a re-render cycle.
+  const ackCacheRef = useRef<AckCache>({ checked: null, uid: null });
+
+  // Whether the consent setup sheet is open
+  const [consentSheetOpen, setConsentSheetOpen] = useState(false);
+  // UID of the user for whom the consent sheet was opened (ownership guard)
+  const [consentSheetUid, setConsentSheetUid] = useState<string | null>(null);
 
   // Manual entry form
   const [manual, setManual]         = useState<ManualFields>(MANUAL_DEFAULTS);
@@ -454,6 +421,46 @@ export function AddClothingSheet({
 
   // Scanning availability — checked once per sheet session on open.
   const scanEnabledRef = useRef<boolean | null>(null);
+
+  // Pending picker action — remembered when consent is required mid-flow.
+  const pendingPickerAction = useRef<"camera" | "library" | null>(null);
+
+  // pickerReadyAction — set AFTER consent completes; triggers a fresh synchronous
+  // CTA button so input.click() is called from a real user gesture (item 1).
+  const [pickerReadyAction, setPickerReadyAction] = useState<"camera" | "library" | null>(null);
+
+  // V4: consentJustCompleted — distinguishes "newly set up" from "already had consent"
+  // for picker-ready wording (Item 8).
+  const [consentJustCompleted, setConsentJustCompleted] = useState(false);
+
+  // V4: resumeAfterConsent — stores blob for ack-required mid-analysis recovery.
+  // When server returns ack-required for a stable UID, we preserve the blob here.
+  // After consent completes for that same UID, we return to step="preview" (Item 5).
+  const resumeAfterConsent = useRef<{ uid: string; blob: Blob } | null>(null);
+
+  // V4: analysisRequestIdRef — stale success/error responses cannot update UI
+  // for a different account/request (Item 4).
+  const analysisRequestIdRef = useRef(0);
+
+  // V5: fileRequestIdRef — incremented on every new file selection, UID change,
+  // sheet close, reset and goToManual. Guards handleFileChange so compressed
+  // results from a prior selection or a prior account never update state.
+  const fileRequestIdRef = useRef(0);
+
+  // V5: selectedFileOwnerUidRef — the UID verified at the moment the picker was
+  // opened. handleFileChange rejects any compressed result if the current UID
+  // no longer equals this value.
+  const selectedFileOwnerUidRef = useRef<string | null>(null);
+
+  // V5: pickerRequestIdRef — incremented on every new picker request, UID change,
+  // sheet close, reset and goToManual. Guards handlePickerRequest so a stale
+  // resolvePickerRequestWith result cannot open consent or picker-ready for the
+  // wrong account.
+  const pickerRequestIdRef = useRef(0);
+
+  // V4: observedAuthUidRef with initial-emission sentinel — first auth callback
+  // only records the UID; it must not override scanner status step (Item 2).
+  const observedAuthUidRef = useRef<string | null | typeof INITIAL_AUTH_SENTINEL>(INITIAL_AUTH_SENTINEL);
 
   // Hidden file inputs
   const cameraInputRef  = useRef<HTMLInputElement>(null);
@@ -467,7 +474,8 @@ export function AddClothingSheet({
   // Reset all state when sheet closes
   useEffect(() => {
     if (!open) {
-      setStep("pick");
+      // V4: reset to "status-check" (fail-closed), never "pick"
+      setStep("status-check");
       setAnalysis(null);
       setDraft(null);
       setError(null);
@@ -475,36 +483,32 @@ export function AddClothingSheet({
       setBlob(null);
       setManual(MANUAL_DEFAULTS);
       setManualErr({});
-      setAckAgeBand(null);
-      setAckGuardian(false);
-      setAckAllItems(false);
-      setAckSubmitting(false);
-      setAckError(null);
-      scanEnabledRef.current = null;
-      ackCheckedRef.current  = null;
+      setConsentSheetOpen(false);
+      setConsentSheetUid(null);
+      scanEnabledRef.current           = null;
+      ackCacheRef.current              = { checked: null, uid: null };
+      pendingPickerAction.current      = null;
+      setPickerReadyAction(null);
+      setConsentJustCompleted(false);
+      resumeAfterConsent.current       = null;
+      analysisRequestIdRef.current    += 1; // invalidate any in-flight analysis
+      fileRequestIdRef.current        += 1; // invalidate any in-flight compression
+      selectedFileOwnerUidRef.current  = null;
+      pickerRequestIdRef.current      += 1; // invalidate any in-flight picker request
+      observedAuthUidRef.current       = INITIAL_AUTH_SENTINEL; // reset sentinel on close
       if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreview(null); }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Check scanning availability (and ack status) when sheet opens.
+  // Check scanning availability when sheet opens.
+  // Consent is checked lazily when the user taps Take photo / Choose photo.
   // Camera is never triggered during this check.
   useEffect(() => {
     if (!open) return;
     if (scanEnabledRef.current !== null) {
       if (step === "status-check") {
-        if (!scanEnabledRef.current) { setStep("scan-unavailable"); return; }
-        // If scanning enabled but ack not yet checked, check now
-        if (ackCheckedRef.current === null) {
-          let cancelled = false;
-          fetchAckStatus().then((acknowledged) => {
-            if (cancelled) return;
-            ackCheckedRef.current = acknowledged;
-            setStep(acknowledged ? "pick" : "ack-required");
-          });
-          return () => { cancelled = true; };
-        }
-        setStep(ackCheckedRef.current ? "pick" : "ack-required");
+        setStep(scanEnabledRef.current ? "pick" : "scan-unavailable");
       }
       return;
     }
@@ -513,15 +517,72 @@ export function AddClothingSheet({
     fetchScanningStatus().then((enabled) => {
       if (cancelled) return;
       scanEnabledRef.current = enabled;
-      if (!enabled) { setStep("scan-unavailable"); return; }
-      // Scanning is enabled — check ack status
-      fetchAckStatus().then((acknowledged) => {
-        if (cancelled) return;
-        ackCheckedRef.current = acknowledged;
-        setStep(acknowledged ? "pick" : "ack-required");
-      });
+      setStep(enabled ? "pick" : "scan-unavailable");
     });
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Subscribe to auth state changes while sheet is open.
+  // V4: Uses observedAuthUidRef with initial-emission sentinel.
+  //   - First emission records the UID only; it must NOT override "status-check" step.
+  //   - Subsequent UID changes: clear image/preview/analysis/draft + consent state;
+  //     use resolveAuthSwitch (respects scanEnabledRef) to determine new step.
+  // Fixes the cleanup race: if the effect is cleaned up before subscribeToAuthState
+  // resolves, the returned unsubscribe function is called immediately.
+  useEffect(() => {
+    if (!open) return;
+    let unsub: (() => void) | undefined;
+    let cleanedUp = false;
+    subscribeToAuthState((uid) => {
+      const prev = observedAuthUidRef.current;
+
+      if (prev === INITIAL_AUTH_SENTINEL) {
+        // First emission: record UID but do NOT change step — scanner check owns step now
+        observedAuthUidRef.current = uid;
+        return;
+      }
+
+      // Genuine UID change (including sign-out)
+      if (uid !== prev) {
+        observedAuthUidRef.current = uid;
+
+        // Clear all image/analysis state
+        setBlob(null);
+        setAnalysis(null);
+        setDraft(null);
+        setError(null);
+        setIsQuota(false);
+        setPreview((prevUrl) => { if (prevUrl) URL.revokeObjectURL(prevUrl); return null; });
+
+        // Clear consent + pending state
+        setConsentSheetOpen(false);
+        setConsentSheetUid(null);
+        pendingPickerAction.current      = null;
+        setPickerReadyAction(null);
+        setConsentJustCompleted(false);
+        resumeAfterConsent.current       = null;
+        analysisRequestIdRef.current    += 1;
+        fileRequestIdRef.current        += 1; // V5: invalidate in-flight compression
+        selectedFileOwnerUidRef.current  = null;
+        pickerRequestIdRef.current      += 1; // V5: invalidate in-flight picker request
+
+        // Use resolveAuthSwitch so step respects scanner status
+        const newState = resolveAuthSwitch(uid, ackCacheRef.current, scanEnabledRef.current);
+        setStep(newState.step);
+      }
+    }).then((fn) => {
+      if (cleanedUp) {
+        // Effect was cleaned up before promise resolved — unsubscribe immediately
+        fn();
+      } else {
+        unsub = fn;
+      }
+    });
+    return () => {
+      cleanedUp = true;
+      unsub?.();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -534,21 +595,43 @@ export function AddClothingSheet({
     }
   }, [step]);
 
-  // Keyboard: Escape closes
+  // Keyboard: Escape closes (but not when consent sheet is handling it)
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (consentSheetOpen) return; // let Radix Sheet handle Escape
+      if (e.key === "Escape") onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, consentSheetOpen]);
 
   if (!open) return null;
 
   // ── File selection ───────────────────────────────────────────────────
+  // V5: Guards against A→B UID switches and multiple rapid file selections
+  // while compression is in flight.
+  //   - fileRequestIdRef: monotonic counter; stale compression results are discarded.
+  //   - selectedFileOwnerUidRef: UID verified before picker was opened; file from
+  //     user A must not appear after switching to user B.
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+
+    // Capture request ID and expected owner for this file selection.
+    const myFileRequestId    = ++fileRequestIdRef.current;
+    const expectedOwnerUid   = selectedFileOwnerUidRef.current;
+
+    // Verify the current UID still matches the picker owner before doing any work.
+    const currentUidAtSelect = await getUid();
+    if (fileRequestIdRef.current !== myFileRequestId) return; // superseded
+    if (!currentUidAtSelect || currentUidAtSelect !== expectedOwnerUid) {
+      // UID changed between picker open and file selection — discard silently.
+      return;
+    }
+
+    // Show immediate preview (raw) while compression runs
     const rawUrl = URL.createObjectURL(file);
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreview(rawUrl);
@@ -557,25 +640,79 @@ export function AddClothingSheet({
     setDraft(null);
     setError(null);
     setIsQuota(false);
-    setStep("preview");
+    setStep("compressing");
+
+    let compressedBlob: Blob | null = null;
+    let compressedUrl: string | null = null;
+    let compressionFailed = false;
     try {
-      setStep("compressing");
       const { blob, objectUrl } = await compressImage(file);
-      URL.revokeObjectURL(rawUrl);
-      setPreview(objectUrl);
-      setBlob(blob);
-      setStep("preview");
+      compressedBlob = blob;
+      compressedUrl  = objectUrl;
     } catch {
+      compressionFailed = true;
+    }
+
+    // After compressImage resolves/rejects — verify request ID, open state and UID
+    if (fileRequestIdRef.current !== myFileRequestId) {
+      // Superseded by a newer selection, a UID switch or sheet close.
+      // Revoke any URLs we created for this stale result.
+      if (compressedUrl) URL.revokeObjectURL(compressedUrl);
+      URL.revokeObjectURL(rawUrl);
+      return;
+    }
+    if (!open) {
+      if (compressedUrl) URL.revokeObjectURL(compressedUrl);
+      URL.revokeObjectURL(rawUrl);
+      return;
+    }
+    const uidAfterCompress = await getUid();
+    if (fileRequestIdRef.current !== myFileRequestId) {
+      if (compressedUrl) URL.revokeObjectURL(compressedUrl);
+      URL.revokeObjectURL(rawUrl);
+      return;
+    }
+    if (!uidAfterCompress || uidAfterCompress !== expectedOwnerUid) {
+      // Account switched during compression — discard and revoke.
+      if (compressedUrl) URL.revokeObjectURL(compressedUrl);
+      URL.revokeObjectURL(rawUrl);
+      return;
+    }
+
+    // Safe to update UI — this result belongs to the current user/request.
+    if (compressionFailed) {
+      URL.revokeObjectURL(rawUrl);
+      // Keep rawUrl-based preview or fall back to file as blob
+      setPreview(URL.createObjectURL(file));
       setBlob(file);
+      setStep("preview");
+    } else {
+      URL.revokeObjectURL(rawUrl);
+      setPreview(compressedUrl!);
+      setBlob(compressedBlob!);
       setStep("preview");
     }
   }
 
   // ── Analyze ──────────────────────────────────────────────────────────
+  // V4: Captures ownerUid before analysis begins; verifies after every await.
+  // Uses analysisRequestIdRef so stale responses cannot update UI for another account.
   async function analyze() {
     if (!imageBlob) return;
     setError(null);
     setIsQuota(false);
+
+    // V4: Capture analysis ownership before any async work
+    const myRequestId = ++analysisRequestIdRef.current;
+    const ownerUid = await getUid();
+    if (analysisRequestIdRef.current !== myRequestId) return; // stale
+    if (!ownerUid) {
+      setStep("sign-in-required");
+      return;
+    }
+
+    // Capture blob reference for ack-required recovery
+    const capturedBlob = imageBlob;
 
     // ── Local on-device detection ───────────────────────────────────────
     // Privacy safeguard: detect faces/persons before the image leaves the device.
@@ -585,6 +722,14 @@ export function AddClothingSheet({
     setStep("detecting");
     try {
       const bitmap = await createImageBitmap(imageBlob).catch(() => null);
+
+      // V5: Guard after createImageBitmap — A→B switch during decoding must not
+      // update B's UI with A's error/detection results.
+      if (analysisRequestIdRef.current !== myRequestId) {
+        bitmap?.close(); // dispose if we got one before the guard
+        return;
+      }
+
       if (!bitmap) {
         // Cannot decode image for detection — block upload
         setError("Could not process image for screening. Please try another photo.");
@@ -606,9 +751,17 @@ export function AddClothingSheet({
 
       // Dynamic import — localDetector is not in the initial bundle
       const { runLocalDetection } = await import("@/lib/localDetector");
+
+      // V5: Guard after dynamic import (async — UID may have changed)
+      if (analysisRequestIdRef.current !== myRequestId) return;
+
       const detection = await runLocalDetection(offscreen);
       // offscreen canvas is a temporary DOM element; no explicit cleanup needed
       // (no object URLs or persistent references held)
+
+      // V5: Guard after runLocalDetection — person/face/error result from A must
+      // not overwrite B's UI after a UID switch during detection.
+      if (analysisRequestIdRef.current !== myRequestId) return;
 
       if (!detection.ok) {
         if (detection.reason === "face" || detection.reason === "person") {
@@ -625,9 +778,23 @@ export function AddClothingSheet({
         }
       }
     } catch {
+      // V5: Guard after catch — unexpected error during module load or detection
+      if (analysisRequestIdRef.current !== myRequestId) return;
       // Unexpected error loading the detector module itself
       setError("Could not initialize safety screening. Please try again.");
       setStep("error");
+      return;
+    }
+
+    // V4: Verify ownership after local detection completed
+    if (analysisRequestIdRef.current !== myRequestId) return;
+    const midUid = await getUid();
+    if (analysisRequestIdRef.current !== myRequestId) return;
+    if (midUid !== ownerUid) {
+      // Account switched mid-detection — clear state, do not proceed
+      setBlob(null);
+      setPreview((url) => { if (url) URL.revokeObjectURL(url); return null; });
+      setStep(midUid ? (scanEnabledRef.current ? "pick" : "scan-unavailable") : "sign-in-required");
       return;
     }
 
@@ -635,16 +802,54 @@ export function AddClothingSheet({
     setStep("analyzing");
     try {
       const result = await scanWithAI(imageBlob);
+
+      // V4: Verify ownership after AI scan
+      if (analysisRequestIdRef.current !== myRequestId) return;
+      const afterScanUid = await getUid();
+      if (analysisRequestIdRef.current !== myRequestId) return;
+      if (afterScanUid !== ownerUid) {
+        setBlob(null);
+        setPreview((url) => { if (url) URL.revokeObjectURL(url); return null; });
+        setStep(afterScanUid ? (scanEnabledRef.current ? "pick" : "scan-unavailable") : "sign-in-required");
+        return;
+      }
+
       setAnalysis(result);
       setDraft(analysisToItem(result));
       setStep("confirm");
     } catch (err) {
+      if (analysisRequestIdRef.current !== myRequestId) return;
+
       const code = err instanceof Error && "code" in err
         ? (err as { code?: string }).code : undefined;
       setError(err instanceof Error ? err.message : "Analysis failed.");
       setIsQuota(code === "quota");
-      // If server returns ack-required, show the ack step (user may have cleared session)
-      if (code === "ack") { ackCheckedRef.current = false; setStep("ack-required"); return; }
+
+      // V4: If server returns ack-required for a stable owner UID:
+      //   - preserve blob in resumeAfterConsent (user does not re-select)
+      //   - verify UID is still the owner before opening consent
+      if (code === "ack") {
+        ackCacheRef.current = { checked: false, uid: null };
+        const uid = await getUid();
+        if (analysisRequestIdRef.current !== myRequestId) return;
+        if (!uid) {
+          setStep("sign-in-required");
+          return;
+        }
+        if (uid !== ownerUid) {
+          // Account changed during analysis — clear image, do not open consent for wrong user
+          setBlob(null);
+          setPreview((url) => { if (url) URL.revokeObjectURL(url); return null; });
+          setStep(scanEnabledRef.current ? "pick" : "scan-unavailable");
+          return;
+        }
+        // Stable owner UID — preserve blob for post-consent resume
+        resumeAfterConsent.current = { uid: ownerUid, blob: capturedBlob };
+        setConsentSheetUid(uid);
+        setConsentSheetOpen(true);
+        setStep("ack-required");
+        return;
+      }
       setStep("error");
     }
   }
@@ -670,13 +875,74 @@ export function AddClothingSheet({
     setDraft(null);
     setError(null);
     setIsQuota(false);
+    // V4/V5: clear all pending consent/picker/file state on reset
+    pendingPickerAction.current      = null;
+    setPickerReadyAction(null);
+    setConsentJustCompleted(false);
+    resumeAfterConsent.current       = null;
+    analysisRequestIdRef.current    += 1;
+    fileRequestIdRef.current        += 1; // V5
+    selectedFileOwnerUidRef.current  = null;
+    pickerRequestIdRef.current      += 1; // V5
     setStep("pick");
   }
 
   function goToManual() {
+    // V4/V5: clear pending consent/picker/file state when going manual
+    pendingPickerAction.current      = null;
+    setPickerReadyAction(null);
+    setConsentJustCompleted(false);
+    resumeAfterConsent.current       = null;
+    fileRequestIdRef.current        += 1; // V5: invalidate in-flight compression
+    selectedFileOwnerUidRef.current  = null;
+    pickerRequestIdRef.current      += 1; // V5: invalidate in-flight picker request
     setManual(MANUAL_DEFAULTS);
     setManualErr({});
     setStep("manual");
+  }
+
+  // ── Picker request (consent-guarded) ──────────────────────────────────
+  // V4/V5: Uses resolvePickerRequestWith from pickerConsentLogic.ts.
+  // V5: pickerRequestIdRef ensures a stale result (from before a UID change,
+  // sheet close, or superseding request) cannot open consent or picker-ready
+  // for the wrong account.
+  async function handlePickerRequest(action: "camera" | "library") {
+    const myPickerRequestId = ++pickerRequestIdRef.current;
+
+    const result = await resolvePickerRequestWith(action, ackCacheRef.current, {
+      getUid,
+      checkConsent: async (uid) => {
+        const res = await checkConsentStatus();
+        return { uid: res.uid, acknowledged: res.acknowledged };
+      },
+    });
+
+    // Discard if superseded by a newer request, UID change, sheet close, or manual entry.
+    if (pickerRequestIdRef.current !== myPickerRequestId) return;
+
+    if (result.outcome === "stale" || result.outcome === "noop") {
+      // Stale: UID changed mid-flight; noop: never reached (manual not passed here).
+      return;
+    }
+
+    if (result.outcome === "sign-in") {
+      setStep("sign-in-required");
+    } else if (result.outcome === "picker-ready") {
+      // Consent already given — show existing-consent picker-ready (no "Setup complete").
+      // V5: record the verified uid so the file selection can cross-check it.
+      selectedFileOwnerUidRef.current = result.uid;
+      setConsentJustCompleted(false);
+      setPickerReadyAction(result.action);
+      setStep("picker-ready");
+    } else if (result.outcome === "open-consent") {
+      // Need setup — remember what they wanted and open consent sheet.
+      // V5: consentSheetUid is also the expected picker-owner uid for post-consent file selection.
+      selectedFileOwnerUidRef.current = result.uid;
+      pendingPickerAction.current = result.action;
+      setConsentSheetUid(result.uid);
+      setConsentSheetOpen(true);
+      setStep("ack-required");
+    }
   }
 
   // ── Title ─────────────────────────────────────────────────────────────
@@ -684,6 +950,8 @@ export function AddClothingSheet({
     step === "status-check"    ? "Add clothing" :
     step === "scan-unavailable"? "Add clothing" :
     step === "ack-required"    ? "Before you scan" :
+    step === "picker-ready"    ? "Ready to scan" :
+    step === "sign-in-required"? "Add clothing" :
     step === "manual"          ? "Add clothing manually" :
     step === "manual-success"  ? "Item added" :
     step === "confirm"         ? "Confirm item" :
@@ -707,6 +975,7 @@ export function AddClothingSheet({
   }
 
   return (
+    <>
     <div
       role="dialog"
       aria-modal="true"
@@ -1001,99 +1270,110 @@ export function AddClothingSheet({
           </div>
         )}
 
-        {/* ── ACK REQUIRED ─────────────────────────────────────────── */}
+        {/* ── ACK REQUIRED ──────────────────────────────────────────── */}
+        {/* Shown when the consent sheet is closed without completing setup.
+            Provides both a path to reopen consent AND manual entry — so the
+            user is never stranded (item 2). */}
         {step === "ack-required" && (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col items-center gap-4 py-8 text-center">
             <p className="text-sm text-muted-foreground">
-              The AI scanner is for users aged 15 and older. Please confirm the following before scanning.
+              One quick setup step before you can scan.
             </p>
-            {ackError && (
-              <p role="alert" className="rounded-2xl bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                {ackError}
-              </p>
-            )}
-            {/* Age band */}
-            <div>
-              <p className="mb-1.5 text-sm font-medium">Your age</p>
-              <div className="grid grid-cols-2 gap-2">
-                {(["15-17", "18-plus"] as const).map((band) => (
-                  <label
-                    key={band}
-                    className={`flex cursor-pointer items-center justify-center rounded-2xl px-3 py-2.5 text-sm font-medium ring-1 transition-colors ${
-                      ackAgeBand === band
-                        ? "bg-primary/15 text-primary ring-primary/30"
-                        : "bg-foreground/[0.04] text-muted-foreground ring-transparent"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="ack-age"
-                      value={band}
-                      checked={ackAgeBand === band}
-                      onChange={() => { setAckAgeBand(band); setAckError(null); }}
-                      className="sr-only"
-                    />
-                    {band === "15-17" ? "15–17 years old" : "18 or older"}
-                  </label>
-                ))}
-              </div>
-            </div>
-            {/* Guardian permission — only when 15-17 selected */}
-            {ackAgeBand === "15-17" && (
-              <label className="flex cursor-pointer items-start gap-3 rounded-2xl bg-foreground/[0.04] px-4 py-3">
-                <input
-                  type="checkbox"
-                  checked={ackGuardian}
-                  onChange={(e) => { setAckGuardian(e.target.checked); setAckError(null); }}
-                  className="mt-0.5 h-4 w-4 accent-primary"
-                />
-                <span className="text-sm">
-                  I have a parent or guardian's permission to use the AI scanner.
-                </span>
-              </label>
-            )}
-            {/* Combined acknowledgement */}
-            <label className="flex cursor-pointer items-start gap-3 rounded-2xl bg-foreground/[0.04] px-4 py-3">
-              <input
-                type="checkbox"
-                checked={ackAllItems}
-                onChange={(e) => { setAckAllItems(e.target.checked); setAckError(null); }}
-                className="mt-0.5 h-4 w-4 accent-primary"
-              />
-              <span className="text-sm">
-                I understand that my garment photo will be analyzed by Anthropic's Claude AI, and I will upload only one clothing item, without people, faces, bodies, identification documents or personal information.
-              </span>
-            </label>
             <button
-              disabled={
-                ackSubmitting ||
-                !ackAgeBand ||
-                !ackAllItems ||
-                (ackAgeBand === "15-17" && !ackGuardian)
-              }
-              onClick={async () => {
-                if (!ackAgeBand) { setAckError("Please select your age group."); return; }
-                if (!ackAllItems) { setAckError("Please check all required boxes."); return; }
-                if (ackAgeBand === "15-17" && !ackGuardian) {
-                  setAckError("Please confirm parent or guardian permission."); return;
-                }
-                setAckSubmitting(true);
-                setAckError(null);
-                const res = await submitAcknowledgement(ackAgeBand, ackAgeBand === "15-17");
-                setAckSubmitting(false);
-                if (!res.ok) { setAckError(res.error ?? "Could not save. Please try again."); return; }
-                ackCheckedRef.current = true;
-                setStep("pick");
+              onClick={() => {
+                if (consentSheetUid) setConsentSheetOpen(true);
               }}
-              className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background disabled:opacity-50"
+              className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background"
+              aria-label="Set up AI scan"
             >
-              {ackSubmitting ? "Saving…" : "Continue to scan"}
+              Set up AI scan
             </button>
             <button
               onClick={goToManual}
-              className="press flex w-full items-center justify-center gap-1.5 rounded-full py-2.5 text-sm text-muted-foreground"
+              className="press flex items-center justify-center gap-1.5 rounded-full py-2.5 text-sm text-muted-foreground"
             >
-              Add manually instead
+              <PenLine className="h-3.5 w-3.5" aria-hidden /> Add manually instead
+            </button>
+          </div>
+        )}
+
+        {/* ── PICKER READY ──────────────────────────────────────────── */}
+        {/* Shown after consent setup completes OR when user taps Take/Choose photo
+            and consent was already valid. Renders a fresh synchronous button so
+            input.click() is always called from a real user gesture (item 1).
+            V4 Item 8: wording differs by path:
+              - consentJustCompleted=true  → "Setup complete — you're ready to scan"
+              - consentJustCompleted=false → "Ready to open your camera/photo library" */}
+        {step === "picker-ready" && pickerReadyAction && (
+          <div className="flex flex-col items-center gap-4 py-8 text-center">
+            <div className="grid h-16 w-16 place-items-center rounded-2xl bg-primary/10 text-primary">
+              <Check className="h-7 w-7" strokeWidth={1.8} />
+            </div>
+            {consentJustCompleted ? (
+              <p className="font-semibold">Setup complete — you&rsquo;re ready to scan</p>
+            ) : (
+              <p className="font-semibold">
+                {pickerReadyAction === "camera"
+                  ? "Ready to open your camera"
+                  : "Ready to choose a photo"}
+              </p>
+            )}
+            <p className="text-sm text-muted-foreground">
+              Tap below to open your {pickerReadyAction === "camera" ? "camera" : "photo library"}.
+            </p>
+            <button
+              onClick={() => {
+                // This is the ONLY place that may call input.click() for the
+                // picker-ready flow — it runs synchronously from a fresh user tap.
+                // V5.1: no await before click() — required for synchronous iOS picker
+                // activation. Ownership is secure because:
+                //   - selectedFileOwnerUidRef was set from the verified picker result;
+                //   - auth changes clear pickerReadyAction and increment request IDs;
+                //   - handleFileChange verifies UID against selectedFileOwnerUidRef
+                //     before use and again after compression.
+                const action = pickerReadyAction;
+                const expectedOwner = selectedFileOwnerUidRef.current;
+
+                if (!action || !expectedOwner) {
+                  setPickerReadyAction(null);
+                  setConsentJustCompleted(false);
+                  setStep("sign-in-required");
+                  return;
+                }
+
+                setPickerReadyAction(null);
+                setConsentJustCompleted(false);
+                setStep("pick");
+
+                if (action === "camera") {
+                  cameraInputRef.current?.click();
+                } else {
+                  libraryInputRef.current?.click();
+                }
+              }}
+              className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background"
+              aria-label={pickerReadyAction === "camera" ? "Open camera" : "Choose from library"}
+            >
+              {pickerReadyAction === "camera"
+                ? <><Camera className="h-4 w-4" aria-hidden /> Open camera</>
+                : <><ImageIcon className="h-4 w-4" aria-hidden /> Choose from library</>
+              }
+            </button>
+            <button
+              onClick={() => { setPickerReadyAction(null); setConsentJustCompleted(false); goToManual(); }}
+              className="press flex items-center justify-center gap-1.5 rounded-full py-2.5 text-sm text-muted-foreground"
+            >
+              <PenLine className="h-3.5 w-3.5" aria-hidden /> Add manually instead
+            </button>
+          </div>
+        )}
+
+        {/* ── SIGN-IN REQUIRED ──────────────────────────────────────── */}
+        {step === "sign-in-required" && (
+          <div className="flex flex-col items-center gap-4 py-8 text-center">
+            <p className="text-sm text-muted-foreground">Please sign in to use AI clothing scan.</p>
+            <button onClick={goToManual} className="press flex items-center justify-center gap-1.5 rounded-full py-2.5 text-sm text-muted-foreground">
+              <PenLine className="h-3.5 w-3.5" aria-hidden /> Add manually instead
             </button>
           </div>
         )}
@@ -1110,16 +1390,20 @@ export function AddClothingSheet({
                 Snap a photo or choose from your library and Aeruvo will fill in the details for you.
               </p>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-3">
+            {/* Inline safety reminder — shown after consent is complete */}
+            <p className="mt-3 text-center text-xs text-muted-foreground" aria-label="Photo reminder">
+              One clothing item · No people or personal details
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
               <button
-                onClick={() => cameraInputRef.current?.click()}
+                onClick={() => handlePickerRequest("camera")}
                 className="press flex items-center justify-center gap-2 rounded-full bg-foreground px-4 py-3 text-sm font-semibold text-background"
                 aria-label="Take a photo with camera"
               >
                 <Camera className="h-4 w-4" /> Take photo
               </button>
               <button
-                onClick={() => libraryInputRef.current?.click()}
+                onClick={() => handlePickerRequest("library")}
                 className="press glass-card flex items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold"
                 aria-label="Choose a photo from library"
               >
@@ -1142,13 +1426,30 @@ export function AddClothingSheet({
             </div>
             {step === "preview" && (
               <>
-                <button
-                  onClick={analyze}
-                  disabled={!imageBlob}
-                  className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background disabled:opacity-50"
-                >
-                  <Sparkles className="h-4 w-4" /> Analyze with AI
-                </button>
+                {/* V4 Item 5: After ack-required consent recovery, show "Continue analysis"
+                    instead of "Analyze with AI" to make the flow clear. */}
+                {consentJustCompleted ? (
+                  <>
+                    <p className="text-center text-sm font-medium text-primary">
+                      Setup complete — tap below to continue.
+                    </p>
+                    <button
+                      onClick={() => { setConsentJustCompleted(false); analyze(); }}
+                      disabled={!imageBlob}
+                      className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background disabled:opacity-50"
+                    >
+                      <Sparkles className="h-4 w-4" /> Continue analysis
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={analyze}
+                    disabled={!imageBlob}
+                    className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background disabled:opacity-50"
+                  >
+                    <Sparkles className="h-4 w-4" /> Analyze with AI
+                  </button>
+                )}
                 {/* ── AI disclosure (required before any scan) ─────────── */}
                 <p className="mt-1 text-center text-xs text-muted-foreground">
                   Your garment photo will be analyzed by Anthropic's Claude AI. Do not upload people, faces, bodies, identification documents or personal information.{" "}
@@ -1313,6 +1614,77 @@ export function AddClothingSheet({
         )}
       </div>
     </div>
+
+    {/* ── SCAN CONSENT SHEET ─────────────────────────────────────────────
+        Rendered at root level (outside the glass card) so it overlays
+        the AddClothingSheet correctly. Shown on first scan per UID.
+        key={consentSheetUid} resets all ScanConsentSheet state when
+        the uid changes (item 3). */}
+    <ScanConsentSheet
+      key={consentSheetUid ?? ""}
+      open={consentSheetOpen}
+      uid={consentSheetUid ?? ""}
+      onComplete={async () => {
+        setConsentSheetOpen(false);
+
+        // V4 Item 6: verify current UID equals consentSheetUid before updating cache
+        const verifiedUid = await getUid();
+        if (!verifiedUid || verifiedUid !== consentSheetUid) {
+          // Account changed during consent flow — do not proceed
+          return;
+        }
+
+        // V4 Item 6: set BOTH ackCacheRef fields (ownership + status)
+        ackCacheRef.current = { checked: true, uid: verifiedUid };
+
+        // V4 Item 5: Check for resumeAfterConsent (ack-required mid-analysis recovery)
+        const resume = resumeAfterConsent.current;
+        if (resume && resume.uid === verifiedUid) {
+          // Restore the preserved blob and return to preview for "Continue analysis"
+          resumeAfterConsent.current = null;
+          pendingPickerAction.current = null;
+          selectedFileOwnerUidRef.current = verifiedUid; // V5: owner for any re-attempt
+          setConsentJustCompleted(true);
+          setBlob(resume.blob);
+          setStep("preview");
+          return;
+        }
+
+        // Normal post-consent flow: show picker-ready with "Setup complete" wording
+        const action = pendingPickerAction.current;
+        pendingPickerAction.current = null;
+        resumeAfterConsent.current = null;
+        // V4 Item 8: newly-completed setup → use "Setup complete" wording
+        setConsentJustCompleted(true);
+        // V5: Set picker owner so the subsequent file selection can verify it.
+        selectedFileOwnerUidRef.current = verifiedUid;
+        // Do NOT call input.click() here — this runs in async context (after server ack).
+        // Use resolveConsentComplete for picker-ready state transition.
+        if (action) {
+          const { pickerReadyAction: newAction, step: newStep } =
+            resolveConsentComplete(action, ackCacheRef.current, verifiedUid);
+          setPickerReadyAction(newAction);
+          setStep(newStep);
+        } else {
+          setStep("pick");
+        }
+      }}
+      onManual={() => {
+        setConsentSheetOpen(false);
+        setConsentSheetUid(null);
+        pendingPickerAction.current = null;
+        setPickerReadyAction(null);
+        setConsentJustCompleted(false);
+        resumeAfterConsent.current = null;
+        goToManual();
+      }}
+      onClose={() => {
+        // Dismissed — stay on ack-required where user can reopen (item 2)
+        setConsentSheetOpen(false);
+        // Do NOT clear consentSheetUid: needed so "Set up AI scan" can reopen
+      }}
+    />
+    </>
   );
 }
 

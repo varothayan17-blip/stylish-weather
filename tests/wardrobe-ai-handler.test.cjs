@@ -372,9 +372,66 @@ ok("7j. uid comes from verified token (never request body)",
   !handlerSrc.includes("body.uid"));
 ok("7k. ack step shown in client (ack-required step)", sheetSrc.includes('"ack-required"'));
 ok("7l. client fetches ack status before allowing scan", sheetSrc.includes("fetchAckStatus"));
-ok("7m. client submits acknowledgement to server", sheetSrc.includes("submitAcknowledgement"));
-ok("7n. age band selector in client JSX", sheetSrc.includes('"15-17"') && sheetSrc.includes('"18-plus"'));
-ok("7o. guardian checkbox shown for 15-17", sheetSrc.includes("ackAgeBand === \"15-17\"") && sheetSrc.includes("ackGuardian"));
+ok("7m. client submits acknowledgement to server",
+  // submitAcknowledgement lives in ScanConsentSheet.tsx after redesign
+  sheetSrc.includes("submitAcknowledgement") ||
+  readSource("src/components/wardrobe/ScanConsentSheet.tsx").includes("submitServerAck") ||
+  readSource("src/components/wardrobe/ScanConsentSheet.tsx").includes("/api/wardrobe/acknowledge"));
+ok("7n. age band selector in client JSX",
+  // Age bands may be in AddClothingSheet or ScanConsentSheet
+  (sheetSrc.includes('"15-17"') && sheetSrc.includes('"18-plus"')) ||
+  (readSource("src/components/wardrobe/ScanConsentSheet.tsx").includes('"15-17"') &&
+   readSource("src/components/wardrobe/ScanConsentSheet.tsx").includes('"18-plus"')));
+ok("7o. guardian checkbox shown for 15-17",
+  // Guardian state may be in AddClothingSheet or ScanConsentSheet after redesign
+  (sheetSrc.includes("ackAgeBand === \"15-17\"") && sheetSrc.includes("ackGuardian")) ||
+  // ScanConsentSheet uses ageChoice (local AgeChoice type) instead of ageBand
+  (readSource("src/components/wardrobe/ScanConsentSheet.tsx").includes('ageChoice === "15-17"') &&
+   readSource("src/components/wardrobe/ScanConsentSheet.tsx").includes("guardianChecked")));
+
+ok("7p. Account A consent cannot allow account B to reach camera picker",
+  // Current architecture (V5+):
+  //   - AddClothingSheet uses ackCacheRef (not ackCheckedUidRef)
+  //   - handlePickerRequest uses pickerRequestIdRef to detect superseded requests
+  //   - picker-ready / open-consent paths store result.uid in selectedFileOwnerUidRef
+  //   - pickerConsentLogic re-verifies afterUid === currentUid after checkConsent
+  //   - UID mismatch mid-flight returns { outcome: "stale" }, which handlePickerRequest discards
+  (readSource("src/components/wardrobe/AddClothingSheet.tsx").includes("ackCacheRef") &&
+   readSource("src/components/wardrobe/AddClothingSheet.tsx").includes("pickerRequestIdRef") &&
+   readSource("src/components/wardrobe/AddClothingSheet.tsx").includes("selectedFileOwnerUidRef") &&
+   readSource("src/lib/pickerConsentLogic.ts").includes('afterUid !== currentUid') &&
+   readSource("src/lib/pickerConsentLogic.ts").includes('"stale"')));
+
+ok("7q. Camera input only clicked after consent check (not on sheet open)",
+  // handlePickerRequest is the only place cameraInputRef.current?.click() is called after consent verified
+  readSource("src/components/wardrobe/AddClothingSheet.tsx").includes("handlePickerRequest"));
+
+ok("7r. Picker-ready CTA onClick is synchronous — no await before input.click() (iOS requirement)",
+  // V5.1: onClick must be a plain arrow function, not async, so iOS/Safari
+  // processes the .click() in the same user-gesture microtask.
+  // Check: the picker-ready button uses onClick={() => (not async), and
+  // no await appears between the onClick open brace and the cameraInputRef.current?.click() call.
+  (() => {
+    const src = readSource("src/components/wardrobe/AddClothingSheet.tsx");
+    // Must use synchronous handler signature
+    const hasSyncHandler = src.includes("onClick={() =>");
+    // Must not use async handler signature for the picker button
+    const hasAsyncHandler = src.includes("onClick={async () =>");
+    // Confirm no await before click — extract the handler body and check
+    // that cameraInputRef.current?.click() appears without a preceding await
+    const clickIdx = src.indexOf("cameraInputRef.current?.click()");
+    const onClickIdx = src.lastIndexOf("onClick={() =>", clickIdx);
+    const handlerSlice = clickIdx > -1 && onClickIdx > -1
+      ? src.slice(onClickIdx, clickIdx)
+      : "";
+    // Strip single-line comments before checking for await
+    const handlerSliceNoComments = handlerSlice.replace(/\/\/[^\n]*/g, "");
+    const noAwaitBeforeClick = !handlerSliceNoComments.includes("await ");
+    // handleFileChange still verifies UID ownership after file selection
+    const fileChangeGuard = src.includes("selectedFileOwnerUidRef") &&
+      src.includes("currentUidAtSelect !== expectedOwnerUid");
+    return hasSyncHandler && !hasAsyncHandler && noAwaitBeforeClick && fileChangeGuard;
+  })());
 
 // ════════════════════════════════════════════════════════════════════════════
 // 8. Discriminated union: accepted/rejected schema validation

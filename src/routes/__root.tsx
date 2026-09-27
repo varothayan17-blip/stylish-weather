@@ -153,9 +153,26 @@ function RootComponent() {
     // Subscribe to Firebase Auth state. Fires immediately if a session already
     // exists (app reopen / page refresh) and syncs Firestore prefs silently.
     // Returns an unsubscribe function — call it on cleanup to avoid memory leaks.
+    //
+    // Scan-consent isolation (item 4 — A → B direct switch):
+    //  Track the previous UID so we can detect both A → null AND A → B transitions.
+    //  Clear consent state whenever the UID changes from a non-null previous value,
+    //  but NOT on the initial emission (prevUid is still "__initial__") so we don't
+    //  wrongly clear a valid session on first load.
+    const INITIAL_SENTINEL = "__initial__";
+    let prevUid: string | null = INITIAL_SENTINEL as unknown as string | null;
+
     let unsubscribe: (() => void) | undefined;
-    subscribeToAuthState(() => {
-      // uid is available here if needed for future global state
+    subscribeToAuthState((uid) => {
+      if (prevUid !== (INITIAL_SENTINEL as unknown as string | null)) {
+        // Not the initial emission — clear if UID changed (A → null or A → B)
+        if (uid !== prevUid) {
+          import("../lib/scanConsentStore").then(({ clearConsentState }) => {
+            clearConsentState();
+          }).catch(() => {});
+        }
+      }
+      prevUid = uid;
     }).then((fn) => {
       unsubscribe = fn;
     });

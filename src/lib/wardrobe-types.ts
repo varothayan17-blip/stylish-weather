@@ -189,7 +189,9 @@ export type ScanStep =
   | "manual"           // manual entry form (no photo, no AI)
   | "manual-success"   // manual item saved successfully
   | "ack-required"     // first-use acknowledgement required before scanning
+  | "sign-in-required" // no authenticated user — prompt to sign in
   | "pick"             // initial: no image chosen
+  | "picker-ready"     // setup complete; fresh CTA button ready to open camera/library
   | "preview"          // image selected, waiting for user to confirm
   | "compressing"      // client-side compression in progress
   | "detecting"        // on-device face/person detection in progress
