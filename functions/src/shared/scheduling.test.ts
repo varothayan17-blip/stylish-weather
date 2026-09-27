@@ -129,7 +129,7 @@ assert("T1 computeNextCheckAt returns null for invalid timezone",
   assert("T9c thunder → eligible", advice !== null && notificationEligible(advice));
 }
 
-// ── Test 10: rain past reminder hour → "this evening" ──
+// ── Test 10: short evening window → precise clock range ──
 {
   const slots = [
     { hour:19, prob:55, code:63 },
@@ -138,8 +138,27 @@ assert("T1 computeNextCheckAt returns null for invalid timezone",
   ];
   const advice = lookAheadUmbrellaAdvice(slots, 10.0);
   assert("T10a evening rain → advice not null", advice !== null);
-  assert("T10b evening rain → timing contains 'evening'",
-    advice?.timing.includes("evening") ?? false,
+  assert("T10b short evening rain → precise 7 PM–10 PM timing",
+    advice?.timing === "Rain expected between 7 PM and 10 PM.",
+    `timing="${advice?.timing}"`);
+  assert("T10c short evening rain → window remains 19–21",
+    advice?.window[0] === 19 && advice?.window[1] === 21,
+    `window=${JSON.stringify(advice?.window)}`);
+}
+
+// ── Test 10d: long evening window → named period ──
+{
+  const slots = [
+    { hour:18, prob:55, code:61 },
+    { hour:19, prob:60, code:63 },
+    { hour:20, prob:65, code:63 },
+    { hour:21, prob:60, code:61 },
+    { hour:22, prob:55, code:61 },
+  ];
+  const advice = lookAheadUmbrellaAdvice(slots, 10.0);
+  assert("T10d long evening rain → advice not null", advice !== null);
+  assert("T10e long evening rain → named evening period",
+    advice?.timing === "Rain expected this evening.",
     `timing="${advice?.timing}"`);
 }
 
