@@ -426,6 +426,116 @@ export async function listenForForegroundMessages(): Promise<() => void> {
   }
 }
 
+// ── Test notification ─────────────────────────────────────────────────────
+
+/**
+ * Result type for callSendTestNotification.
+ *
+ * ok: true  — server accepted the request (check acceptedCount for delivery).
+ * ok: false, rateLimited: true — 60-second cooldown not yet elapsed.
+ * ok: false, error: string — auth, network, or server error.
+ */
+export type TestNotificationResult =
+  | { ok: true; attemptedCount: number; acceptedCount: number; failedCount: number }
+  | { ok: false; rateLimited: true; retryAfterSeconds?: number }
+  | { ok: false; rateLimited?: false; error: string };
+
+/**
+ * Send a test notification via the sendTestNotification Cloud Function.
+ *
+ * Uses the current user's Firebase ID token (from the auth module) — the UID
+ * is never sent in the request body. The server verifies the token and uses
+ * only the verified UID.
+ *
+ * Never logs or exposes the ID token beyond the Authorization header.
+ */
+export async function callSendTestNotification(
+  getFreshToken: () => Promise<string | null>,
+): Promise<TestNotificationResult> {
+  let idToken: string | null;
+  try {
+    idToken = await getFreshToken();
+  } catch {
+    return { ok: false, error: "Could not get auth token. Please sign in again." };
+  }
+
+  if (!idToken) {
+    return { ok: false, error: "Not signed in." };
+  }
+
+  // Resolve the Cloud Functions base URL.
+  //
+  // Priority:
+  //   1. VITE_FUNCTIONS_BASE_URL — explicit override (e.g. for local emulator).
+  //   2. VITE_FIREBASE_PROJECT_ID — derive the canonical northamerica-northeast1 URL.
+  //
+  // Falling back to the Vercel origin would silently route requests to the
+  // wrong server and always return 404, so we throw instead.
+  const functionsBase =
+    import.meta.env.VITE_FUNCTIONS_BASE_URL ??
+    (import.meta.env.VITE_FIREBASE_PROJECT_ID
+      ? `https://northamerica-northeast1-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`
+      : null);
+
+  if (!functionsBase) {
+    return {
+      ok: false,
+      error:
+        "App is not configured for notifications (missing VITE_FIREBASE_PROJECT_ID). Contact support.",
+    };
+  }
+
+  const endpoint = `${functionsBase}/sendTestNotification`;
+
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        // Token is sent only in this header; never in the URL or body.
+        Authorization: `Bearer ${idToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+  } catch {
+    return { ok: false, error: "Network error. Check your connection and try again." };
+  }
+
+  let body: {
+    ok?: boolean;
+    error?: string;
+    attemptedCount?: number;
+    acceptedCount?: number;
+    failedCount?: number;
+    retryAfterSeconds?: number;
+  };
+  try {
+    body = await res.json() as typeof body;
+  } catch {
+    return { ok: false, error: "Unexpected server response." };
+  }
+
+  if (res.status === 429) {
+    return {
+      ok: false,
+      rateLimited: true,
+      retryAfterSeconds: body.retryAfterSeconds,
+    };
+  }
+
+  if (!body.ok) {
+    return { ok: false, error: body.error ?? "Could not send test notification." };
+  }
+
+  return {
+    ok: true,
+    attemptedCount: body.attemptedCount ?? 0,
+    acceptedCount:  body.acceptedCount  ?? 0,
+    failedCount:    body.failedCount    ?? 0,
+  };
+}
+
 // ── Internal: write device record ─────────────────────────────────────────
 
 /**

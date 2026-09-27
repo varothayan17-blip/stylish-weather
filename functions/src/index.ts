@@ -15,5 +15,6 @@ import { initializeApp } from "firebase-admin/app";
 initializeApp();
 
 // ── Stage E functions ─────────────────────────────────────────────────────
-export { onNotifPrefsUpdate } from "./onNotifPrefsUpdate";
-export { morningRainCheck }   from "./morningRainCheck";
+export { onNotifPrefsUpdate }    from "./onNotifPrefsUpdate";
+export { morningRainCheck }      from "./morningRainCheck";
+export { sendTestNotification }  from "./sendTestNotification";

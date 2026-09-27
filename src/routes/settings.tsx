@@ -20,7 +20,7 @@ import { billing, StaleAuthError } from "@/lib/billing";
 import { getFirebaseAuth } from "@/lib/firebase";
 import { useEntitlement, type EntitlementResult } from "@/lib/entitlement";
 import { getUid } from "@/lib/auth";
-import { orchestrateEnable, orchestrateDisable, isIosSafariNonInstalled } from "@/lib/notifications";
+import { orchestrateEnable, orchestrateDisable, isIosSafariNonInstalled, callSendTestNotification, type TestNotificationResult } from "@/lib/notifications";
 import { applyTheme, type Theme } from "@/lib/theme";
 import { useAuthGuard } from "@/lib/useAuthGuard";
 import { FeedbackSheet } from "@/components/FeedbackSheet";
@@ -88,6 +88,8 @@ function Settings() {
   const [notifLoading, setNotifLoading] = useState(false);
   const [notifError, setNotifError] = useState<string | null>(null);
   const [notifSaved, setNotifSaved] = useState(false);
+  const [testNotifLoading, setTestNotifLoading] = useState(false);
+  const [testNotifResult, setTestNotifResult] = useState<TestNotificationResult | null>(null);
   // Entitlement from Firestore only — never from prefs or localStorage.
   // useEntitlement waits for Auth to settle — never hangs on "Loading...".
   const entitlement = useEntitlement();
@@ -530,6 +532,66 @@ function Settings() {
             </>
           )}
         </div>
+
+        {/* Test notification button — only when notifications are enabled */}
+        {notifPrefs?.enabled && (
+          <div className="mt-3">
+            <button
+              disabled={testNotifLoading}
+              onClick={async () => {
+                setTestNotifLoading(true);
+                setTestNotifResult(null);
+                try {
+                  const uid = await getUid();
+                  if (!uid) {
+                    setTestNotifResult({ ok: false, error: "Not signed in." });
+                    return;
+                  }
+                  // getFirebaseAuth is lazy-loaded to avoid a circular dep;
+                  // we need a fresh ID token to send to the Cloud Function.
+                  const { getFirebaseAuth } = await import("@/lib/firebase");
+                  const auth = await getFirebaseAuth();
+                  const getFreshToken = async () => {
+                    const user = auth?.currentUser;
+                    if (!user || user.uid !== uid) return null;
+                    return user.getIdToken(false);
+                  };
+                  const result = await callSendTestNotification(getFreshToken);
+                  setTestNotifResult(result);
+                } catch (e) {
+                  setTestNotifResult({
+                    ok: false,
+                    error: e instanceof Error ? e.message : "Unexpected error.",
+                  });
+                } finally {
+                  setTestNotifLoading(false);
+                }
+              }}
+              className="w-full rounded-2xl border border-primary/30 px-4 py-2.5 text-sm font-medium text-primary active:bg-primary/10 disabled:opacity-50"
+            >
+              {testNotifLoading ? "Sending…" : "Send test notification"}
+            </button>
+            {testNotifResult && (
+              <p className={`mt-2 px-1 text-xs font-medium ${
+                testNotifResult.ok
+                  ? testNotifResult.acceptedCount > 0
+                    ? "text-primary"
+                    : "text-muted-foreground"
+                  : "text-destructive"
+              }`}>
+                {testNotifResult.ok
+                  ? testNotifResult.attemptedCount === 0
+                    ? "No enabled devices found."
+                    : testNotifResult.acceptedCount === testNotifResult.attemptedCount
+                    ? `Sent to ${testNotifResult.acceptedCount} device${testNotifResult.acceptedCount === 1 ? "" : "s"}.`
+                    : `Sent to ${testNotifResult.acceptedCount} of ${testNotifResult.attemptedCount} device${testNotifResult.attemptedCount === 1 ? "" : "s"}.`
+                  : "rateLimited" in testNotifResult && testNotifResult.rateLimited
+                  ? `Too many requests. Try again in ${testNotifResult.retryAfterSeconds ?? 60}s.`
+                  : (testNotifResult as { error?: string }).error ?? "Could not send."}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Error + saved feedback */}
         {notifError && (
