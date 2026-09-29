@@ -1,8 +1,10 @@
 /**
  * outingPlanStore.ts — localStorage persistence for locked Outing Plans.
  *
- * Key pattern: "aeruvo:outing-plans:v2:{uid}"
- * Legacy key "aeruvo:outing-plans:v1" is silently ignored on load.
+ * Key pattern: "aeruvo:outing-plans:v3:{uid}"
+ * Legacy keys "aeruvo:outing-plans:v1" and "aeruvo:outing-plans:v2:{uid}"
+ * are silently ignored on load (v2 plans lack the departureLayers/carryLayers
+ * split and must be regenerated rather than displayed with unsafe "Bring for later").
  *
  * Issue 1 — Atomic replacement:
  *   Drafts exist only in React state (memory), never persisted.
@@ -18,7 +20,7 @@
  *   React state object captured before recordAttempt().
  *
  * Issue 6 — Complete validation:
- *   Validates every field: version (v2 only), status, ISO strings,
+ *   Validates every field: version (v3 only), status, ISO strings,
  *   arrays, PlannedItem fields, WeatherSummary numbers/booleans,
  *   coordinates, adaptationNote, attemptedAt, lastCheckedAt.
  *   NaN and Infinity both rejected. Invalid records silently dropped.
@@ -27,6 +29,11 @@
  *   needsRecheck() uses attemptedAt ?? lastCheckedAt.
  *   recordAttempt() writes to storage immediately so the next
  *   loadById() sees the updated timestamp.
+ *
+ * Schema version history:
+ *   v1 — initial (legacy, no UID scope)
+ *   v2 — UID-scoped, two-track thermal model; removableLayers
+ *   v3 — 2026-09-26: departureLayers + carryLayers split; removableLayers derived alias
  */
 
 import type { OutingPlanRecommendation } from "./outingPlanner";
@@ -56,7 +63,8 @@ export const GRACE_PERIOD_MS = 2 * 60 * 60 * 1_000;
 export const RECHECK_THROTTLE_MS = 5 * 60 * 1_000;
 
 // Only the current schema version is accepted from storage.
-const SUPPORTED_VERSION = 2;
+// v2 records are silently dropped — they predate the departureLayers/carryLayers split.
+const SUPPORTED_VERSION = 3;
 const VALID_STATUSES = new Set<string>(
   ["upcoming","active","completed","cancelled","replaced"]
 );
@@ -95,7 +103,7 @@ function isValidIsoLocal(v: unknown): v is string {
 function isBrowser(): boolean { return typeof window !== "undefined"; }
 
 export function storageKeyForUid(uid: string): string {
-  return `aeruvo:outing-plans:v2:${uid}`;
+  return `aeruvo:outing-plans:v3:${uid}`;
 }
 
 function isFiniteNum(v: unknown): v is number {
@@ -166,14 +174,20 @@ function isValidPlan(p: unknown, uid: string): p is LockedPlan {
   if (r.replacesId !== undefined &&
       (typeof r.replacesId !== "string" || r.replacesId.length === 0)) return false;
 
-  // Arrays of PlannedItem
-  if (!Array.isArray(snap.baseItems))       return false;
-  if (!Array.isArray(snap.removableLayers)) return false;
-  if (!Array.isArray(snap.footwear))        return false;
-  if (!Array.isArray(snap.accessories))     return false;
+  // Arrays of PlannedItem — all required in v3
+  if (!Array.isArray(snap.baseItems))        return false;
+  if (!Array.isArray(snap.removableLayers))  return false;
+  if (!Array.isArray(snap.departureLayers))  return false; // required in v3
+  if (!Array.isArray(snap.carryLayers))      return false; // required in v3
+  if (!Array.isArray(snap.footwear))         return false;
+  if (!Array.isArray(snap.accessories))      return false;
+  // adaptationHint: optional string (may be absent when no indoor context)
+  if (snap.adaptationHint !== undefined && typeof snap.adaptationHint !== "string") return false;
   const allItems = [
     ...(snap.baseItems as unknown[]),
     ...(snap.removableLayers as unknown[]),
+    ...(snap.departureLayers as unknown[]),
+    ...(snap.carryLayers as unknown[]),
     ...(snap.footwear as unknown[]),
     ...(snap.accessories as unknown[]),
   ];
@@ -219,6 +233,25 @@ function isValidPlan(p: unknown, uid: string): p is LockedPlan {
   // Precipitation probability in valid range 0–100
   const pp = ws.peakPrecipitationProbability as number;
   if (pp < 0 || pp > 100) return false;
+
+  // v3 invariant: removableLayers must be semantically identical to [...departureLayers, ...carryLayers]
+  // Check ordered, field-by-field equality — length match alone is insufficient.
+  type PI = { name: string; wardrobeId: string | null; fromWardrobe: boolean; reason: string };
+  const dept  = snap.departureLayers as PI[];
+  const carry = snap.carryLayers     as PI[];
+  const concat = [...dept, ...carry];
+  const removable = snap.removableLayers as PI[];
+  if (removable.length !== concat.length) return false;
+  for (let i = 0; i < concat.length; i++) {
+    const a = removable[i], b = concat[i];
+    if (a.name !== b.name || a.wardrobeId !== b.wardrobeId ||
+        a.fromWardrobe !== b.fromWardrobe || a.reason !== b.reason) return false;
+  }
+
+  // v3 invariant: no item name may appear in both departureLayers and carryLayers
+  const deptNames = new Set(dept.map(i => i.name));
+  const carryDup  = carry.some(i => deptNames.has(i.name));
+  if (carryDup) return false;
 
   return true;
 }

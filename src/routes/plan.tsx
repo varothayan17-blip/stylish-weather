@@ -175,10 +175,16 @@ function PlanResult({
   onCancelOrReplace?: () => void;
 }) {
   const s = plan.weatherSummary;
-  // Issue 2: label effective range accurately — NOT "Feels like"
-  const effectiveLabel = s.effectiveMinC !== undefined
-    ? `${Math.round(s.effectiveMinC)}–${Math.round(s.effectiveMaxC)} °C (adjusted for you)`
-    : `${Math.round(s.rawMinApparentTempC)}–${Math.round(s.rawMaxApparentTempC)} °C apparent`;
+  // Show outside raw temperature first, then indoor estimate when applicable.
+  // "adjusted for you" is suppressed in favour of the two-part display for indoors.
+  const rawLabel = `${Math.round(s.rawMinApparentTempC)}–${Math.round(s.rawMaxApparentTempC)} °C`;
+  const ctx = (plan as OutingPlanRecommendation & { outingContext?: string }).outingContext;
+  const effectiveLabel =
+    ctx === "indoors"
+      ? `Outside: ${rawLabel} · Indoor estimate: ~${Math.round(s.destinationMaxC)} °C`
+      : ctx === "mixed"
+      ? `Outside: ${rawLabel} · Destination estimate: ~${Math.round(s.destinationMaxC)} °C`
+      : `${rawLabel} apparent`;
 
   return (
     <div className="flex flex-col gap-5 pb-8">
@@ -224,7 +230,26 @@ function PlanResult({
         </div>
       )}
 
-      {plan.removableLayers.length > 0 && (
+      {plan.departureLayers && plan.departureLayers.length > 0 && (
+        <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
+          <SectionHeader icon={Layers} title="Wear when leaving" />
+          <div className="flex flex-col gap-3">{plan.departureLayers.map((item,i) => <ItemRow key={i} item={item} />)}</div>
+          {plan.adaptationHint && (
+            <p className="mt-3 text-xs text-muted-foreground leading-snug">{plan.adaptationHint}</p>
+          )}
+        </div>
+      )}
+
+      {plan.carryLayers && plan.carryLayers.length > 0 && (
+        <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
+          <SectionHeader icon={Layers} title="Pack for later" />
+          <div className="flex flex-col gap-3">{plan.carryLayers.map((item,i) => <ItemRow key={i} item={item} />)}</div>
+        </div>
+      )}
+
+      {/* Safety fallback: v3 always has departureLayers/carryLayers; this path is unreachable
+          for validated v3 plans but guards against future schema drift or unit-test mocks. */}
+      {(!plan.departureLayers && !plan.carryLayers) && plan.removableLayers.length > 0 && (
         <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
           <SectionHeader icon={Layers} title="Bring for later" />
           <div className="flex flex-col gap-3">{plan.removableLayers.map((item,i) => <ItemRow key={i} item={item} />)}</div>
