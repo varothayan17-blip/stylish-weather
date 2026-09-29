@@ -37,6 +37,8 @@ export type WardrobeItem = {
   tint: string;
   favourite?: boolean;
   unavailable?: boolean;
+  /** True when an optional, cleaned reference thumbnail exists in local IndexedDB. */
+  hasLocalPhoto?: boolean;
   /** Full AI analysis attached when item was scanned via AI. */
   aiAnalysis?: import("@/lib/wardrobe-types").ClothingAnalysis;
 };
@@ -152,9 +154,4 @@ export const MOCK_SCAN_RESULT: Omit<WardrobeItem, "id"> = {
  * VISUAL DEMO ONLY — a hand-picked "outfit" for the Today's picks strip.
  * Deliberately not wired to the real weather recommendation engine.
  */
-export const TODAY_PICK_IDS = [
-  "jacket-waterproof",
-  "tee-white",
-  "jeans-blue",
-  "sneakers-white",
-];
+export const TODAY_PICK_IDS = ["jacket-waterproof", "tee-white", "jeans-blue", "sneakers-white"];

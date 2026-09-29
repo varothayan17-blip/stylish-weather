@@ -10,6 +10,8 @@ import { Link } from "@tanstack/react-router";
 import { CalendarClock, ChevronRight, CheckCircle2, AlertCircle } from "lucide-react";
 import type { LockedPlan } from "@/lib/outingPlanStore";
 import { formatHour } from "@/lib/outingPlanner";
+import { useWardrobe } from "@/components/wardrobe/wardrobeStore";
+import { ItemTile } from "@/components/wardrobe/ItemTile";
 
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -21,12 +23,21 @@ function planLabel(plan: LockedPlan): string {
 }
 
 export function ActivePlanCard({ plan }: { plan: LockedPlan }) {
-  const baseNames  = plan.snapshot.baseItems.map((i) => i.name).join(", ");
+  const wardrobe = useWardrobe();
+  const baseNames = plan.snapshot.baseItems.map((i) => i.name).join(", ");
   const layerNames = plan.snapshot.removableLayers.map((i) => i.name).join(", ");
+  const planWardrobeItems = [
+    ...plan.snapshot.baseItems,
+    ...plan.snapshot.removableLayers,
+    ...plan.snapshot.footwear,
+  ]
+    .map((planned) => wardrobe.find((item) => item.id === planned.wardrobeId))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .slice(0, 4);
 
   return (
     <Link
-      {...{to: "/plan" as any}}
+      {...{ to: "/plan" as any }}
       className="press block rounded-3xl bg-primary/[0.06] px-5 py-4 ring-1 ring-primary/15 hover:ring-primary/30 transition-all"
       aria-label={`View locked outing plan: ${planLabel(plan)}`}
     >
@@ -50,6 +61,22 @@ export function ActivePlanCard({ plan }: { plan: LockedPlan }) {
             <p className="mt-0.5 text-xs text-muted-foreground leading-snug line-clamp-1">
               + {layerNames}
             </p>
+          )}
+          {planWardrobeItems.length > 0 && (
+            <div className="mt-3 flex gap-2" aria-label="Items from your wardrobe">
+              {planWardrobeItems.map((item) => (
+                <ItemTile
+                  key={item.id}
+                  category={item.category}
+                  tint={item.tint}
+                  itemId={item.id}
+                  hasLocalPhoto={item.hasLocalPhoto === true}
+                  photoAlt={item.name}
+                  className="h-11 w-11 shrink-0 rounded-xl"
+                  iconClassName="h-5 w-5"
+                />
+              ))}
+            </div>
           )}
           {plan.adaptationNote && (
             <div className="mt-2 flex items-start gap-1.5">

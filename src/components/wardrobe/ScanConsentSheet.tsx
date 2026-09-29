@@ -62,11 +62,11 @@ type AgeChoice = "under-15" | "15-17" | "18-plus";
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props {
-  open:        boolean;
-  uid:         string;       // UID of the authenticated user requesting setup
-  onComplete:  () => void;   // consent saved; proceed to photo picker
-  onManual:    () => void;   // user chose "Add manually instead"
-  onClose:     () => void;   // dismissed without completing
+  open: boolean;
+  uid: string; // UID of the authenticated user requesting setup
+  onComplete: () => void; // consent saved; proceed to photo picker
+  onManual: () => void; // user chose "Add manually instead"
+  onClose: () => void; // dismissed without completing
 }
 
 /**
@@ -78,11 +78,11 @@ interface Props {
  * (reopening after a close without uid change).
  */
 export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: Props) {
-  const [ageChoice,       setAgeChoice]       = useState<AgeChoice | null>(null);
+  const [ageChoice, setAgeChoice] = useState<AgeChoice | null>(null);
   const [guardianChecked, setGuardianChecked] = useState(false);
-  const [submitting,      setSubmitting]      = useState(false);
-  const [error,           setError]           = useState<string | null>(null);
-  const [photoInfoOpen,   setPhotoInfoOpen]   = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [photoInfoOpen, setPhotoInfoOpen] = useState(false);
 
   // requestId guards against stale async responses from a prior open, close, or unmount.
   // Incremented on:
@@ -123,7 +123,8 @@ export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: P
   async function handleSubmit() {
     if (!ageChoice || ageChoice === "under-15") return;
     if (ageChoice === "15-17" && !guardianChecked) {
-      setError("Please confirm permission from a parent or guardian."); return;
+      setError("Please confirm permission from a parent or guardian.");
+      return;
     }
 
     setSubmitting(true);
@@ -156,7 +157,9 @@ export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: P
 
       if (!serverRes.ok) {
         if (requestIdRef.current !== myRequestId) return;
-        setError((serverRes as { ok: false; error?: string }).error ?? "Could not save. Please try again.");
+        setError(
+          (serverRes as { ok: false; error?: string }).error ?? "Could not save. Please try again.",
+        );
         setSubmitting(false);
         return;
       }
@@ -200,7 +203,9 @@ export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: P
         side="bottom"
         className="mx-auto max-h-[92vh] w-full max-w-md overflow-y-auto rounded-b-none rounded-t-[2rem] p-5 pb-[env(safe-area-inset-bottom,1.25rem)] sm:mb-6 sm:rounded-[2rem]"
         // Prevent closing via Escape while submitting
-        onEscapeKeyDown={(e) => { if (submitting) e.preventDefault(); }}
+        onEscapeKeyDown={(e) => {
+          if (submitting) e.preventDefault();
+        }}
         aria-describedby="consent-description"
       >
         {/* ── Header ─────────────────────────────────────────────────── */}
@@ -208,7 +213,10 @@ export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: P
           <SheetTitle className="text-lg font-semibold tracking-tight">
             Set up AI clothing scan
           </SheetTitle>
-          <SheetDescription id="consent-description" className="mt-0.5 text-sm text-muted-foreground">
+          <SheetDescription
+            id="consent-description"
+            className="mt-0.5 text-sm text-muted-foreground"
+          >
             A quick one-time check—then you can scan normally.
           </SheetDescription>
         </SheetHeader>
@@ -225,10 +233,7 @@ export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: P
 
         {/* ── Age section ─────────────────────────────────────────────── */}
         <section aria-labelledby="age-section-label" className="mb-4">
-          <p
-            id="age-section-label"
-            className="mb-2 text-sm font-semibold text-foreground"
-          >
+          <p id="age-section-label" className="mb-2 text-sm font-semibold text-foreground">
             Your age
           </p>
           <div
@@ -236,11 +241,11 @@ export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: P
             role="radiogroup"
             aria-labelledby="age-section-label"
           >
-            {([
+            {[
               { value: "under-15" as AgeChoice, label: "Under 15" },
-              { value: "15-17"    as AgeChoice, label: "15–17"    },
-              { value: "18-plus"  as AgeChoice, label: "18 or older" },
-            ]).map(({ value, label }) => {
+              { value: "15-17" as AgeChoice, label: "15–17" },
+              { value: "18-plus" as AgeChoice, label: "18 or older" },
+            ].map(({ value, label }) => {
               const selected = ageChoice === value;
               return (
                 <label
@@ -310,10 +315,7 @@ export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: P
         {/* ── Photo safety section (hidden for under-15) ──────────────── */}
         {ageChoice !== "under-15" && (
           <section aria-labelledby="safety-section-label" className="mb-4">
-            <p
-              id="safety-section-label"
-              className="mb-2 text-sm font-semibold text-foreground"
-            >
+            <p id="safety-section-label" className="mb-2 text-sm font-semibold text-foreground">
               Photo safety
             </p>
             <div className="space-y-1.5">
@@ -327,9 +329,7 @@ export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: P
                   className="flex min-h-[44px] items-start gap-3 rounded-2xl bg-foreground/[0.04] px-4 py-3"
                   aria-label={item}
                 >
-                  <span className="mt-0.5 text-sm leading-snug text-foreground/80">
-                    {item}
-                  </span>
+                  <span className="mt-0.5 text-sm leading-snug text-foreground/80">{item}</span>
                 </div>
               ))}
             </div>
@@ -346,17 +346,18 @@ export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: P
               className="press flex w-full items-center justify-between rounded-2xl bg-foreground/[0.04] px-4 py-3 text-left text-sm font-medium text-foreground/70"
             >
               How photos are handled
-              {photoInfoOpen
-                ? <ChevronUp  className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                : <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-              }
+              {photoInfoOpen ? (
+                <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              ) : (
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              )}
             </button>
             {photoInfoOpen && (
               <div className="mt-2 space-y-1 px-1">
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Your photo is analyzed by Anthropic Claude to suggest clothing
-                  details. Aeruvo does not store the image after processing.
-                  Anthropic processes it under its{" "}
+                  Your photo is analyzed by Anthropic Claude to suggest clothing details. Aeruvo
+                  does not store the original image after processing. Anthropic processes it under
+                  its{" "}
                   <a
                     href="https://www.anthropic.com/legal/privacy"
                     target="_blank"
@@ -369,10 +370,12 @@ export function ScanConsentSheet({ open, uid, onComplete, onManual, onClose }: P
                   .
                 </p>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  <a
-                    href="/privacy"
-                    className="underline underline-offset-2"
-                  >
+                  After analysis, you can optionally save a small cleaned reference thumbnail on
+                  this device so Aeruvo can visually identify the exact wardrobe item. That optional
+                  thumbnail is not uploaded to Aeruvo or Firebase.
+                </p>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <a href="/privacy" className="underline underline-offset-2">
                     Aeruvo Privacy Policy
                   </a>
                 </p>

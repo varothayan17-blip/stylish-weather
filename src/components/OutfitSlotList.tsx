@@ -26,18 +26,23 @@ import { Shirt } from "lucide-react";
 import { WARDROBE_OPEN_ITEM_KEY } from "@/lib/wardrobeMatch";
 import type { ResolvedSlotsResult } from "@/lib/useResolvedSlots";
 import type { Recommendation } from "@/lib/recommend";
+import { ItemTile } from "@/components/wardrobe/ItemTile";
 
 type Props = {
-  rec:     Pick<Recommendation, "outfit">;
+  rec: Pick<Recommendation, "outfit">;
   /** Pre-computed by useResolvedSlots() in the parent. */
-  slots:   ResolvedSlotsResult;
+  slots: ResolvedSlotsResult;
 };
 
 export function OutfitSlotList({ rec, slots: { sMap } }: Props) {
   const navigate = useNavigate();
 
   function openItem(id: string) {
-    try { sessionStorage.setItem(WARDROBE_OPEN_ITEM_KEY, id); } catch { /* ignore */ }
+    try {
+      sessionStorage.setItem(WARDROBE_OPEN_ITEM_KEY, id);
+    } catch {
+      /* ignore */
+    }
     navigate({ to: "/wardrobe" });
   }
 
@@ -62,9 +67,14 @@ export function OutfitSlotList({ rec, slots: { sMap } }: Props) {
               onClick={() => openItem(item.id)}
               className="press flex w-full items-center gap-2.5 rounded-2xl bg-primary/[0.05] px-3 py-2 text-left transition-colors hover:bg-primary/[0.09]"
             >
-              <span
-                aria-hidden
-                className={`h-6 w-6 shrink-0 rounded-lg bg-gradient-to-br ${item.tint}`}
+              <ItemTile
+                category={item.category}
+                tint={item.tint}
+                itemId={item.id}
+                hasLocalPhoto={item.hasLocalPhoto === true}
+                photoAlt={item.name}
+                className="h-10 w-10 shrink-0 rounded-xl"
+                iconClassName="h-5 w-5"
               />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-foreground/95">

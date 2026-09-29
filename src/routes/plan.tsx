@@ -21,6 +21,8 @@ import { useEntitlement } from "@/lib/entitlement";
 import { loadPrefs } from "@/lib/preferences";
 import { CANADIAN_CITIES } from "@/lib/weather";
 import { useWardrobe } from "@/components/wardrobe/wardrobeStore";
+import { ItemTile } from "@/components/wardrobe/ItemTile";
+import type { WardrobeItem } from "@/components/wardrobe/wardrobeData";
 import {
   planOuting,
   formatHour,
@@ -33,11 +35,7 @@ import {
   type PlannedItem,
   type WeatherSummary,
 } from "@/lib/outingPlanner";
-import {
-  fetchOutingForecast,
-  RAIN_CODES,
-  type OutingForecastSlice,
-} from "@/lib/outingForecast";
+import { fetchOutingForecast, RAIN_CODES, type OutingForecastSlice } from "@/lib/outingForecast";
 import {
   outingPlanStore,
   computeAdaptationNote,
@@ -48,15 +46,29 @@ import {
 import { loadStyleProfile } from "@/lib/styleProfileSync";
 import type { PersonalStyleProfile } from "@/lib/styleProfile";
 import {
-  MapPin, Clock, Crown, ChevronLeft, CheckCircle2, AlertCircle,
-  RefreshCw, X, Shirt, Layers, Footprints, Umbrella, Info,
+  MapPin,
+  Clock,
+  Crown,
+  ChevronLeft,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  X,
+  Shirt,
+  Layers,
+  Footprints,
+  Umbrella,
+  Info,
 } from "lucide-react";
 
 export const Route = createFileRoute("/plan")({
   head: () => ({
     meta: [
       { title: "Outing Planner — Aeruvo" },
-      { name: "description", content: "Plan your outing. One adaptable outfit for the whole trip." },
+      {
+        name: "description",
+        content: "Plan your outing. One adaptable outfit for the whole trip.",
+      },
     ],
   }),
   component: PlanPage,
@@ -64,25 +76,29 @@ export const Route = createFileRoute("/plan")({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function pad(n: number) { return String(n).padStart(2, "0"); }
+function pad(n: number) {
+  return String(n).padStart(2, "0");
+}
 
 function nowIso(): string {
   const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function addHoursToIso(iso: string, h: number): string {
-  const d = parseIsoLocal(iso);  // Safari-safe (issue 18)
+  const d = parseIsoLocal(iso); // Safari-safe (issue 18)
   const n = new Date(d.getTime() + h * 3600_000);
-  return `${n.getFullYear()}-${pad(n.getMonth()+1)}-${pad(n.getDate())}T${pad(n.getHours())}:${pad(n.getMinutes())}`;
+  return `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}T${pad(n.getHours())}:${pad(n.getMinutes())}`;
 }
 
 function todayAt(hour: number, min = 0): string {
   const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(hour)}:${pad(min)}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(hour)}:${pad(min)}`;
 }
 
-function dateOf(iso: string) { return iso.slice(0, 10); }
+function dateOf(iso: string) {
+  return iso.slice(0, 10);
+}
 
 function formatCoverage(rec: OutingPlanRecommendation): string {
   return `${formatHour(rec.coverageStart)}–${formatHour(rec.coverageEnd)}`;
@@ -91,46 +107,75 @@ function formatCoverage(rec: OutingPlanRecommendation): string {
 /** Format ISO datetime for user-facing display including date (issue 3) */
 function formatIsoDateTime(iso: string): string {
   const d = parseIsoLocal(iso);
-  const day  = d.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" });
+  const day = d.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" });
   const time = formatHour(iso);
   return `${day} at ${time}`;
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function Chip({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
+function Chip({
+  label,
+  selected,
+  onClick,
+}: {
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
   return (
-    <button type="button" onClick={onClick} aria-pressed={selected}
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
       className={[
         "press rounded-full px-4 py-2 text-sm font-medium ring-1 transition-colors",
         selected
           ? "bg-primary/15 text-primary ring-primary/30"
           : "bg-foreground/[0.04] text-muted-foreground ring-transparent hover:bg-foreground/[0.07]",
-      ].join(" ")}>
+      ].join(" ")}
+    >
       {label}
     </button>
   );
 }
 
-function ItemRow({ item }: { item: PlannedItem }) {
+function ItemRow({ item, wardrobeItem }: { item: PlannedItem; wardrobeItem?: WardrobeItem }) {
   return (
     <div className="flex items-start gap-3">
+      {wardrobeItem && (
+        <ItemTile
+          category={wardrobeItem.category}
+          tint={wardrobeItem.tint}
+          itemId={wardrobeItem.id}
+          hasLocalPhoto={wardrobeItem.hasLocalPhoto === true}
+          photoAlt={wardrobeItem.name}
+          className="h-12 w-12 shrink-0 rounded-xl"
+          iconClassName="h-6 w-6"
+        />
+      )}
       <div className="min-w-0">
         <p className="font-medium leading-snug">{item.name}</p>
-        {item.fromWardrobe && (
-          <p className="mt-0.5 text-xs text-primary">From your wardrobe</p>
-        )}
+        {item.fromWardrobe && <p className="mt-0.5 text-xs text-primary">From your wardrobe</p>}
         <p className="mt-0.5 text-xs text-muted-foreground leading-snug">{item.reason}</p>
       </div>
     </div>
   );
 }
 
-function SectionHeader({ icon: Icon, title }: { icon: React.ComponentType<{className?:string}>; title: string }) {
+function SectionHeader({
+  icon: Icon,
+  title,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+}) {
   return (
     <div className="flex items-center gap-2 mb-3">
       <Icon className="h-4 w-4 text-primary shrink-0" />
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        {title}
+      </h3>
     </div>
   );
 }
@@ -144,21 +189,33 @@ function UpgradeTeaser() {
       <div>
         <h2 className="text-xl font-bold">Outing Planner</h2>
         <p className="mt-2 text-sm text-muted-foreground max-w-xs mx-auto">
-          Plan any outing and Aeruvo checks the full forecast interval. One stable outfit that adapts.
+          Plan any outing and Aeruvo checks the full forecast interval. One stable outfit that
+          adapts.
         </p>
       </div>
       <ul className="space-y-2 text-sm text-left w-full max-w-xs">
-        {["Full-interval forecast analysis","Base + removable layer strategy","Matched from your wardrobe","Live forecast recheck"].map(f => (
+        {[
+          "Full-interval forecast analysis",
+          "Base + removable layer strategy",
+          "Matched from your wardrobe",
+          "Live forecast recheck",
+        ].map((f) => (
           <li key={f} className="flex items-start gap-2">
-            <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" /><span>{f}</span>
+            <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+            <span>{f}</span>
           </li>
         ))}
       </ul>
-      <Link {...{to: "/premium" as any}}
-        className="press flex w-full max-w-xs items-center justify-center gap-2 rounded-full bg-primary py-3.5 text-sm font-semibold text-primary-foreground">
+      <Link
+        {...{ to: "/premium" as any }}
+        className="press flex w-full max-w-xs items-center justify-center gap-2 rounded-full bg-primary py-3.5 text-sm font-semibold text-primary-foreground"
+      >
         <Crown className="h-4 w-4" /> Upgrade to Premium
       </Link>
-      <Link {...{to: "/" as any}} className="text-sm text-muted-foreground underline underline-offset-2">
+      <Link
+        {...{ to: "/" as any }}
+        className="text-sm text-muted-foreground underline underline-offset-2"
+      >
         Back to today
       </Link>
     </div>
@@ -166,14 +223,23 @@ function UpgradeTeaser() {
 }
 
 function PlanResult({
-  plan, onLock, isLocked, adaptationNote, onCancelOrReplace,
+  plan,
+  wardrobeItems,
+  onLock,
+  isLocked,
+  adaptationNote,
+  onCancelOrReplace,
 }: {
-  plan:               OutingPlanRecommendation;
-  onLock?:            () => void;
-  isLocked:           boolean;
-  adaptationNote?:    string | null;
+  plan: OutingPlanRecommendation;
+  wardrobeItems: WardrobeItem[];
+  onLock?: () => void;
+  isLocked: boolean;
+  adaptationNote?: string | null;
   onCancelOrReplace?: () => void;
 }) {
+  const wardrobeById = new Map(wardrobeItems.map((item) => [item.id, item]));
+  const wardrobeItemFor = (item: PlannedItem) =>
+    item.wardrobeId ? wardrobeById.get(item.wardrobeId) : undefined;
   const s = plan.weatherSummary;
   // Show outside raw temperature first, then indoor estimate when applicable.
   // "adjusted for you" is suppressed in favour of the two-part display for indoors.
@@ -183,8 +249,8 @@ function PlanResult({
     ctx === "indoors"
       ? `Outside: ${rawLabel} · Indoor estimate: ~${Math.round(s.destinationMaxC)} °C`
       : ctx === "mixed"
-      ? `Outside: ${rawLabel} · Destination estimate: ~${Math.round(s.destinationMaxC)} °C`
-      : `${rawLabel} apparent`;
+        ? `Outside: ${rawLabel} · Destination estimate: ~${Math.round(s.destinationMaxC)} °C`
+        : `${rawLabel} apparent`;
 
   return (
     <div className="flex flex-col gap-5 pb-8">
@@ -226,14 +292,22 @@ function PlanResult({
       {plan.baseItems.length > 0 && (
         <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
           <SectionHeader icon={Shirt} title="Base outfit" />
-          <div className="flex flex-col gap-3">{plan.baseItems.map((item,i) => <ItemRow key={i} item={item} />)}</div>
+          <div className="flex flex-col gap-3">
+            {plan.baseItems.map((item, i) => (
+              <ItemRow key={i} item={item} wardrobeItem={wardrobeItemFor(item)} />
+            ))}
+          </div>
         </div>
       )}
 
       {plan.departureLayers && plan.departureLayers.length > 0 && (
         <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
           <SectionHeader icon={Layers} title="Wear when leaving" />
-          <div className="flex flex-col gap-3">{plan.departureLayers.map((item,i) => <ItemRow key={i} item={item} />)}</div>
+          <div className="flex flex-col gap-3">
+            {plan.departureLayers.map((item, i) => (
+              <ItemRow key={i} item={item} wardrobeItem={wardrobeItemFor(item)} />
+            ))}
+          </div>
           {plan.adaptationHint && (
             <p className="mt-3 text-xs text-muted-foreground leading-snug">{plan.adaptationHint}</p>
           )}
@@ -243,30 +317,46 @@ function PlanResult({
       {plan.carryLayers && plan.carryLayers.length > 0 && (
         <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
           <SectionHeader icon={Layers} title="Pack for later" />
-          <div className="flex flex-col gap-3">{plan.carryLayers.map((item,i) => <ItemRow key={i} item={item} />)}</div>
+          <div className="flex flex-col gap-3">
+            {plan.carryLayers.map((item, i) => (
+              <ItemRow key={i} item={item} wardrobeItem={wardrobeItemFor(item)} />
+            ))}
+          </div>
         </div>
       )}
 
       {/* Safety fallback: v3 always has departureLayers/carryLayers; this path is unreachable
           for validated v3 plans but guards against future schema drift or unit-test mocks. */}
-      {(!plan.departureLayers && !plan.carryLayers) && plan.removableLayers.length > 0 && (
+      {!plan.departureLayers && !plan.carryLayers && plan.removableLayers.length > 0 && (
         <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
           <SectionHeader icon={Layers} title="Bring for later" />
-          <div className="flex flex-col gap-3">{plan.removableLayers.map((item,i) => <ItemRow key={i} item={item} />)}</div>
+          <div className="flex flex-col gap-3">
+            {plan.removableLayers.map((item, i) => (
+              <ItemRow key={i} item={item} wardrobeItem={wardrobeItemFor(item)} />
+            ))}
+          </div>
         </div>
       )}
 
       {plan.footwear.length > 0 && (
         <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
           <SectionHeader icon={Footprints} title="Footwear" />
-          <div className="flex flex-col gap-3">{plan.footwear.map((item,i) => <ItemRow key={i} item={item} />)}</div>
+          <div className="flex flex-col gap-3">
+            {plan.footwear.map((item, i) => (
+              <ItemRow key={i} item={item} wardrobeItem={wardrobeItemFor(item)} />
+            ))}
+          </div>
         </div>
       )}
 
       {plan.accessories.length > 0 && (
         <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
           <SectionHeader icon={Umbrella} title="Accessories" />
-          <div className="flex flex-col gap-3">{plan.accessories.map((item,i) => <ItemRow key={i} item={item} />)}</div>
+          <div className="flex flex-col gap-3">
+            {plan.accessories.map((item, i) => (
+              <ItemRow key={i} item={item} wardrobeItem={wardrobeItemFor(item)} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -274,7 +364,7 @@ function PlanResult({
         <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
           <SectionHeader icon={Clock} title="Timeline" />
           <div className="flex flex-col gap-3">
-            {plan.timelineGuidance.map((g,i) => (
+            {plan.timelineGuidance.map((g, i) => (
               <div key={i} className="flex items-start gap-3">
                 <span className="text-xs font-medium text-muted-foreground w-16 shrink-0 mt-0.5">
                   {formatHour(g.startTime)}
@@ -288,20 +378,28 @@ function PlanResult({
 
       <div className="rounded-3xl bg-foreground/[0.04] px-5 py-4">
         <SectionHeader icon={Info} title="Why this plan" />
-        <p className="text-sm text-muted-foreground leading-relaxed">{plan.personalizationExplanation}</p>
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          {plan.personalizationExplanation}
+        </p>
       </div>
 
       {!isLocked && onLock && (
-        <button type="button" onClick={onLock}
-          className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background">
+        <button
+          type="button"
+          onClick={onLock}
+          className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background"
+        >
           <CheckCircle2 className="h-4 w-4" /> Use this plan
         </button>
       )}
 
       {isLocked && onCancelOrReplace && (
         <div className="flex flex-col gap-3">
-          <button type="button" onClick={onCancelOrReplace}
-            className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground/[0.04] py-2.5 text-sm text-muted-foreground">
+          <button
+            type="button"
+            onClick={onCancelOrReplace}
+            className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground/[0.04] py-2.5 text-sm text-muted-foreground"
+          >
             <X className="h-4 w-4" /> Cancel outing
           </button>
         </div>
@@ -315,66 +413,71 @@ function PlanResult({
 type Step = "form" | "loading" | "result" | "locked";
 
 const OCCASIONS: { id: OutingOccasion; label: string }[] = [
-  { id: "gym",     label: "Gym"           },
-  { id: "college", label: "College"       },
-  { id: "work",    label: "Work"          },
-  { id: "casual",  label: "Casual outing" },
-  { id: "event",   label: "Event"         },
-  { id: "other",   label: "Other"         },
+  { id: "gym", label: "Gym" },
+  { id: "college", label: "College" },
+  { id: "work", label: "Work" },
+  { id: "casual", label: "Casual outing" },
+  { id: "event", label: "Event" },
+  { id: "other", label: "Other" },
 ];
 
-const OCCASION_DEFAULTS: Record<OutingOccasion, { activity: OutingActivity; context: OutingContext }> = {
-  gym:     { activity: "active",   context: "mixed"   },
-  college: { activity: "low",      context: "mixed"   },
-  work:    { activity: "low",      context: "indoors" },
-  casual:  { activity: "moderate", context: "mixed"   },
-  event:   { activity: "low",      context: "indoors" },
-  other:   { activity: "moderate", context: "mixed"   },
+const OCCASION_DEFAULTS: Record<
+  OutingOccasion,
+  { activity: OutingActivity; context: OutingContext }
+> = {
+  gym: { activity: "active", context: "mixed" },
+  college: { activity: "low", context: "mixed" },
+  work: { activity: "low", context: "indoors" },
+  casual: { activity: "moderate", context: "mixed" },
+  event: { activity: "low", context: "indoors" },
+  other: { activity: "moderate", context: "mixed" },
 };
 
 function PlanPage() {
-  const { authLoading, uid }     = useAuthGuard();
-  const entitlement              = useEntitlement();
-  const wardrobeItems            = useWardrobe();
-  const prefs                    = loadPrefs();
-  const isPremium = !entitlement.loading && (entitlement as {active?:boolean}).active === true;
+  const { authLoading, uid } = useAuthGuard();
+  const entitlement = useEntitlement();
+  const wardrobeItems = useWardrobe();
+  const prefs = loadPrefs();
+  const isPremium = !entitlement.loading && (entitlement as { active?: boolean }).active === true;
 
-  const [occasion,      setOccasion]      = useState<OutingOccasion>("college");
-  const [departureMode, setDepartureMode] = useState<"now"|"+1h"|"custom">("now");
-  const [customDepart,  setCustomDepart]  = useState(nowIso());
-  const [returnMode,    setReturnMode]    = useState<"before18"|"18-22"|"after22"|"custom"|"unknown">("before18");
-  const [customReturn,  setCustomReturn]  = useState(todayAt(17, 0));
-  const [activity,      setActivity]      = useState<OutingActivity>("low");
-  const [context,       setContext]       = useState<OutingContext>("mixed");
-  const [formError,     setFormError]     = useState<string|null>(null);
+  const [occasion, setOccasion] = useState<OutingOccasion>("college");
+  const [departureMode, setDepartureMode] = useState<"now" | "+1h" | "custom">("now");
+  const [customDepart, setCustomDepart] = useState(nowIso());
+  const [returnMode, setReturnMode] = useState<
+    "before18" | "18-22" | "after22" | "custom" | "unknown"
+  >("before18");
+  const [customReturn, setCustomReturn] = useState(todayAt(17, 0));
+  const [activity, setActivity] = useState<OutingActivity>("low");
+  const [context, setContext] = useState<OutingContext>("mixed");
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const [step,         setStep]         = useState<Step>("form");
-  const [draft,        setDraft]        = useState<OutingPlanRecommendation|null>(null);
-  const [draftUid,     setDraftUid]     = useState<string|null>(null); // owner of the current draft
-  const [lockedPlan,   setLockedPlan]   = useState<LockedPlan|null>(null);
-  const [error,        setError]        = useState<string|null>(null);
-  const [refreshing,   setRefreshing]   = useState(false);
-  const [styleProfile,       setStyleProfile]       = useState<PersonalStyleProfile | null>(null);
+  const [step, setStep] = useState<Step>("form");
+  const [draft, setDraft] = useState<OutingPlanRecommendation | null>(null);
+  const [draftUid, setDraftUid] = useState<string | null>(null); // owner of the current draft
+  const [lockedPlan, setLockedPlan] = useState<LockedPlan | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [styleProfile, setStyleProfile] = useState<PersonalStyleProfile | null>(null);
   /** True only after the profile load has resolved (success or null result). */
   const [styleProfileLoaded, setStyleProfileLoaded] = useState(false);
 
   // Generation request ID — monotonically increasing, invalidated on UID/premium change
   const generationRequestIdRef = useRef(0);
   // Recheck in-flight token: {uid, planId} or null. Prevents boolean cross-user leakage.
-  const recheckToken = useRef<{uid:string;planId:string}|null>(null);
+  const recheckToken = useRef<{ uid: string; planId: string } | null>(null);
 
   const effectiveDeparture: string = (() => {
-    if (departureMode === "now")  return nowIso();
-    if (departureMode === "+1h")  return addHoursToIso(nowIso(), 1);
+    if (departureMode === "now") return nowIso();
+    if (departureMode === "+1h") return addHoursToIso(nowIso(), 1);
     return customDepart;
   })();
 
-  const effectiveReturn: string|null = (() => {
+  const effectiveReturn: string | null = (() => {
     if (returnMode === "unknown") return null;
     const d = dateOf(effectiveDeparture);
     if (returnMode === "before18") return `${d}T17:30`;
-    if (returnMode === "18-22")    return `${d}T21:00`;
-    if (returnMode === "after22")  return `${d}T23:30`;
+    if (returnMode === "18-22") return `${d}T21:00`;
+    if (returnMode === "after22") return `${d}T23:30`;
     return customReturn;
   })();
 
@@ -410,23 +513,36 @@ function PlanPage() {
 
     if (!isPremium || !uid) {
       currentUidRef.current = null;
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     currentUidRef.current = uid;
 
     // Load the new account's relevant plan
     const p = outingPlanStore.getMostRelevantPlan(uid);
-    if (p) { setLockedPlan(p); setStep("locked"); }
+    if (p) {
+      setLockedPlan(p);
+      setStep("locked");
+    }
 
     // Load new account's style profile with cancellation guard
     loadStyleProfile(uid)
-      .then(sp  => { if (!cancelled) setStyleProfile(sp); })
-      .catch(()  => { if (!cancelled) setStyleProfile(null); })
-      .finally(() => { if (!cancelled) setStyleProfileLoaded(true); });
+      .then((sp) => {
+        if (!cancelled) setStyleProfile(sp);
+      })
+      .catch(() => {
+        if (!cancelled) setStyleProfile(null);
+      })
+      .finally(() => {
+        if (!cancelled) setStyleProfileLoaded(true);
+      });
 
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPremium, uid]);
 
   // Recheck: uses recheckToken {uid, planId} instead of a bare boolean.
@@ -447,27 +563,32 @@ function PlanPage() {
     try {
       const snap = freshPlan.snapshot;
       const result = await fetchOutingForecast(
-        snap.locationLat, snap.locationLon,
-        snap.coverageStart, snap.coverageEnd,
+        snap.locationLat,
+        snap.locationLon,
+        snap.coverageStart,
+        snap.coverageEnd,
       );
       // Guard: token and UID must still match after the await
-      if (result.ok &&
-          currentUidRef.current === uidVal &&
-          recheckToken.current?.uid === uidVal &&
-          recheckToken.current?.planId === planId) {
+      if (
+        result.ok &&
+        currentUidRef.current === uidVal &&
+        recheckToken.current?.uid === uidVal &&
+        recheckToken.current?.planId === planId
+      ) {
         const note = computeAdaptationNote(
           freshPlan,
           result.slice.rawMinApparentC,
           result.slice.rawMaxApparentC,
           result.slice.peakPrecipProb,
           result.slice.hasRain,
-          result.slice.slots.some(s => RAIN_CODES.has(s.code)),
+          result.slice.slots.some((s) => RAIN_CODES.has(s.code)),
         );
         const updated = outingPlanStore.updateAdaptation(uidVal, planId, note);
         if (updated && currentUidRef.current === uidVal) setLockedPlan(updated);
       }
-    } catch { /* non-fatal */ }
-    finally {
+    } catch {
+      /* non-fatal */
+    } finally {
       // Only clear token and refreshing if this request still owns the token
       if (recheckToken.current?.uid === uidVal && recheckToken.current?.planId === planId) {
         recheckToken.current = null;
@@ -496,13 +617,13 @@ function PlanPage() {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onFocus);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lockedPlan?.id, step, uid]);
 
-  function validate(): string|null {
+  function validate(): string | null {
     // Issue 17: reject materially past departure (> 30 min in the past)
-    const depMs  = parseIsoLocal(effectiveDeparture).getTime();
-    const now30  = Date.now() - 30 * 60_000;
+    const depMs = parseIsoLocal(effectiveDeparture).getTime();
+    const now30 = Date.now() - 30 * 60_000;
     if (departureMode === "custom" && depMs < now30) {
       return "Departure time is in the past. Please choose a current or future time.";
     }
@@ -514,7 +635,10 @@ function PlanPage() {
 
   async function generate() {
     const err = validate();
-    if (err) { setFormError(err); return; }
+    if (err) {
+      setFormError(err);
+      return;
+    }
     // Capture ownership before any await — both UID and a monotonic request ID.
     // If either changes before we resume, all post-await writes are discarded.
     const capturedUid = uid;
@@ -527,7 +651,7 @@ function PlanPage() {
     setStep("loading");
 
     let retIso = effectiveReturn;
-    let assumption: string|undefined;
+    let assumption: string | undefined;
     if (!retIso) {
       retIso = addHoursToIso(effectiveDeparture, 8);
       assumption = "Return time isn't set, so this plan covers the next 8 hours.";
@@ -537,13 +661,13 @@ function PlanPage() {
 
     let forecastResult: Awaited<ReturnType<typeof fetchOutingForecast>>;
     try {
-      forecastResult = await fetchOutingForecast(
-        city.lat, city.lon, effectiveDeparture, retIso,
-      );
+      forecastResult = await fetchOutingForecast(city.lat, city.lon, effectiveDeparture, retIso);
     } catch {
       // Guard: only write if UID and request-ID still match
-      if (currentUidRef.current === capturedUid &&
-          generationRequestIdRef.current === capturedRequestId) {
+      if (
+        currentUidRef.current === capturedUid &&
+        generationRequestIdRef.current === capturedRequestId
+      ) {
         setError("Could not fetch the forecast. Please check your connection and try again.");
         setStep("form");
       }
@@ -551,8 +675,10 @@ function PlanPage() {
     }
 
     // Guard: discard results if user or request changed since the await
-    if (currentUidRef.current !== capturedUid ||
-        generationRequestIdRef.current !== capturedRequestId) {
+    if (
+      currentUidRef.current !== capturedUid ||
+      generationRequestIdRef.current !== capturedRequestId
+    ) {
       return;
     }
 
@@ -560,9 +686,9 @@ function PlanPage() {
       if (forecastResult.reason === "out_of_range") {
         setError(
           `The selected interval is outside the available forecast.\n` +
-          `Available: ${formatIsoDateTime(forecastResult.availableStart)} – ` +
-          `${formatIsoDateTime(forecastResult.availableEnd)}.\n` +
-          `Please choose a departure within that window.`
+            `Available: ${formatIsoDateTime(forecastResult.availableStart)} – ` +
+            `${formatIsoDateTime(forecastResult.availableEnd)}.\n` +
+            `Please choose a departure within that window.`,
         );
       } else {
         setError("Could not fetch the forecast. Please check your connection and try again.");
@@ -572,17 +698,23 @@ function PlanPage() {
     }
 
     const input: OutingInput = {
-      occasion, departureTime: effectiveDeparture, returnTime: effectiveReturn,
-      activity, context, locationLabel: city.name,
+      occasion,
+      departureTime: effectiveDeparture,
+      returnTime: effectiveReturn,
+      activity,
+      context,
+      locationLabel: city.name,
     };
 
     const rec = planOuting(input, forecastResult.slice, wardrobeItems, prefs, retIso, styleProfile);
     if (assumption) {
-      (rec as OutingPlanRecommendation & {assumption?:string}).assumption = assumption;
+      (rec as OutingPlanRecommendation & { assumption?: string }).assumption = assumption;
     }
     // Guard: one final check before writing React state
-    if (currentUidRef.current === capturedUid &&
-        generationRequestIdRef.current === capturedRequestId) {
+    if (
+      currentUidRef.current === capturedUid &&
+      generationRequestIdRef.current === capturedRequestId
+    ) {
       setDraft(rec);
       setDraftUid(capturedUid);
       setStep("result");
@@ -592,7 +724,7 @@ function PlanPage() {
   function lockDraft() {
     // Guard: only commit if the draft was generated for the current user
     if (!draft || !uid || draftUid !== uid) return;
-    const priorId = (lockedPlan && lockedPlan.uid === uid) ? lockedPlan.id : null;
+    const priorId = lockedPlan && lockedPlan.uid === uid ? lockedPlan.id : null;
     const committed = outingPlanStore.commitPlan(uid, draft, priorId);
     setLockedPlan(committed);
     setDraft(null);
@@ -602,9 +734,12 @@ function PlanPage() {
 
   function startReplace() {
     if (!lockedPlan || !uid || lockedPlan.uid !== uid) return;
-    if (!window.confirm(
-      "This will generate a new plan draft. Your current plan stays locked until you confirm the new one."
-    )) return;
+    if (
+      !window.confirm(
+        "This will generate a new plan draft. Your current plan stays locked until you confirm the new one.",
+      )
+    )
+      return;
     setDraft(null);
     setDraftUid(null);
     setStep("form");
@@ -636,7 +771,10 @@ function PlanPage() {
     return (
       <AppShell>
         <div className="px-4 py-6">
-          <Link {...{to: "/" as any}} className="flex items-center gap-1 text-sm text-muted-foreground mb-6">
+          <Link
+            {...{ to: "/" as any }}
+            className="flex items-center gap-1 text-sm text-muted-foreground mb-6"
+          >
             <ChevronLeft className="h-4 w-4" /> Back
           </Link>
           <UpgradeTeaser />
@@ -649,7 +787,7 @@ function PlanPage() {
     <AppShell>
       <div className="mx-auto max-w-lg px-4 py-6">
         <div className="flex items-center gap-3 mb-6">
-          <Link {...{to: "/" as any}} className="text-muted-foreground" aria-label="Back to home">
+          <Link {...{ to: "/" as any }} className="text-muted-foreground" aria-label="Back to home">
             <ChevronLeft className="h-5 w-5" />
           </Link>
           <h1 className="flex-1 text-xl font-bold">Outing Planner</h1>
@@ -659,7 +797,10 @@ function PlanPage() {
         </div>
 
         {error && (
-          <div className="mb-4 flex items-start gap-3 rounded-2xl bg-destructive/10 px-4 py-3 whitespace-pre-line" role="alert">
+          <div
+            className="mb-4 flex items-start gap-3 rounded-2xl bg-destructive/10 px-4 py-3 whitespace-pre-line"
+            role="alert"
+          >
             <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
             <p className="text-sm text-destructive">{error}</p>
           </div>
@@ -676,17 +817,25 @@ function PlanPage() {
           <>
             <PlanResult
               plan={lockedPlan.snapshot}
+              wardrobeItems={wardrobeItems}
               isLocked
               adaptationNote={lockedPlan.adaptationNote}
               onCancelOrReplace={cancelPlan}
             />
             <div className="flex flex-col gap-2 mt-2">
-              <button type="button" onClick={startReplace}
-                className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground/[0.06] py-3 text-sm font-medium text-foreground">
+              <button
+                type="button"
+                onClick={startReplace}
+                className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground/[0.06] py-3 text-sm font-medium text-foreground"
+              >
                 <RefreshCw className="h-4 w-4" /> Generate new plan
               </button>
-              <button type="button" onClick={manualRefresh} disabled={refreshing}
-                className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground/[0.04] py-2.5 text-sm text-muted-foreground disabled:opacity-50">
+              <button
+                type="button"
+                onClick={manualRefresh}
+                disabled={refreshing}
+                className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground/[0.04] py-2.5 text-sm text-muted-foreground disabled:opacity-50"
+              >
                 <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 {refreshing ? "Checking forecast…" : "Recheck forecast"}
               </button>
@@ -695,7 +844,12 @@ function PlanPage() {
         )}
 
         {step === "result" && draft && draftUid === uid && (
-          <PlanResult plan={draft} isLocked={false} onLock={lockDraft} />
+          <PlanResult
+            plan={draft}
+            wardrobeItems={wardrobeItems}
+            isLocked={false}
+            onLock={lockDraft}
+          />
         )}
 
         {step === "form" && (
@@ -704,7 +858,12 @@ function PlanPage() {
               <label className="mb-2 block text-sm font-semibold">What's the occasion?</label>
               <div className="flex flex-wrap gap-2">
                 {OCCASIONS.map(({ id, label }) => (
-                  <Chip key={id} label={label} selected={occasion===id} onClick={() => setOccasion(id)} />
+                  <Chip
+                    key={id}
+                    label={label}
+                    selected={occasion === id}
+                    onClick={() => setOccasion(id)}
+                  />
                 ))}
               </div>
             </section>
@@ -714,7 +873,10 @@ function PlanPage() {
               <div className="flex items-center gap-2 rounded-2xl bg-foreground/[0.04] px-4 py-3">
                 <MapPin className="h-4 w-4 text-muted-foreground shrink-0" />
                 <span className="text-sm">{prefs.city?.name ?? "Current location"}</span>
-                <Link {...{to: "/preferences" as any}} className="ml-auto text-xs text-primary underline underline-offset-2 shrink-0">
+                <Link
+                  {...{ to: "/preferences" as any }}
+                  className="ml-auto text-xs text-primary underline underline-offset-2 shrink-0"
+                >
                   Change
                 </Link>
               </div>
@@ -723,47 +885,88 @@ function PlanPage() {
             <section>
               <label className="mb-2 block text-sm font-semibold">When are you leaving?</label>
               <div className="flex flex-wrap gap-2 mb-3">
-                {([["now","Now"],["+1h","In 1 hour"],["custom","Choose time"]] as [typeof departureMode,string][])
-                  .map(([mode,label]) => (
-                  <Chip key={mode} label={label} selected={departureMode===mode}
-                    onClick={() => setDepartureMode(mode)} />
+                {(
+                  [
+                    ["now", "Now"],
+                    ["+1h", "In 1 hour"],
+                    ["custom", "Choose time"],
+                  ] as [typeof departureMode, string][]
+                ).map(([mode, label]) => (
+                  <Chip
+                    key={mode}
+                    label={label}
+                    selected={departureMode === mode}
+                    onClick={() => setDepartureMode(mode)}
+                  />
                 ))}
               </div>
               {departureMode === "custom" && (
-                <input type="datetime-local" value={customDepart}
-                  onChange={e => setCustomDepart(e.target.value)}
+                <input
+                  type="datetime-local"
+                  value={customDepart}
+                  onChange={(e) => setCustomDepart(e.target.value)}
                   className="w-full rounded-2xl bg-foreground/[0.04] px-4 py-3 text-sm outline-none ring-1 ring-transparent focus:ring-primary/40"
-                  aria-label="Departure date and time" />
+                  aria-label="Departure date and time"
+                />
               )}
             </section>
 
             <section>
-              <label className="mb-2 block text-sm font-semibold">When do you expect to be back?</label>
+              <label className="mb-2 block text-sm font-semibold">
+                When do you expect to be back?
+              </label>
               <div className="flex flex-wrap gap-2 mb-3">
-                {([
-                  ["before18","Before 6 PM"],["18-22","6–10 PM"],
-                  ["after22","After 10 PM"],["custom","Choose time"],["unknown","Not sure"],
-                ] as [typeof returnMode,string][]).map(([mode,label]) => (
-                  <Chip key={mode} label={label} selected={returnMode===mode} onClick={() => setReturnMode(mode)} />
+                {(
+                  [
+                    ["before18", "Before 6 PM"],
+                    ["18-22", "6–10 PM"],
+                    ["after22", "After 10 PM"],
+                    ["custom", "Choose time"],
+                    ["unknown", "Not sure"],
+                  ] as [typeof returnMode, string][]
+                ).map(([mode, label]) => (
+                  <Chip
+                    key={mode}
+                    label={label}
+                    selected={returnMode === mode}
+                    onClick={() => setReturnMode(mode)}
+                  />
                 ))}
               </div>
               {returnMode === "custom" && (
-                <input type="datetime-local" value={customReturn}
-                  onChange={e => setCustomReturn(e.target.value)}
+                <input
+                  type="datetime-local"
+                  value={customReturn}
+                  onChange={(e) => setCustomReturn(e.target.value)}
                   className="w-full rounded-2xl bg-foreground/[0.04] px-4 py-3 text-sm outline-none ring-1 ring-transparent focus:ring-primary/40"
-                  aria-label="Return date and time" />
+                  aria-label="Return date and time"
+                />
               )}
               {returnMode === "unknown" && (
-                <p className="text-xs text-muted-foreground mt-1">We'll plan for 8 hours from when you leave.</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  We'll plan for 8 hours from when you leave.
+                </p>
               )}
             </section>
 
             <section>
-              <label className="mb-2 block text-sm font-semibold">Where will you spend most of your time?</label>
+              <label className="mb-2 block text-sm font-semibold">
+                Where will you spend most of your time?
+              </label>
               <div className="flex flex-wrap gap-2">
-                {([["indoors","Mostly indoors"],["mixed","Mixed"],["outdoors","Mostly outdoors"]] as [OutingContext,string][])
-                  .map(([id,label]) => (
-                  <Chip key={id} label={label} selected={context===id} onClick={() => setContext(id)} />
+                {(
+                  [
+                    ["indoors", "Mostly indoors"],
+                    ["mixed", "Mixed"],
+                    ["outdoors", "Mostly outdoors"],
+                  ] as [OutingContext, string][]
+                ).map(([id, label]) => (
+                  <Chip
+                    key={id}
+                    label={label}
+                    selected={context === id}
+                    onClick={() => setContext(id)}
+                  />
                 ))}
               </div>
             </section>
@@ -771,23 +974,39 @@ function PlanPage() {
             <section>
               <label className="mb-2 block text-sm font-semibold">Activity level</label>
               <div className="flex flex-wrap gap-2">
-                {([["low","Low"],["moderate","Moderate"],["active","Active"]] as [OutingActivity,string][])
-                  .map(([id,label]) => (
-                  <Chip key={id} label={label} selected={activity===id} onClick={() => setActivity(id)} />
+                {(
+                  [
+                    ["low", "Low"],
+                    ["moderate", "Moderate"],
+                    ["active", "Active"],
+                  ] as [OutingActivity, string][]
+                ).map(([id, label]) => (
+                  <Chip
+                    key={id}
+                    label={label}
+                    selected={activity === id}
+                    onClick={() => setActivity(id)}
+                  />
                 ))}
               </div>
             </section>
 
             {formError && (
-              <div className="flex items-start gap-3 rounded-2xl bg-destructive/10 px-4 py-3" role="alert">
+              <div
+                className="flex items-start gap-3 rounded-2xl bg-destructive/10 px-4 py-3"
+                role="alert"
+              >
                 <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
                 <p className="text-sm text-destructive">{formError}</p>
               </div>
             )}
 
-            <button type="button" onClick={generate}
+            <button
+              type="button"
+              onClick={generate}
               disabled={!styleProfileLoaded}
-            className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background disabled:opacity-50 disabled:cursor-not-allowed">
+              className="press flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3.5 text-sm font-semibold text-background disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               {!styleProfileLoaded ? "Loading your preferences…" : "Build my outfit plan"}
             </button>
           </div>

@@ -42,7 +42,11 @@ export function ItemDetailSheet({
       aria-label={item.name}
       className="fixed inset-0 z-[60] flex items-end justify-center"
     >
-      <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <button
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+      />
       <div className="glass-card relative max-h-[88vh] w-full max-w-md overflow-y-auto rounded-b-none rounded-t-[2rem] p-5 pb-8 animate-fade-up sm:mb-6 sm:rounded-[2rem]">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
@@ -61,6 +65,9 @@ export function ItemDetailSheet({
         <ItemTile
           category={item.category}
           tint={item.tint}
+          itemId={item.id}
+          hasLocalPhoto={item.hasLocalPhoto === true}
+          photoAlt={item.name}
           className="h-56 w-full rounded-[1.75rem]"
           iconClassName="h-20 w-20"
         />
@@ -80,7 +87,9 @@ export function ItemDetailSheet({
         <div className="mt-5 grid grid-cols-2 gap-3">
           <Action icon={<Pencil className="h-4 w-4" />} label="Edit" onClick={() => {}} />
           <Action
-            icon={<Heart className={`h-4 w-4 ${item.favourite ? "fill-current text-primary" : ""}`} />}
+            icon={
+              <Heart className={`h-4 w-4 ${item.favourite ? "fill-current text-primary" : ""}`} />
+            }
             label={item.favourite ? "Favourited" : "Favourite"}
             onClick={onToggleFavourite}
           />

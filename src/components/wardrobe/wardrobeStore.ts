@@ -53,6 +53,7 @@
 
 import { useSyncExternalStore } from "react";
 import { SEED_ITEMS, type WardrobeItem } from "./wardrobeData";
+import { clearWardrobePhotos, deleteWardrobePhoto } from "@/lib/wardrobePhotoStore";
 
 // ── Storage key (versioned) ───────────────────────────────────────────────────
 
@@ -97,7 +98,9 @@ function loadFromStorage(): WardrobeItem[] {
     if (
       !Array.isArray(parsed) ||
       parsed.length === 0 ||
-      !parsed.every((x) => x && typeof x === "object" && typeof (x as Record<string, unknown>).id === "string")
+      !parsed.every(
+        (x) => x && typeof x === "object" && typeof (x as Record<string, unknown>).id === "string",
+      )
     ) {
       return [...SEED_ITEMS];
     }
@@ -176,9 +179,9 @@ export const wardrobe = {
    * persisting. New AI scans never receive evidence in the first place.
    * Existing items already in storage are not affected (no rewrite of old data).
    */
-  add(item: Omit<WardrobeItem, "id">): void {
+  add(item: Omit<WardrobeItem, "id">): string | null {
     const id = `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    if (items.some((i) => i.id === id)) return; // Duplicate guard
+    if (items.some((i) => i.id === id)) return null; // Duplicate guard
 
     // Strip evidence from aiAnalysis before persisting (decision a).
     // New scans never include evidence; this guard protects against any
@@ -192,6 +195,7 @@ export const wardrobe = {
     items = [...items, { ...sanitized, id }];
     saveToStorage(items); // Persist before notifying React
     emit();
+    return id;
   },
 
   /** Apply a partial patch to an existing item (favourite, unavailable, name edit, etc.). */
@@ -207,6 +211,7 @@ export const wardrobe = {
     items = items.filter((i) => i.id !== id);
     saveToStorage(items);
     emit();
+    void deleteWardrobePhoto(id).catch(() => undefined);
   },
 
   /**
@@ -217,8 +222,13 @@ export const wardrobe = {
   clear(): void {
     items = [...SEED_ITEMS];
     if (isBrowser()) {
-      try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+      try {
+        window.localStorage.removeItem(STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
     }
     emit();
+    void clearWardrobePhotos().catch(() => undefined);
   },
 };
