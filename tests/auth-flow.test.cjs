@@ -39,7 +39,7 @@ ok("B2. Step 2 (WardrobeDemoCard) present", welcome.includes("WardrobeDemoCard")
 ok("B3. Step 3 (ScanDemoCard) present", welcome.includes("ScanDemoCard"));
 ok("B4. Step 4: PreAuthQuestions present (not /signup)", welcome.includes("PreAuthQuestions"));
 ok("B5. Step 3 Continue → goToStep(4) (questions, not signup)",
-  welcome.includes("goToStep(4)") && !welcome.includes("goToSignup()") || welcome.includes("onClick={() => goToStep(4)}"));
+  welcome.includes("goToStep(4)") && !welcome.includes("goToSignup()") || welcome.includes("onClick={() => goToStep(4)}") || welcome.includes("onPrimary={() => goToStep(4)}"));
 ok("B6. PreAuthQuestions 'Continue to create your account' → goToSignup()",
   welcome.includes("goToSignup") && paq.includes("Continue to create your account"));
 ok("B7. goToSignup() → /signup?mode=create", welcome.includes('{ mode: "create" }'));
@@ -329,7 +329,7 @@ ok("N18. All OnboardingShell calls pass direction", (() => {
 ok("N19. WeatherDemoCard imports onboarding-motion.css", wdcSrc.includes("onboarding-motion.css"));
 ok("N20. WeatherDemoCard: column headers stagger with ob-rise", wdcSrc.includes("ob-rise"));
 ok("N21. WeatherDemoCard: temperature line draws with ob-draw", wdcSrc.includes("ob-draw"));
-ok("N22. WeatherDemoCard: outfit silhouettes reveal with ob-pop", wdcSrc.includes("ob-pop") && wdcSrc.includes("OutfitSilhouette"));
+ok("N22. WeatherDemoCard: timeline decisions reveal with ob-pop", wdcSrc.includes("ob-pop") && wdcSrc.includes("Pack for later"));
 ok("N23. WeatherDemoCard: umbrella banner arrives last (ob-d11 or later)", wdcSrc.includes("ob-d11") || wdcSrc.includes("ob-d10"));
 ok("N24. WeatherDemoCard: no infinite animation loops (ob-beam/ob-sweep absent)", !wdcSrc.includes("ob-beam") && !wdcSrc.includes("ob-sweep"));
 
