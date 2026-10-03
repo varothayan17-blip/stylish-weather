@@ -1,213 +1,90 @@
 /**
- * WeatherDemoCard — static weather visualization for intro screen 2.
+ * WeatherDemoCard — slide 1 "Dress for where the day takes you".
  *
- * Motion: purely CSS (see ./onboarding-motion.css). Reveal order is
- * morning → midday → afternoon → evening, the temperature line draws left to
- * right, the afternoon rain icon lands before the umbrella banner slides in
- * last. No timers, no loops, no people, no emoji, no remote images.
- * All values are hardcoded demonstration data — no live weather is fetched.
+ * A static day/location timeline (Home → Campus → Night out → Return) with
+ * the practical decision attached to each stop. Motion is CSS-only
+ * (./onboarding-motion.css): the timeline rail draws top-to-bottom (ob-draw)
+ * and each stop + decision chip reveals in order, once. All values are
+ * hardcoded demonstration data — no live weather is fetched.
  */
-import { Sun, CloudRain, CloudSun, Moon, Umbrella } from "lucide-react";
+import { Home, GraduationCap, Sparkles, MoonStar, Umbrella } from "lucide-react";
 import "./onboarding-motion.css";
 
-const PERIODS = [
-  {
-    label: "Morning",
-    time: "8 AM",
-    Icon: Sun,
-    iconClass: "text-amber-400",
-    temp: "8°",
-    top: "text-slate-400",
-    bottom: "text-stone-400",
-    shoe: "text-slate-600",
-  },
-  {
-    label: "Midday",
-    time: "12 PM",
-    Icon: CloudSun,
-    iconClass: "text-amber-300",
-    temp: "12°",
-    top: "text-blue-400",
-    bottom: "text-stone-400",
-    shoe: "text-slate-500",
-  },
-  {
-    label: "Afternoon",
-    time: "4 PM",
-    Icon: CloudRain,
-    iconClass: "text-primary",
-    temp: "9°",
-    top: "text-slate-500",
-    bottom: "text-stone-500",
-    shoe: "text-slate-700",
-  },
-  {
-    label: "Evening",
-    time: "8 PM",
-    Icon: Moon,
-    iconClass: "text-indigo-400",
-    temp: "6°",
-    top: "text-slate-600",
-    bottom: "text-stone-600",
-    shoe: "text-slate-800",
-  },
+type Decision = "wear" | "remove" | "pack" | "wearPacked";
+
+const STOPS = [
+  { place: "Home", time: "8 AM", temp: "17°C", Icon: Home, decision: "wear" as Decision, item: "Light knit + jeans", delay: "ob-d2" },
+  { place: "Campus", time: "2 PM", temp: "Indoor est. 21°C", Icon: GraduationCap, decision: "remove" as Decision, item: "Open or remove the knit", delay: "ob-d4" },
+  { place: "Night out", time: "10 PM", temp: "12°C · rain", Icon: Sparkles, decision: "pack" as Decision, item: "Jacket in your bag", delay: "ob-d6" },
+  { place: "Return", time: "1 AM", temp: "9°C", Icon: MoonStar, decision: "wearPacked" as Decision, item: "Jacket on, zipped", delay: "ob-d8" },
 ] as const;
 
-// Normalised temps for the sparkline: 8°=0, 12°=1, 9°=0.5, 6°=0.17
-const TEMP_NORM = [0, 1, 0.5, 0.17];
+const DECISION_LABEL: Record<Decision, string> = {
+  wear: "Wear now",
+  remove: "Remove indoors",
+  pack: "Pack for later",
+  wearPacked: "Put jacket on",
+};
 
-/** Per-column reveal delays, morning → evening. */
-const COL_DELAY = ["ob-d2", "ob-d4", "ob-d6", "ob-d8"] as const;
-const OUTFIT_DELAY = ["ob-d6", "ob-d7", "ob-d8", "ob-d9"] as const;
-
-/**
- * One readable head-to-toe silhouette: top, bottom and footwear grouped as a
- * single figure with edge highlights and a grounded contact shadow.
- */
-function OutfitSilhouette({
-  top,
-  bottom,
-  shoe,
-}: {
-  top: string;
-  bottom: string;
-  shoe: string;
-}) {
-  return (
-    <svg viewBox="0 0 44 92" fill="none" className="h-[74px] w-full" aria-hidden>
-      {/* Grounded contact shadow */}
-      <ellipse cx="22" cy="88" rx="14" ry="2.6" className="fill-foreground/12" />
-
-      {/* Bottom (trousers) */}
-      <g className={bottom}>
-        <path
-          d="M11 40 H33 L31.5 78 H24 L22 52 L20 78 H12.5 Z"
-          fill="currentColor"
-          opacity="0.9"
-        />
-        <path d="M11 40 H33 L32.7 46 H11.3 Z" fill="currentColor" opacity="0.55" />
-        <path d="M22 46 V78" stroke="currentColor" strokeWidth="0.6" opacity="0.35" />
-      </g>
-
-      {/* Footwear */}
-      <g className={shoe}>
-        <path d="M11 78 H20.5 v5 q0 2.4 -2.6 2.4 H11 q-2 0 -2 -2 Z" fill="currentColor" />
-        <path d="M23.5 78 H33 v5.4 q0 2 -2 2 h-6.9 q-2.6 0 -2.6 -2.4 Z" fill="currentColor" />
-        <path
-          d="M9 84 h11.5 M23.5 84 H35"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          opacity="0.55"
-          strokeLinecap="round"
-        />
-      </g>
-
-      {/* Top (sweater / jacket) with sleeves */}
-      <g className={top}>
-        <path
-          d="M15 12 L6 20 L9.6 25 L13 22 V46 H31 V22 L34.4 25 L38 20 L29 12 Z"
-          fill="currentColor"
-          opacity="0.95"
-        />
-        {/* Sleeve shading */}
-        <path d="M15 12 L6 20 L9.6 25 L13 22 Z" fill="currentColor" opacity="0.7" />
-        <path d="M29 12 L38 20 L34.4 25 L31 22 Z" fill="currentColor" opacity="0.7" />
-        {/* Collar */}
-        <path d="M17 11 Q22 7 27 11 L28.6 13.4 Q22 17.6 15.4 13.4 Z" fill="currentColor" />
-        {/* Edge highlight */}
-        <path
-          d="M15 13 L13.6 21"
-          stroke="currentColor"
-          strokeWidth="0.8"
-          opacity="0.35"
-          strokeLinecap="round"
-        />
-        <path d="M13 44 H31" stroke="currentColor" strokeWidth="1.4" opacity="0.5" />
-      </g>
-    </svg>
-  );
-}
+const DECISION_STYLE: Record<Decision, string> = {
+  wear: "bg-foreground text-background",
+  remove: "bg-primary/12 text-primary ring-1 ring-inset ring-primary/25",
+  pack: "bg-primary text-primary-foreground",
+  wearPacked: "bg-foreground/[0.06] text-foreground ring-1 ring-inset ring-foreground/10",
+};
 
 export function WeatherDemoCard() {
-  const minY = 16;
-  const maxY = 4;
-  const colW = 100 / PERIODS.length;
-
-  const coords = TEMP_NORM.map((n, i) => ({
-    x: Number((colW * i + colW / 2).toFixed(2)),
-    y: Number((maxY + (1 - n) * (minY - maxY)).toFixed(2)),
-  }));
-  const points = coords.map((p) => `${p.x},${p.y}`).join(" ");
-
   return (
     <div
-      className="glass-card overflow-hidden rounded-3xl p-4"
+      className="glass-card relative overflow-hidden rounded-3xl p-4"
       role="img"
-      aria-label="Example daily forecast: morning 8 degrees, midday 12 degrees, afternoon 9 degrees with rain, evening 6 degrees, with a suggested outfit for each period."
+      aria-label="Example outing: home at 8 AM, 17 degrees, wear a light knit now; campus at 2 PM indoors, remove the knit; night out at 10 PM, 12 degrees with rain, pack a jacket; return at 1 AM, 9 degrees, put the jacket on. Rain later, bring an umbrella."
     >
-      {/* Column headers + weather icons + temperatures */}
-      <div className="grid grid-cols-4 gap-1">
-        {PERIODS.map(({ label, time, Icon, iconClass, temp }, i) => (
-          <div
-            key={label}
-            className={`ob-anim ob-rise ${COL_DELAY[i]} flex flex-col items-center gap-0.5`}
-          >
-            <p className="text-[10px] font-semibold text-foreground/70">{label}</p>
-            <p className="text-[9px] text-muted-foreground">{time}</p>
-            <Icon aria-hidden className={`mt-1 h-7 w-7 ${iconClass}`} strokeWidth={1.5} />
-            <p className="mt-0.5 text-lg font-bold tracking-tight">{temp}</p>
-          </div>
-        ))}
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Today's outing</p>
+        <p className="text-[11px] font-medium text-muted-foreground">4 stops</p>
       </div>
 
-      {/* Temperature sparkline — drawn left to right, points revealed in order */}
-      <div className="mt-2 px-1">
-        <svg viewBox="0 0 100 22" preserveAspectRatio="none" className="h-5 w-full" aria-hidden>
-          <defs>
-            <linearGradient id="wdc-line-grad" x1="0" x2="1" y1="0" y2="0">
-              <stop offset="0%" stopColor="oklch(0.62 0.16 248)" stopOpacity="0.35" />
-              <stop offset="50%" stopColor="oklch(0.62 0.16 248)" stopOpacity="1" />
-              <stop offset="100%" stopColor="oklch(0.62 0.16 248)" stopOpacity="0.5" />
-            </linearGradient>
-          </defs>
-          <polyline
-            points={points}
-            fill="none"
-            stroke="url(#wdc-line-grad)"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-            className="ob-anim ob-draw ob-d2"
-            style={{ ["--ob-len" as string]: "160" }}
+      <div className="relative mt-3">
+        {/* Timeline rail — draws once, top to bottom */}
+        <svg aria-hidden className="absolute left-[17px] top-4 h-[calc(100%-2rem)] w-1" viewBox="0 0 2 100" preserveAspectRatio="none">
+          <line x1="1" y1="0" x2="1" y2="100" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" className="text-foreground/10" />
+          <line
+            x1="1" y1="0" x2="1" y2="100"
+            stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke"
+            className="ob-anim ob-draw ob-d1"
+            style={{ ["--ob-len" as string]: "100", animationDuration: "1600ms" }}
           />
-          {coords.map((p, i) => (
-            <circle
-              key={i}
-              cx={p.x}
-              cy={p.y}
-              r="1.6"
-              fill="oklch(0.62 0.16 248)"
-              className={`ob-anim ob-fade ${COL_DELAY[i]}`}
-            />
-          ))}
         </svg>
+
+        <ol className="space-y-2.5">
+          {STOPS.map(({ place, time, temp, Icon, decision, item, delay }) => (
+            <li key={place} className={`ob-anim ob-rise ${delay} relative flex items-center gap-3`}>
+              <span className="relative z-10 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-background shadow-sm ring-1 ring-foreground/10">
+                <Icon aria-hidden className="h-4 w-4 text-primary" strokeWidth={1.75} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-1.5">
+                  <p className="truncate text-[13px] font-semibold text-foreground">{place}</p>
+                  <p className="shrink-0 text-[11px] text-muted-foreground">{time}</p>
+                </div>
+                <p className="truncate text-[11px] text-muted-foreground">{temp} · {item}</p>
+              </div>
+              <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${DECISION_STYLE[decision]}`}>
+                {DECISION_LABEL[decision]}
+              </span>
+            </li>
+          ))}
+        </ol>
       </div>
 
-      {/* One grouped outfit per period */}
-      <div className="mt-2 grid grid-cols-4 gap-1">
-        {PERIODS.map(({ label, top, bottom, shoe }, i) => (
-          <div key={label} className={`ob-anim ob-pop ${OUTFIT_DELAY[i]} flex justify-center`}>
-            <OutfitSilhouette top={top} bottom={bottom} shoe={shoe} />
-          </div>
-        ))}
-      </div>
-
-      {/* Umbrella reminder — arrives last, after the afternoon rain is visible */}
-      <div className="ob-anim ob-slide-up ob-d11 mt-3 flex items-center gap-2 rounded-2xl bg-primary/10 px-3 py-2 ring-1 ring-inset ring-primary/15">
-        <Umbrella aria-hidden className="h-4 w-4 shrink-0 text-primary" strokeWidth={1.5} />
-        <p className="text-xs font-medium text-primary">Bring an umbrella in the afternoon</p>
+      <div className="ob-anim ob-slide-up ob-d10 mt-3 flex items-center gap-2 rounded-2xl bg-primary/10 px-3 py-2 ring-1 ring-inset ring-primary/15">
+        <Umbrella aria-hidden className="h-4 w-4 shrink-0 text-primary" strokeWidth={1.75} />
+        <p className="text-xs font-medium text-primary">Rain later — bring an umbrella</p>
       </div>
     </div>
   );
 }
+
+/** Kept for the outfit-figure illustration used in earlier builds. */
+export const OutfitSilhouette = null;
