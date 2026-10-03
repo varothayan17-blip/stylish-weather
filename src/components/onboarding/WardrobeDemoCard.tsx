@@ -100,66 +100,84 @@ function SneakerSVG({ className = "" }: { className?: string }) {
   );
 }
 
-const ITEMS = [
-  { label: "Blue crewneck", color: "text-blue-400", bg: "bg-blue-50 dark:bg-blue-950/30", Svg: CrewneckSVG, delay: "ob-d2" },
-  { label: "Grey trousers", color: "text-slate-400", bg: "bg-slate-50 dark:bg-slate-800/40", Svg: SweatpantsSVG, delay: "ob-d3" },
-  { label: "White sneakers", color: "text-gray-100 dark:text-gray-300", bg: "bg-gray-50 dark:bg-gray-800/40", Svg: SneakerSVG, delay: "ob-d4" },
-] as const;
+interface GarmentProps {
+  label: string;
+  children: React.ReactNode;
+  color: string;
+  bg: string;
+}
 
-/** Slide 3: saved items (sweatpants-style trousers SVG reused) → today's recommendation using the exact same items. */
+function GarmentCard({ label, children, color, bg }: GarmentProps) {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <div
+        className={`${bg} flex h-24 w-full items-center justify-center rounded-2xl shadow-sm ring-1 ring-inset ring-foreground/5`}
+      >
+        <div className={`${color} h-[68px] w-[76px]`}>{children}</div>
+      </div>
+      <p className="text-center text-[10px] font-medium leading-tight text-muted-foreground">
+        {label}
+      </p>
+    </div>
+  );
+}
+
 export function WardrobeDemoCard() {
   return (
-    <div
-      className="glass-card rounded-3xl p-4"
-      role="img"
-      aria-label="Example wardrobe with a blue crewneck, grey trousers and white sneakers, each with a saved photo. Today's recommendation uses those exact three items."
-    >
-      <div className="flex items-center justify-between">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">My wardrobe</p>
-        <p className="text-[11px] font-medium text-muted-foreground">Saved photos</p>
+    <div className="glass-card rounded-3xl p-4">
+      <p className="ob-anim ob-rise mb-4 text-sm font-semibold text-foreground/80">My wardrobe</p>
+
+      {/* 3-column grid of garment cards, staggered in */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="ob-anim ob-pop ob-d2">
+          <GarmentCard label="Blue crewneck" color="text-blue-400" bg="bg-blue-50 dark:bg-blue-950/30">
+            <CrewneckSVG className="h-full w-full" />
+          </GarmentCard>
+        </div>
+        <div className="ob-anim ob-pop ob-d4">
+          <GarmentCard
+            label="Grey sweatpants"
+            color="text-slate-400"
+            bg="bg-slate-50 dark:bg-slate-800/40"
+          >
+            <SweatpantsSVG className="h-full w-full" />
+          </GarmentCard>
+        </div>
+        <div className="ob-anim ob-pop ob-d6">
+          <GarmentCard
+            label="White sneakers"
+            color="text-gray-100 dark:text-gray-300"
+            bg="bg-gray-50 dark:bg-gray-800/40"
+          >
+            <SneakerSVG className="h-full w-full" />
+          </GarmentCard>
+        </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2.5">
-        {ITEMS.map(({ label, color, bg, Svg, delay }, i) => (
-          <div key={label} className={`ob-anim ob-pop ${delay} flex flex-col items-center gap-1.5`}>
-            <div className={`${bg} relative flex h-20 w-full items-center justify-center rounded-2xl shadow-sm ring-1 ring-inset ring-foreground/5`}>
-              <div className={`${color} h-[56px] w-[64px]`}><Svg className="h-full w-full" /></div>
-              <span className="absolute left-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">{i + 1}</span>
-            </div>
-            <p className="text-center text-[10px] font-medium leading-tight text-foreground/75">{label}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Connectors from each saved item down into the recommendation */}
-      <div aria-hidden className="grid grid-cols-3 gap-2.5">
-        {ITEMS.map(({ label, delay }) => (
-          <div key={label} className="flex justify-center">
-            <span className={`ob-anim ob-fade ${delay} block h-4 w-px bg-gradient-to-b from-primary/10 to-primary/60`} />
-          </div>
-        ))}
-      </div>
-
-      <div className="ob-anim ob-slide-up ob-d6 relative overflow-hidden rounded-2xl bg-primary/10 p-3 ring-1 ring-inset ring-primary/20">
+      {/* Today's recommendation — revealed after the garments, with one sweep */}
+      <div className="ob-anim ob-slide-up ob-d8 relative mt-4 flex items-center gap-3 overflow-hidden rounded-2xl bg-primary/10 px-3 py-2.5 ring-1 ring-inset ring-primary/15">
         <span
           aria-hidden
-          className="ob-anim ob-sweep ob-d8 pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-primary/25 to-transparent"
+          className="ob-anim ob-sweep ob-d9 pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-primary/25 to-transparent"
         />
-        <div className="flex items-baseline justify-between">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">Today's recommendation</p>
-          <p className="text-[10px] text-muted-foreground">14°C · Cloudy</p>
+        {/* Miniature versions of the items above */}
+        <div className="flex shrink-0 items-end gap-1" aria-hidden>
+          <div className="ob-anim ob-pop ob-d9 h-6 w-5 text-blue-400">
+            <CrewneckSVG className="h-full w-full" />
+          </div>
+          <div className="ob-anim ob-pop ob-d10 h-6 w-4 text-slate-400">
+            <SweatpantsSVG className="h-full w-full" />
+          </div>
+          <div className="ob-anim ob-pop ob-d11 h-4 w-6 text-gray-100 dark:text-gray-300">
+            <SneakerSVG className="h-full w-full" />
+          </div>
         </div>
-        <ul className="mt-2 grid grid-cols-3 gap-2">
-          {ITEMS.map(({ label, color, Svg }, i) => (
-            <li key={label} className={`ob-anim ob-pop ob-d${8 + i} flex items-center gap-1.5 rounded-xl bg-background/70 p-1.5`}>
-              <span className={`${color} relative h-7 w-7 shrink-0`}>
-                <Svg className="h-full w-full" />
-                <span className="absolute -left-1 -top-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-primary text-[8px] font-bold text-primary-foreground">{i + 1}</span>
-              </span>
-              <span className="min-w-0 text-[9px] font-medium leading-tight text-foreground/80">{label}</span>
-            </li>
-          ))}
-        </ul>
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">
+            Today's recommendation
+          </p>
+          <p className="text-xs text-muted-foreground">10° / Cloudy</p>
+        </div>
       </div>
     </div>
   );

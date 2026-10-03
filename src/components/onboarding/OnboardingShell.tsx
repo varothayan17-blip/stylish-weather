@@ -31,7 +31,7 @@ export function OnboardingShell({
         />
       </div>
       {/* Content */}
-      <main className="mx-auto flex min-h-[100dvh] max-w-md flex-col px-6 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+1.5rem)] sm:pt-[calc(env(safe-area-inset-top)+3rem)]">
+      <main className="mx-auto flex min-h-[100dvh] max-w-md flex-col px-6 pb-[calc(env(safe-area-inset-bottom)+2rem)] pt-[calc(env(safe-area-inset-top)+3rem)]">
         <div
           key={transitionKey}
           className={`flex min-h-0 flex-1 flex-col ${
