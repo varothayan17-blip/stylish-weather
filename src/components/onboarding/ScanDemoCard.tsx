@@ -9,7 +9,7 @@
  *   • Motion is CSS-only (./onboarding-motion.css); the beam runs a bounded
  *     three passes and then the flow settles on a confirmation state.
  */
-import { Camera, FileText, Check } from "lucide-react";
+import { Camera, FileText, Check, PencilLine, ShieldCheck } from "lucide-react";
 import "./onboarding-motion.css";
 
 const STEPS = [
@@ -123,7 +123,65 @@ const POINTS = [
   { top: "72%", left: "60%", delay: "ob-d8" },
 ] as const;
 
-export function ScanDemoCard() {
+/** Example attributes the user reviews before saving. */
+const ATTRS = [
+  { k: "Type", v: "T-shirt" },
+  { k: "Colour", v: "Blue" },
+  { k: "Warmth", v: "Lightweight" },
+  { k: "Weather", v: "Mild weather" },
+] as const;
+
+/**
+ * Truthful manual fallback: shown when AI scanning cannot be advertised from
+ * production state available during onboarding (no network calls allowed here).
+ */
+function ManualAddDemo() {
+  const steps = [
+    { icon: PencilLine, label: "Add details", delay: "ob-d1" },
+    { icon: FileText, label: "Review", delay: "ob-d5" },
+    { icon: Check, label: "Save", delay: "ob-d9" },
+  ];
+  return (
+    <div className="glass-card overflow-hidden rounded-3xl" role="img" aria-label="Example: add a blue lightweight T-shirt for mild weather by entering details, review them, then save.">
+      <div className="flex items-center justify-between border-b border-border/50 px-4 py-3">
+        {steps.map(({ icon: Icon, label, delay }, i) => (
+          <div key={label} className="flex items-center gap-2">
+            <div className={`ob-anim ob-rise ${delay} flex items-center gap-1.5`}>
+              <span className={`grid h-7 w-7 place-items-center rounded-full ${i === 2 ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}>
+                <Icon aria-hidden className="h-3.5 w-3.5" strokeWidth={1.75} />
+              </span>
+              <span className="text-[10px] font-semibold text-foreground/80">{label}</span>
+            </div>
+            {i < 2 && <span aria-hidden className="h-px w-3 bg-border" />}
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-3 p-4">
+        <div className="ob-anim ob-pop ob-d2 grid h-24 w-20 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-blue-50 to-blue-100 ring-1 ring-inset ring-foreground/5 dark:from-slate-800 dark:to-slate-900">
+          <div className="origin-center scale-[0.55]"><FrontCrewneck /></div>
+        </div>
+        <ul className="min-w-0 flex-1 space-y-1.5">
+          {ATTRS.map(({ k, v }, i) => (
+            <li key={k} className={`ob-anim ob-rise ob-d${3 + i} flex items-center justify-between gap-2 rounded-xl bg-background/70 px-2.5 py-1.5 ring-1 ring-inset ring-foreground/5`}>
+              <span className="text-[10px] text-muted-foreground">{k}</span>
+              <span className="flex items-center gap-1 truncate text-[11px] font-semibold text-foreground">
+                {v}
+                <PencilLine aria-hidden className="h-3 w-3 text-muted-foreground" />
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="ob-anim ob-slide-up ob-d10 mx-4 mb-4 flex items-center gap-2 rounded-2xl bg-primary/10 px-3 py-2 ring-1 ring-inset ring-primary/15">
+        <ShieldCheck aria-hidden className="h-4 w-4 shrink-0 text-primary" strokeWidth={1.75} />
+        <p className="text-xs font-medium text-primary">You review every detail before it is saved.</p>
+      </div>
+    </div>
+  );
+}
+
+export function ScanDemoCard({ variant = "scan" }: { variant?: "scan" | "manual" }) {
+  if (variant === "manual") return <ManualAddDemo />;
   return (
     <div className="glass-card overflow-hidden rounded-3xl">
       {/* Garment display area */}

@@ -85,6 +85,3 @@ export function WeatherDemoCard() {
     </div>
   );
 }
-
-/** Kept for the outfit-figure illustration used in earlier builds. */
-export const OutfitSilhouette = null;
