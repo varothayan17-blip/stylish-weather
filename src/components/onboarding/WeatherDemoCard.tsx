@@ -70,7 +70,7 @@ export function WeatherDemoCard() {
                 </div>
                 <p className="truncate text-[11px] text-muted-foreground">{temp} · {item}</p>
               </div>
-              <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${DECISION_STYLE[decision]}`}>
+              <span className={`ob-anim ob-pop ${delay} shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${DECISION_STYLE[decision]}`}>
                 {DECISION_LABEL[decision]}
               </span>
             </li>
