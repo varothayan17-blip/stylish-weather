@@ -2,15 +2,15 @@
  * /welcome — Aeruvo onboarding state machine
  *
  * Step sequence (no skip, no guest, no bypass):
- *   0 = Landing      "Never guess what to wear again."
- *   1 = Plan for the whole day       (WeatherDemoCard)
- *   2 = Make your wardrobe useful    (WardrobeDemoCard)
- *   3 = Add clothing in seconds      (ScanDemoCard)
+ *   0 = Dress for where the day takes you  (WeatherDemoCard)
+ *   1 = Comfort that feels personal        (ComfortDemoCard)
+ *   2 = Wear what you already own          (WardrobeDemoCard)
+ *   3 = Build your wardrobe your way       (ScanDemoCard, manual fallback)
  *   4 = Personalization questions    (PreAuthQuestions)
  *   → /signup?mode=create
  *
  * Returning users:
- *   "Already have an account? Sign in" → /signup?mode=signin  (on step 0)
+ *   "Already have an account? Sign in" → /signup?mode=signin  (every slide)
  *
  * Authenticated Firebase users are detected via onAuthStateChanged and
  * redirected to "/" immediately (no prefs.onboarded check).
@@ -22,8 +22,7 @@
  * SSR safe: all Firebase and localStorage access is inside useEffect.
  */
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { Sparkles, CloudSun, Shirt, MapPin } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import {
   loadIntro,
@@ -37,6 +36,7 @@ import { IntroButtons } from "@/components/onboarding/IntroButtons";
 import { WeatherDemoCard } from "@/components/onboarding/WeatherDemoCard";
 import { WardrobeDemoCard } from "@/components/onboarding/WardrobeDemoCard";
 import { ScanDemoCard } from "@/components/onboarding/ScanDemoCard";
+import { ComfortDemoCard } from "@/components/onboarding/ComfortDemoCard";
 import { PreAuthQuestions } from "@/components/onboarding/PreAuthQuestions";
 
 export const Route = createFileRoute("/welcome")({
@@ -49,11 +49,39 @@ export const Route = createFileRoute("/welcome")({
   component: WelcomeRoute,
 });
 
-const BENEFIT_ITEMS = [
-  { icon: CloudSun, title: "Live local weather", desc: "Real wind chill, not just temperature." },
-  { icon: Shirt, title: "Personalized outfit picks", desc: "Tuned to your commute and cold tolerance." },
-  { icon: MapPin, title: "Made for your city", desc: "From Vancouver fog to Winnipeg windchill." },
-];
+interface Slide {
+  title: string;
+  body: string;
+  visual: ReactNode;
+}
+
+/**
+ * Slide 4 uses the truthful manual fallback: scanner availability is a
+ * server-side setting and onboarding makes no network calls, so AI scanning
+ * cannot be safely advertised here.
+ */
+const SLIDES: Record<0 | 1 | 2 | 3, Slide> = {
+  0: {
+    title: "Dress for where the day takes you",
+    body: "Home in the morning, campus in the afternoon, or out late at night—Aeruvo checks every time and place before suggesting what to wear and pack.",
+    visual: <WeatherDemoCard />,
+  },
+  1: {
+    title: "Comfort that feels personal",
+    body: "Run cold or warm? Aeruvo combines your comfort, plans and changing conditions—not just one temperature.",
+    visual: <ComfortDemoCard />,
+  },
+  2: {
+    title: "Wear what you already own",
+    body: "Build your wardrobe once. Aeruvo can recommend the exact item—and its saved reference photo—instead of a generic white T-shirt.",
+    visual: <WardrobeDemoCard />,
+  },
+  3: {
+    title: "Build your wardrobe your way",
+    body: "Add clothing manually with details such as colour, warmth, style and weather fit.",
+    visual: <ScanDemoCard variant="manual" />,
+  },
+};
 
 type Step = 0 | 1 | 2 | 3 | 4;
 
@@ -141,123 +169,41 @@ function WelcomeRoute() {
     );
   }
 
-  // ── Step 0: Landing ────────────────────────────────────────────────────────
-  if (step === 0) {
-    return (
-      <OnboardingShell transitionKey={step} direction={direction === 1 ? "forward" : "back"}>
-        <div className="animate-fade-up">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-primary">
-            <Sparkles aria-hidden className="h-3 w-3" />
-            Aeruvo
-          </span>
-          <h1 className="mt-5 text-[2.75rem] font-semibold leading-[1.05] tracking-tight text-foreground">
-            Never guess <br />what to wear <br />
-            <span className="text-gradient">again.</span>
-          </h1>
-          <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-            Personal weather and wardrobe guidance for every day.
-          </p>
-        </div>
-
-        <ul className="mt-8 space-y-3 animate-fade-up delay-100" role="list">
-          {BENEFIT_ITEMS.map(({ icon: Icon, title, desc }) => (
-            <li key={title} className="glass-card flex items-start gap-4 rounded-3xl p-4">
-              <div className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary" aria-hidden>
-                <Icon className="h-5 w-5" strokeWidth={1.5} />
-              </div>
-              <div>
-                <p className="font-semibold text-foreground">{title}</p>
-                <p className="mt-0.5 text-sm text-muted-foreground">{desc}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
-
-        <div className="mt-auto pt-8 space-y-3 animate-fade-up delay-200">
-          <button type="button" onClick={() => goToStep(1)}
-            className="press block w-full rounded-2xl bg-foreground py-4 text-center text-sm font-semibold text-background shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
-            Get started — it's free
-          </button>
-          <button type="button" onClick={goToSignIn}
-            className="block w-full rounded-2xl py-3 text-center text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
-            Already have an account? Sign in
-          </button>
-        </div>
-      </OnboardingShell>
-    );
-  }
-
-  // ── Step 1: Plan for the whole day ─────────────────────────────────────────
-  if (step === 1) {
-    return (
-      <OnboardingShell transitionKey={step} direction={direction === 1 ? "forward" : "back"}>
-        <div className="animate-fade-up">
-          <IntroProgress step={1} total={4} />
-          <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-foreground">
-            Plan for the whole day
-          </h1>
-          <p className="mt-3 text-base leading-relaxed text-muted-foreground">
-            See what to wear as conditions change — including rain, wind and how the temperature feels to you.
-          </p>
-        </div>
-        <div className="mt-8 animate-fade-up delay-100"><WeatherDemoCard /></div>
-        <IntroButtons
-          primaryLabel="Continue"
-          onPrimary={() => goToStep(2)}
-          secondaryLabel="Already have an account? Sign in"
-          onSecondary={goToSignIn}
-        />
-      </OnboardingShell>
-    );
-  }
-
-  // ── Step 2: Make your wardrobe useful ─────────────────────────────────────
-  if (step === 2) {
-    return (
-      <OnboardingShell transitionKey={step} direction={direction === 1 ? "forward" : "back"}>
-        <div className="animate-fade-up">
-          <IntroProgress step={2} total={4} />
-          <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-foreground">
-            Make your wardrobe useful
-          </h1>
-          <p className="mt-3 text-base leading-relaxed text-muted-foreground">
-            Add clothing you already own and get recommendations using your own items.
-          </p>
-        </div>
-        <div className="mt-8 animate-fade-up delay-100"><WardrobeDemoCard /></div>
-        <IntroButtons
-          primaryLabel="Continue"
-          onPrimary={() => goToStep(3)}
-          secondaryLabel="Already have an account? Sign in"
-          onSecondary={goToSignIn}
-        />
-      </OnboardingShell>
-    );
-  }
-
-  // ── Step 3: Add clothing in seconds ───────────────────────────────────────
+  // ── Steps 0–3: four presentation slides from one typed config ───────────
+  const slide = SLIDES[step];
+  const isLast = step === 3;
   return (
     <OnboardingShell transitionKey={step} direction={direction === 1 ? "forward" : "back"}>
-      <div className="animate-fade-up">
-        <IntroProgress step={3} total={4} />
-        <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-foreground">
-          Add clothing in seconds
+      <header className="animate-fade-up">
+        {step === 0 && (
+          <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-primary">
+            Aeruvo · Never guess what to wear again
+          </p>
+        )}
+        <IntroProgress step={step + 1} total={4} />
+        <h1 className="mt-4 text-[1.85rem] font-semibold leading-[1.1] tracking-tight text-foreground sm:text-4xl">
+          {slide.title}
         </h1>
-        <p className="mt-3 text-base leading-relaxed text-muted-foreground">
-          Photograph one clothing item, review the suggested details and save it to your wardrobe.
-        </p>
-      </div>
-      <div className="mt-8 animate-fade-up delay-100"><ScanDemoCard /></div>
-      <div className="mt-auto pt-8 space-y-3">
-        <button type="button" onClick={() => goToStep(4)}
-          className="press block w-full rounded-2xl bg-foreground py-4 text-center text-sm font-semibold text-background shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
-          Continue
-        </button>
-        <button type="button" onClick={() => goToStep(2)}
-          className="block w-full rounded-2xl py-3 text-center text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
-          Back
-        </button>
-      </div>
+        <p className="mt-2.5 text-[15px] leading-relaxed text-muted-foreground">{slide.body}</p>
+      </header>
+      <div className="mt-5 animate-fade-up delay-100">{slide.visual}</div>
+      {isLast ? (
+        <IntroButtons
+          primaryLabel="Get started"
+          onPrimary={() => goToStep(4)}
+          secondaryLabel="Already have an account? Sign in"
+          onSecondary={goToSignIn}
+          onBack={() => goToStep(2, -1)}
+        />
+      ) : (
+        <IntroButtons
+          primaryLabel="Continue"
+          onPrimary={() => goToStep((step + 1) as Step)}
+          secondaryLabel="Already have an account? Sign in"
+          onSecondary={goToSignIn}
+          onBack={step > 0 ? () => goToStep((step - 1) as Step, -1) : undefined}
+        />
+      )}
     </OnboardingShell>
   );
 }

@@ -1,18 +1,19 @@
-/** Pill-style "1 of 3" progress indicator */
-export function IntroProgress({ step, total = 3 }: { step: number; total?: number }) {
+/** Segmented "1 of 4" progress indicator (text + segments, not colour alone). */
+export function IntroProgress({ step, total = 4 }: { step: number; total?: number }) {
   return (
-    <div className="flex items-center gap-2" aria-label={`Step ${step} of ${total}`}>
-      <span className="text-xs font-semibold text-primary">
+    <div className="flex items-center gap-3">
+      <span className="shrink-0 text-xs font-semibold tabular-nums text-primary" aria-label={`Step ${step} of ${total}`}>
         {step} of {total}
       </span>
-      <span className="flex gap-1" aria-hidden>
+      <span className="flex flex-1 gap-1.5" aria-hidden>
         {Array.from({ length: total }, (_, i) => (
-          <span
-            key={i}
-            className={`block h-1 rounded-full transition-all duration-300 ${
-              i < step ? "w-6 bg-primary" : "w-2 bg-primary/25"
-            }`}
-          />
+          <span key={i} className="relative block h-1 flex-1 overflow-hidden rounded-full bg-primary/15">
+            <span
+              className={`absolute inset-0 origin-left rounded-full bg-primary transition-transform duration-500 ${
+                i < step ? "scale-x-100" : "scale-x-0"
+              }`}
+            />
+          </span>
         ))}
       </span>
     </div>
